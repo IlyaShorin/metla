@@ -1,7 +1,8 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use metla_cli::{Command, TOP_LIMIT, parse};
+use metla_cli::{CANDIDATE_LIMIT, Command, Edit, TOP_LIMIT, parse};
+use metla_core::domain::Category;
 
 fn args(text: &str) -> Vec<OsString> {
     text.split_whitespace().map(OsString::from).collect()
@@ -14,15 +15,19 @@ fn scan_takes_root_index_threads_and_json() {
         Ok(Command::Scan {
             root: PathBuf::from("/r"),
             index: PathBuf::from("/i.sqlite"),
+            home: None,
+            rules: true,
             threads: Some(3),
             json: true,
         })
     );
     assert_eq!(
-        parse(&args("scan --index /i --root /r")),
+        parse(&args("scan --index /i --root /r --home /h --no-rules")),
         Ok(Command::Scan {
             root: PathBuf::from("/r"),
             index: PathBuf::from("/i"),
+            home: Some(PathBuf::from("/h")),
+            rules: false,
             threads: None,
             json: false,
         })
@@ -63,6 +68,61 @@ fn ls_takes_one_path() {
 }
 
 #[test]
+fn candidates_take_a_category_a_limit_and_json() {
+    assert_eq!(
+        parse(&args(
+            "candidates --index /i --category build --limit 5 --json"
+        )),
+        Ok(Command::Candidates {
+            index: PathBuf::from("/i"),
+            category: Some(Category::BuildArtifact),
+            limit: 5,
+            json: true,
+        })
+    );
+    assert_eq!(
+        parse(&args("candidates --index /i")),
+        Ok(Command::Candidates {
+            index: PathBuf::from("/i"),
+            category: None,
+            limit: CANDIDATE_LIMIT,
+            json: false,
+        })
+    );
+}
+
+#[test]
+fn summary_takes_an_index_and_json() {
+    assert_eq!(
+        parse(&args("summary --index /i --json")),
+        Ok(Command::Summary {
+            index: PathBuf::from("/i"),
+            json: true,
+        })
+    );
+}
+
+#[test]
+fn exclude_adds_removes_and_lists() {
+    let exclude = |text| match parse(&args(text)) {
+        Ok(Command::Exclude { index, edit }) => {
+            assert_eq!(index, PathBuf::from("/i"));
+            edit
+        }
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        exclude("exclude add --index /i /a/b"),
+        Edit::Add("/a/b".into())
+    );
+    assert_eq!(
+        exclude("exclude --index /i remove /a"),
+        Edit::Remove("/a".into())
+    );
+    assert_eq!(exclude("exclude list --index /i"), Edit::List);
+}
+
+#[test]
 fn mistakes_are_reported() {
     let error = |text| parse(&args(text)).unwrap_err();
     assert_eq!(error(""), "missing command");
@@ -85,6 +145,34 @@ fn mistakes_are_reported() {
     assert_eq!(
         error("scan --root /r --index /i --bogus"),
         "unexpected argument --bogus"
+    );
+    assert_eq!(
+        error("candidates --index /i --category cache"),
+        "unknown category cache"
+    );
+    assert_eq!(
+        error("summary --index /i --no-rules"),
+        "unexpected argument --no-rules"
+    );
+    assert_eq!(
+        error("exclude --index /i"),
+        "exclude needs add, remove or list"
+    );
+    assert_eq!(
+        error("exclude drop --index /i /a"),
+        "exclude needs add, remove or list"
+    );
+    assert_eq!(
+        error("exclude add --index /i"),
+        "exclude add and remove need a path"
+    );
+    assert_eq!(
+        error("exclude remove --index /i"),
+        "exclude add and remove need a path"
+    );
+    assert_eq!(
+        error("exclude list --index /i /a"),
+        "unexpected argument /a"
     );
 }
 

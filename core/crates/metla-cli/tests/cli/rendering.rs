@@ -116,6 +116,7 @@ fn report(volume: Option<VolumeUse>) -> ScanReport {
         peak_rss: Bytes(25_000_000),
         index_size: Bytes(4_096),
         volume,
+        rules: true,
     }
 }
 
@@ -138,10 +139,17 @@ skipped      1 other volume, 0 mount point, 0 dataless, 0 excluded
 volume       total 10.0 kB, available 3.0 kB, used 7.0 kB, unaccounted 500 B
 peak RSS     25.0 MB
 threads      4
+rules        on
 index        4.1 kB
 ";
     assert_eq!(text, expected);
     assert!(!scan_text(&report(None)).contains("\nvolume "));
+    let without = ScanReport {
+        rules: false,
+        ..report(None)
+    };
+    assert!(scan_text(&without).contains("\nrules        off\n"));
+    assert!(scan_json(&without).contains("\"rules\":false,"));
 }
 
 #[test]
@@ -158,7 +166,7 @@ fn the_scan_report_reads_as_json() {
     let expected = concat!(
         "{\"root\":\"/r\",\"directories\":1200,\"files\":3000,\"bytes\":6500,",
         "\"elapsed_seconds\":2.000,\"dirs_per_second\":600,\"files_per_second\":1500,",
-        "\"threads\":4,\"complete\":false,",
+        "\"threads\":4,\"rules\":true,\"complete\":false,",
         "\"gaps\":{\"denied\":1,\"failed\":1,\"vanished\":0,\"cancelled\":0},",
         "\"skipped\":{\"other volume\":1,\"mount point\":0,\"dataless\":0,\"excluded\":0},",
         "\"top_gaps\":[{\"gap\":\"denied\",\"depth\":1,\"path\":\"/r/locked\"},",

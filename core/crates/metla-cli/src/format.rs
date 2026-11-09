@@ -52,3 +52,14 @@ pub fn per_second(n: u64, elapsed: Duration) -> u64 {
 pub fn seconds(elapsed: Duration) -> String {
     format!("{:.1} s", elapsed.as_secs_f64())
 }
+
+/// Roughly how long `seconds` is: `45 s`, `12 min`, `5 h`, `3 d`. A time
+/// in the future reads as `0 s`.
+pub fn ago(seconds: i64) -> String {
+    const UNITS: [(i64, &str); 3] = [(86_400, "d"), (3_600, "h"), (60, "min")];
+    let seconds = seconds.max(0);
+    match UNITS.iter().find(|(unit, _)| seconds >= *unit) {
+        Some((unit, name)) => format!("{} {name}", seconds / unit),
+        None => format!("{seconds} s"),
+    }
+}

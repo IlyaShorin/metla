@@ -43,22 +43,24 @@ pub struct ScanReport {
     pub peak_rss: Bytes,
     pub index_size: Bytes,
     pub volume: Option<VolumeUse>,
+    /// The scan classified directories.
+    pub rules: bool,
 }
 
-const GAP_NAMES: [(GapKind, &str); 4] = [
+pub(crate) const GAP_NAMES: [(GapKind, &str); 4] = [
     (GapKind::Denied, "denied"),
     (GapKind::Failed, "failed"),
     (GapKind::Vanished, "vanished"),
     (GapKind::Cancelled, "cancelled"),
 ];
-const SKIP_NAMES: [(Skip, &str); 4] = [
+pub(crate) const SKIP_NAMES: [(Skip, &str); 4] = [
     (Skip::OtherVolume, "other volume"),
     (Skip::MountPoint, "mount point"),
     (Skip::Dataless, "dataless"),
     (Skip::Excluded, "excluded"),
 ];
 
-fn name_in<T: PartialEq>(names: &[(T, &'static str)], value: T) -> &'static str {
+pub(crate) fn name_in<T: PartialEq>(names: &[(T, &'static str)], value: T) -> &'static str {
     names
         .iter()
         .find(|(known, _)| *known == value)
@@ -80,14 +82,11 @@ fn gap_label(gap: Gap) -> String {
     }
 }
 
-fn completeness(coverage: &Coverage) -> &'static str {
-    match coverage.is_complete() {
-        true => "complete",
-        false => "partial",
-    }
+pub(crate) fn completeness(coverage: &Coverage) -> &'static str {
+    either(coverage.is_complete(), "complete", "partial")
 }
 
-fn line(out: &mut String, label: &str, value: impl std::fmt::Display) {
+pub(crate) fn line(out: &mut String, label: &str, value: impl std::fmt::Display) {
     let _ = writeln!(out, "{label:<12} {value}");
 }
 
@@ -123,11 +122,12 @@ pub fn scan_text(report: &ScanReport) -> String {
     }
     line(&mut out, "peak RSS", bytes(report.peak_rss));
     line(&mut out, "threads", s.threads);
+    line(&mut out, "rules", either(report.rules, "on", "off"));
     line(&mut out, "index", bytes(report.index_size));
     out
 }
 
-fn coverage_text(out: &mut String, coverage: &Coverage) {
+pub(crate) fn coverage_text(out: &mut String, coverage: &Coverage) {
     line(out, "coverage", completeness(coverage));
     let gaps: Vec<String> = GAP_NAMES
         .iter()
@@ -148,6 +148,14 @@ fn coverage_text(out: &mut String, coverage: &Coverage) {
     }
 }
 
+/// `yes` or `no`, as `flag` says.
+pub(crate) fn either(flag: bool, yes: &'static str, no: &'static str) -> &'static str {
+    match flag {
+        true => yes,
+        false => no,
+    }
+}
+
 /// A JSON string literal.
 pub fn json_string(text: &str) -> String {
     let mut out = String::from("\"");
@@ -163,7 +171,7 @@ pub fn json_string(text: &str) -> String {
     out
 }
 
-fn json_object(fields: &[(&str, String)]) -> String {
+pub(crate) fn json_object(fields: &[(&str, String)]) -> String {
     let body: Vec<String> = fields
         .iter()
         .map(|(key, value)| format!("{}:{value}", json_string(key)))
@@ -196,6 +204,7 @@ pub fn scan_json(report: &ScanReport) -> String {
             per_second(s.totals.files, s.elapsed).to_string(),
         ),
         ("threads", s.threads.to_string()),
+        ("rules", report.rules.to_string()),
         ("complete", s.is_complete().to_string()),
         ("gaps", counts_json(&GAP_NAMES, |k| s.coverage.gaps(k))),
         ("skipped", counts_json(&SKIP_NAMES, |k| s.coverage.skips(k))),
@@ -206,7 +215,10 @@ pub fn scan_json(report: &ScanReport) -> String {
     ])
 }
 
-fn counts_json<K: Copy>(names: &[(K, &'static str)], count: impl Fn(K) -> u64) -> String {
+pub(crate) fn counts_json<K: Copy>(
+    names: &[(K, &'static str)],
+    count: impl Fn(K) -> u64,
+) -> String {
     let fields: Vec<(&str, String)> = names
         .iter()
         .map(|(k, name)| (*name, count(*k).to_string()))
@@ -214,7 +226,7 @@ fn counts_json<K: Copy>(names: &[(K, &'static str)], count: impl Fn(K) -> u64) -
     json_object(&fields)
 }
 
-fn top_gaps_json(coverage: &Coverage) -> String {
+pub(crate) fn top_gaps_json(coverage: &Coverage) -> String {
     let gaps: Vec<String> = coverage
         .top_gaps()
         .iter()

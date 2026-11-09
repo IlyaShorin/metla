@@ -1,12 +1,17 @@
 //! The commands: gather data from the core, hand it to `report`.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use metla_core::domain::{Bytes, DirState, EntryKind};
+use metla_core::domain::{Bytes, Candidate, Category, DirState, EntryKind, Exclusion, Recency};
 use metla_core::fs::{DirHandle, list_dir, now, peak_rss, volume};
-use metla_core::index::{IndexError, IndexReader, IndexWriter, Snapshot};
+use metla_core::index::{IndexError, IndexReader, IndexWriter, Page, Snapshot};
+use metla_core::rules::RuleSet;
 use metla_core::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
 
+use crate::args::Edit;
+use crate::overview::{Edited, Freshness, Overview, Shown};
 use crate::report::{Listed, ScanReport, VolumeUse};
 
 /// How many shallow directories the live tree tracks.
@@ -25,12 +30,41 @@ fn cores() -> usize {
         .unwrap_or_default()
 }
 
+/// Which rules a scan uses.
+pub struct ScanRules {
+    /// `None`: the current user's home directory.
+    pub home: Option<PathBuf>,
+    pub enabled: bool,
+}
+
+/// The rule set for `home` (default: `$HOME`), for the user `$USER` (or
+/// the home directory's name).
+fn rule_set(home: Option<&Path>) -> Result<RuleSet, String> {
+    let home = home
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .ok_or("no home directory: pass --home")?;
+    let home = std::fs::canonicalize(&home).map_err(|e| format!("{}: {e}", home.display()))?;
+    let user = std::env::var_os("USER")
+        .or_else(|| home.file_name().map(OsString::from))
+        .unwrap_or_default();
+    Ok(RuleSet::new(&home, &user))
+}
+
 /// Scans `root` into `index`.
-pub fn scan(root: &Path, index: &Path, threads: Option<usize>) -> Result<ScanReport, String> {
+pub fn scan(
+    root: &Path,
+    index: &Path,
+    rules: &ScanRules,
+    threads: Option<usize>,
+) -> Result<ScanReport, String> {
     let root = ScanRoot::new(root).map_err(|e| format!("{}: {e}", root.display()))?;
     let scope = ScanScope::detect(&root).map_err(|e| e.to_string())?;
     let threads = threads.unwrap_or_else(|| default_threads(cores()));
-    let options = ScanOptions::new(root, scope).threads(threads);
+    let mut options = ScanOptions::new(root, scope).threads(threads);
+    if rules.enabled {
+        options = options.rules(Arc::new(rule_set(rules.home.as_deref())?));
+    }
     let mut writer = IndexWriter::open(index).map_err(|e| e.to_string())?;
     let session = writer.start_scan(now()).map_err(|e| e.to_string())?;
     let control = ScanControl::new(LIVE_LIMIT);
@@ -43,6 +77,7 @@ pub fn scan(root: &Path, index: &Path, threads: Option<usize>) -> Result<ScanRep
         volume,
         peak_rss: peak_rss(),
         index_size: index_size(index),
+        rules: rules.enabled,
         summary,
     })
 }
@@ -63,17 +98,21 @@ fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn read<T>(
+    index: &Path,
+    query: impl FnOnce(&Snapshot<'_>) -> Result<T, IndexError>,
+) -> Result<T, String> {
+    let mut reader = IndexReader::open(index).map_err(|e| e.to_string())?;
+    reader.read(query).map_err(|e| e.to_string())
+}
+
 /// The largest directories below `under` (default: the root).
 pub fn top(
     index: &Path,
     under: Option<&Path>,
     limit: usize,
 ) -> Result<Vec<(Bytes, PathBuf)>, String> {
-    let mut reader = IndexReader::open(index).map_err(|e| e.to_string())?;
-    reader
-        .read(|snap| largest(snap, under, limit))
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "not in the index".to_owned())
+    read(index, |snap| largest(snap, under, limit))?.ok_or_else(|| "not in the index".to_owned())
 }
 
 fn largest(
@@ -99,14 +138,11 @@ fn largest(
 /// largest first.
 pub fn ls(index: &Path, path: &Path) -> Result<Vec<Listed>, String> {
     let path = canonical(path);
-    let mut reader = IndexReader::open(index).map_err(|e| e.to_string())?;
-    let dirs = reader
-        .read(|snap| match snap.dir(&path)? {
-            Some(dir) => Ok(Some(snap.children(dir.id)?)),
-            None => Ok(None),
-        })
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("{} is not in the index", path.display()))?;
+    let dirs = read(index, |snap| match snap.dir(&path)? {
+        Some(dir) => Ok(Some(snap.children(dir.id)?)),
+        None => Ok(None),
+    })?
+    .ok_or_else(|| format!("{} is not in the index", path.display()))?;
     let files = DirHandle::open(&path)
         .and_then(|dir| list_dir(&dir))
         .map_err(|e| format!("cannot list {}: {e:?}", path.display()))?;
@@ -130,4 +166,68 @@ pub fn ls(index: &Path, path: &Path) -> Result<Vec<Listed>, String> {
         .collect();
     rows.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.name.cmp(&b.name)));
     Ok(rows)
+}
+
+/// The largest candidates of `category` (of every category when `None`).
+pub fn candidates(
+    index: &Path,
+    category: Option<Category>,
+    limit: usize,
+) -> Result<Shown<Vec<Candidate>>, String> {
+    let now = now();
+    let recency = Recency::new(now, Recency::DEFAULT_AGE);
+    let page = Page { offset: 0, limit };
+    let found = read(index, |snap| snap.candidates(category, page, &recency))?;
+    Ok(Shown { now, data: found })
+}
+
+/// What can be cleaned, what the disk holds, and how fresh the picture is.
+pub fn summary(index: &Path) -> Result<Shown<Overview>, String> {
+    let overview = read(index, |snap| {
+        let scan = snap.scan()?;
+        let freshness = scan.as_ref().and_then(|scan| {
+            let picture = scan.picture.clone()?;
+            Some(Freshness {
+                root: picture.root,
+                finished: picture.finished,
+                current: scan.is_current(),
+                coverage: picture.coverage,
+                kinds: picture.kinds,
+            })
+        });
+        Ok(Overview {
+            freshness,
+            categories: snap.category_tallies()?,
+            rules: snap.rule_tallies()?,
+        })
+    })?;
+    Ok(Shown {
+        now: now(),
+        data: overview,
+    })
+}
+
+/// Adds, removes or lists exclusions.
+pub fn exclude(index: &Path, edit: &Edit) -> Result<Edited, String> {
+    match edit {
+        Edit::List => Ok(Edited::Listed(read(index, |snap| snap.exclusions())?)),
+        Edit::Add(path) => {
+            change(index, path, IndexWriter::exclude).map(|(e, c)| Edited::Added(e, c))
+        }
+        Edit::Remove(path) => {
+            change(index, path, IndexWriter::include).map(|(e, c)| Edited::Removed(e, c))
+        }
+    }
+}
+
+type Change = fn(&IndexWriter, &Exclusion) -> Result<bool, IndexError>;
+
+/// Applies one exclusion edit through the index's writer.
+fn change(index: &Path, path: &Path, change: Change) -> Result<(Exclusion, bool), String> {
+    let path = canonical(path);
+    let exclusion = Exclusion::new(&path)
+        .ok_or_else(|| format!("{} is not an absolute path", path.display()))?;
+    let writer = IndexWriter::open(index).map_err(|e| e.to_string())?;
+    let changed = change(&writer, &exclusion).map_err(|e| e.to_string())?;
+    Ok((exclusion, changed))
 }
