@@ -6,10 +6,15 @@
 //! emitted when its last child has been delivered (post-order), so its
 //! tree totals are final; then its totals are delivered to its parent.
 //! Memory and descriptors are bounded by the directories in flight.
+//!
+//! With a rule set, every directory read is classified from its facts
+//! unless it lies inside a candidate. What a directory passes on to its
+//! children (its marker entries, whether it is in a repository or a
+//! candidate, its area) travels down the way totals travel up.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rayon::Scope;
@@ -17,23 +22,35 @@ use rayon::Scope;
 use super::control::{LiveChain, LiveCounters, ScanControl, add_live};
 use super::{ROW_BATCH, ScanOptions};
 use crate::domain::{
-    Coverage, DirFacts, DirId, DirRecord, DirState, Entry, EntryKind, Gap, GapAt, OwnTotals, Skip,
-    TreeTotals, UnixTime,
+    Bytes, Coverage, DirFacts, DirId, DirRecord, DirState, Entry, EntryKind, FileKind, Gap, GapAt,
+    KindTotals, OwnTotals, Probe, RuleId, Skip, TreeTotals, UnixTime,
 };
 use crate::fs::{DirHandle, ListError, list_dir};
+use crate::rules::{Area, PROBE_LIMIT};
+
+/// What a directory passes on to its children's classification.
+#[derive(Default)]
+struct Passed {
+    /// Its entries the rules want as markers.
+    markers: Vec<OsString>,
+    /// It is, or is inside, a Git repository.
+    in_repo: bool,
+    /// It is, or is inside, a candidate: nothing below is classified.
+    in_candidate: bool,
+    area: Area,
+}
 
 /// A directory that has been read and is waiting for its children.
 struct Node {
     id: DirId,
     parent: Option<Arc<Node>>,
     name: OsString,
+    identity: Identity,
     own: OwnTotals,
+    rule: Option<RuleId>,
+    passed: Passed,
     live: LiveChain,
     own_live: Option<Arc<LiveCounters>>,
-    /// Entries named in the scan's marker list, for the children's facts.
-    markers: Vec<OsString>,
-    /// This directory or an ancestor contains `.git`.
-    children_in_repo: bool,
     tree: Mutex<TreeTotals>,
     pending: AtomicUsize,
 }
@@ -46,6 +63,13 @@ impl Node {
     }
 }
 
+/// A directory's device and inode, as listed in its parent.
+#[derive(Clone, Copy)]
+struct Identity {
+    device: u64,
+    inode: u64,
+}
+
 /// A directory to read.
 struct Task {
     id: DirId,
@@ -54,6 +78,7 @@ struct Task {
     path: PathBuf,
     depth: u32,
     mtime: UnixTime,
+    identity: Identity,
 }
 
 impl Task {
@@ -69,6 +94,7 @@ impl Task {
 struct Child {
     name: OsString,
     mtime: UnixTime,
+    identity: Identity,
     skip: Option<Skip>,
 }
 
@@ -82,6 +108,12 @@ struct Listing {
     has_git: bool,
 }
 
+/// What the parent passed down, and the grandparent's markers.
+struct Above<'n> {
+    passed: &'n Passed,
+    grandparent_markers: &'n [OsString],
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -90,10 +122,13 @@ pub(super) struct Walk<'a> {
     options: &'a ScanOptions,
     control: &'a ScanControl,
     sink: &'a (dyn Fn(Vec<DirRecord>) + Sync),
+    /// What the root inherits from the unread directories above it.
+    root: Passed,
     rows: Mutex<Vec<DirRecord>>,
     coverage: Mutex<Coverage>,
     next_id: AtomicI64,
     totals: Mutex<TreeTotals>,
+    kinds: [AtomicU64; FileKind::ALL.len()],
 }
 
 impl<'a> Walk<'a> {
@@ -102,14 +137,23 @@ impl<'a> Walk<'a> {
         control: &'a ScanControl,
         sink: &'a (dyn Fn(Vec<DirRecord>) + Sync),
     ) -> Walk<'a> {
+        let area = options
+            .rules
+            .as_ref()
+            .map(|r| r.area_above(options.root().path()));
         Walk {
             options,
             control,
             sink,
+            root: Passed {
+                area: area.unwrap_or_default(),
+                ..Passed::default()
+            },
             rows: Mutex::default(),
             coverage: Mutex::new(Coverage::new(options.gap_limit)),
             next_id: AtomicI64::default(),
             totals: Mutex::default(),
+            kinds: Default::default(),
         }
     }
 
@@ -123,23 +167,31 @@ impl<'a> Walk<'a> {
             path: root.path().to_path_buf(),
             depth: 0,
             mtime: root.mtime(),
+            identity: Identity {
+                device: root.device(),
+                inode: root.inode(),
+            },
         };
         self.process(scope, task);
     }
 
-    /// Sends the rows still buffered and returns the root totals and the
-    /// coverage.
-    pub fn finish(self) -> (TreeTotals, Coverage) {
+    /// Sends the rows still buffered and returns the root totals, the bytes
+    /// by file kind and the coverage.
+    pub fn finish(self) -> (TreeTotals, KindTotals, Coverage) {
         let rest = std::mem::take(&mut *lock(&self.rows));
         if !rest.is_empty() {
             (self.sink)(rest);
         }
+        let mut kinds = KindTotals::default();
+        for (kind, bytes) in FileKind::ALL.into_iter().zip(&self.kinds) {
+            kinds.add(kind, Bytes(bytes.load(Ordering::Relaxed)));
+        }
         let totals = *lock(&self.totals);
+        let coverage = self.coverage.into_inner();
         (
             totals,
-            self.coverage
-                .into_inner()
-                .unwrap_or_else(PoisonError::into_inner),
+            kinds,
+            coverage.unwrap_or_else(PoisonError::into_inner),
         )
     }
 
@@ -160,28 +212,27 @@ impl<'a> Walk<'a> {
 
     fn read<'s>(&'s self, scope: &Scope<'s>, task: Task, entries: Vec<Entry>, dir: DirHandle) {
         let parent = task.parent.map(|(node, _)| node);
-        let listing = self.sort(&task.path, &entries);
-        let chain = parent
-            .as_ref()
-            .map_or_else(empty_chain, |p| Arc::clone(&p.live));
-        let parent_id = parent.as_ref().map(|p| p.id);
-        let (live, own_live) =
-            (self.control.live).register(&chain, task.id, parent_id, &task.name, task.depth);
+        let above = self.above(parent.as_deref());
+        let mut listing = self.sort(&task.path, &entries, above.passed.in_candidate);
+        let (live, own_live) = self.register(&task.name, task.id, task.depth, parent.as_ref());
         add_live(&live, listing.own.bytes, listing.own.files);
         self.control.progress.add_read(&listing.own);
-        let inside_repo = parent.as_ref().is_some_and(|p| p.children_in_repo);
-        self.observe(&task.path, &entries, parent.as_deref(), inside_repo);
+        let markers = std::mem::take(&mut listing.markers);
+        let (rule, passed) =
+            self.judge(&task.path, &entries, &dir, &above, markers, listing.has_git);
+        self.count_kinds(&entries, passed.area);
         let mut tree = TreeTotals::directory(task.mtime);
         tree.add_own(&listing.own, listing.newest);
         let node = Arc::new(Node {
             id: task.id,
             parent,
             name: task.name,
+            identity: task.identity,
             own: listing.own,
+            rule,
+            passed,
             live,
             own_live,
-            markers: listing.markers,
-            children_in_repo: inside_repo || listing.has_git,
             tree: Mutex::new(tree),
             pending: AtomicUsize::new(listing.children.len()),
         });
@@ -197,6 +248,7 @@ impl<'a> Walk<'a> {
                 name: child.name,
                 depth: task.depth + 1,
                 mtime: child.mtime,
+                identity: child.identity,
             };
             match child.skip {
                 Some(skip) => self.finish_unread(task, DirState::Skipped(skip)),
@@ -205,13 +257,27 @@ impl<'a> Walk<'a> {
         }
     }
 
+    fn above<'n>(&'n self, parent: Option<&'n Node>) -> Above<'n> {
+        match parent {
+            Some(node) => Above {
+                passed: &node.passed,
+                grandparent_markers: node.parent.as_deref().map_or(&[], |g| &g.passed.markers),
+            },
+            None => Above {
+                passed: &self.root,
+                grandparent_markers: &[],
+            },
+        }
+    }
+
     /// Own totals, subdirectories with their scope decision, and the names
-    /// the classifier will want.
-    fn sort(&self, path: &Path, entries: &[Entry]) -> Listing {
+    /// the children's classification will want (none inside a candidate).
+    fn sort(&self, path: &Path, entries: &[Entry], in_candidate: bool) -> Listing {
+        let rules = self.options.rules.as_deref().filter(|_| !in_candidate);
         let mut listing = Listing::default();
         for entry in entries {
             listing.has_git |= entry.name == ".git";
-            if self.options.markers.contains(&entry.name) {
+            if rules.is_some_and(|rules| rules.is_marker(&entry.name)) {
                 listing.markers.push(entry.name.clone());
             }
             match entry.meta.kind {
@@ -222,6 +288,10 @@ impl<'a> Walk<'a> {
                         .decide(&path.join(&entry.name), &entry.meta),
                     name: entry.name.clone(),
                     mtime: entry.meta.mtime,
+                    identity: Identity {
+                        device: entry.meta.device,
+                        inode: entry.meta.inode,
+                    },
                 }),
                 _ => {
                     listing.own.add(&entry.meta);
@@ -232,31 +302,102 @@ impl<'a> Walk<'a> {
         listing
     }
 
-    fn observe(&self, path: &Path, entries: &[Entry], parent: Option<&Node>, inside_repo: bool) {
-        if let Some(observer) = &self.options.observer {
-            observer.observe(&DirFacts {
-                path,
-                entries,
-                parent_markers: parent.map_or(&[], |p| &p.markers),
-                grandparent_markers: parent
-                    .and_then(|p| p.parent.as_deref())
-                    .map_or(&[], |g| &g.markers),
-                inside_git_repo: inside_repo,
-                probes: &[],
-            });
+    /// Shows the directory's facts to the observer, classifies it (unless
+    /// it is inside a candidate) and decides what it passes on.
+    fn judge(
+        &self,
+        path: &Path,
+        entries: &[Entry],
+        dir: &DirHandle,
+        above: &Above<'_>,
+        markers: Vec<OsString>,
+        has_git: bool,
+    ) -> (Option<RuleId>, Passed) {
+        let probes = self.probes(dir, entries, above.passed.in_candidate);
+        let facts = DirFacts {
+            path,
+            entries,
+            parent_markers: &above.passed.markers,
+            grandparent_markers: above.grandparent_markers,
+            inside_git_repo: above.passed.in_repo,
+            probes: &probes,
+        };
+        self.observe(&facts);
+        let rules = self.options.rules.as_deref();
+        let classifying = rules.filter(|_| !above.passed.in_candidate);
+        let rule = classifying
+            .and_then(|rules| rules.classify(&facts))
+            .cloned();
+        let in_repo = above.passed.in_repo || has_git;
+        let area = rules.map(|rules| rules.area(above.passed.area, path, in_repo, rule.as_ref()));
+        let passed = Passed {
+            markers,
+            in_repo,
+            in_candidate: above.passed.in_candidate || rule.is_some(),
+            area: area.unwrap_or_default(),
+        };
+        (rule, passed)
+    }
+
+    /// The heads of the files the rules inspect, when the directory holds
+    /// them as regular files on this disk. A file that cannot be read is
+    /// left out, as if it were not there.
+    fn probes(&self, dir: &DirHandle, entries: &[Entry], in_candidate: bool) -> Vec<Probe> {
+        let Some(rules) = self.options.rules.as_deref().filter(|_| !in_candidate) else {
+            return Vec::new();
+        };
+        let wanted = rules.probes();
+        let files = entries.iter().filter(|e| e.meta.kind == EntryKind::File);
+        files
+            .filter(|e| !e.meta.dataless)
+            .filter(|e| wanted.iter().any(|name| e.name == *name))
+            .filter_map(|e| {
+                let head = dir.read_head(&e.name, PROBE_LIMIT).ok()?;
+                let name = e.name.clone();
+                Some(Probe { name, head })
+            })
+            .collect()
+    }
+
+    /// Adds the directory's own files to the scan's bytes by kind.
+    fn count_kinds(&self, entries: &[Entry], area: Area) {
+        let Some(rules) = self.options.rules.as_deref() else {
+            return;
+        };
+        let mut own = KindTotals::default();
+        for entry in entries.iter().filter(|e| e.meta.kind != EntryKind::Dir) {
+            own.add(rules.kind(area, &entry.name), entry.meta.share());
         }
+        for (kind, bytes) in own.iter().filter(|(_, b)| *b != Bytes::default()) {
+            self.kinds[kind as usize].fetch_add(bytes.0, Ordering::Relaxed);
+        }
+    }
+
+    fn observe(&self, facts: &DirFacts<'_>) {
+        if let Some(observer) = &self.options.observer {
+            observer.observe(facts);
+        }
+    }
+
+    /// Registers the directory in the live tree; returns the chain its
+    /// contributions go to and its own counters.
+    fn register(
+        &self,
+        name: &OsString,
+        id: DirId,
+        depth: u32,
+        parent: Option<&Arc<Node>>,
+    ) -> (LiveChain, Option<Arc<LiveCounters>>) {
+        let chain = parent.map_or_else(empty_chain, |p| Arc::clone(&p.live));
+        let parent_id = parent.map(|p| p.id);
+        (self.control.live).register(&chain, id, parent_id, name, depth)
     }
 
     /// Records a directory that is not read: a gap or a skip.
     fn finish_unread(&self, task: Task, state: DirState) {
         let parent = task.parent.map(|(node, _)| node);
         let tree = TreeTotals::directory(task.mtime);
-        let chain = parent
-            .as_ref()
-            .map_or_else(empty_chain, |p| Arc::clone(&p.live));
-        let parent_id = parent.as_ref().map(|p| p.id);
-        let (live, own_live) =
-            (self.control.live).register(&chain, task.id, parent_id, &task.name, task.depth);
+        let (live, own_live) = self.register(&task.name, task.id, task.depth, parent.as_ref());
         add_live(&live, tree.bytes, tree.files);
         if let Some(own) = own_live {
             own.finish();
@@ -264,10 +405,13 @@ impl<'a> Walk<'a> {
         self.note(&task.path, task.depth, state);
         self.emit(DirRecord {
             id: task.id,
-            parent: parent_id,
+            parent: parent.as_ref().map(|p| p.id),
             name: task.name,
+            device: task.identity.device,
+            inode: task.identity.inode,
             state,
             tree,
+            rule: None,
         });
         match parent {
             Some(parent) => self.deliver(parent, &tree),
@@ -310,8 +454,11 @@ impl<'a> Walk<'a> {
                 id: node.id,
                 parent: node.parent.as_ref().map(|p| p.id),
                 name: node.name.clone(),
+                device: node.identity.device,
+                inode: node.identity.inode,
                 state: DirState::Read(node.own),
                 tree,
+                rule: node.rule.clone(),
             });
             let Some(parent) = node.parent.clone() else {
                 *lock(&self.totals) = tree;

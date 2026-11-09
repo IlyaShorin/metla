@@ -7,7 +7,9 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use super::IndexError;
 
-pub const SCHEMA_VERSION: i64 = 1;
+/// Version 2 (M2): directory identity and rule ids in `dirs`, the
+/// candidate index and bytes by file kind.
+pub const SCHEMA_VERSION: i64 = 2;
 
 const WAL_SIZE_LIMIT: i64 = 32 << 20;
 
@@ -15,7 +17,8 @@ const WAL_SIZE_LIMIT: i64 = 32 << 20;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// One row per directory. `own_*` are NULL for a directory that was not
-/// read; `flags` holds its state (see `codec`).
+/// read; `flags` holds its state (see `codec`); `rule_id` is set for a
+/// candidate.
 pub fn dirs_table(name: &str) -> String {
     format!(
         "CREATE TABLE {name} (
@@ -28,13 +31,19 @@ pub fn dirs_table(name: &str) -> String {
             tree_files INTEGER NOT NULL,
             tree_dirs INTEGER NOT NULL,
             tree_mtime INTEGER,
-            flags INTEGER NOT NULL
+            flags INTEGER NOT NULL,
+            device INTEGER NOT NULL,
+            inode INTEGER NOT NULL,
+            rule_id TEXT
         );"
     )
 }
 
+/// `dirs_candidates` holds only the candidate rows, so candidate queries
+/// never read the whole table.
 pub const DIRS_INDEXES: &str = "CREATE INDEX dirs_by_parent ON dirs(parent_id, name);
-     CREATE INDEX dirs_by_size ON dirs(tree_bytes);";
+     CREATE INDEX dirs_by_size ON dirs(tree_bytes);
+     CREATE INDEX dirs_candidates ON dirs(rule_id) WHERE rule_id IS NOT NULL;";
 
 const OTHER_TABLES: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value) WITHOUT ROWID;
      CREATE TABLE coverage_counts (code INTEGER PRIMARY KEY, count INTEGER NOT NULL);
@@ -43,7 +52,8 @@ const OTHER_TABLES: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value) WITH
          depth INTEGER NOT NULL,
          path BLOB NOT NULL,
          flags INTEGER NOT NULL
-     );";
+     );
+     CREATE TABLE kinds (code INTEGER PRIMARY KEY, bytes INTEGER NOT NULL);";
 
 /// Opens (creating if needed) an index for writing.
 pub fn open_for_writing(path: &Path) -> Result<Connection, IndexError> {

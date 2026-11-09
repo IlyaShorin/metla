@@ -5,6 +5,7 @@ use std::time::Duration;
 use super::coverage::Coverage;
 use super::dir::DirId;
 use super::entry::{Bytes, Entry, UnixTime};
+use super::kind::KindTotals;
 use super::totals::TreeTotals;
 
 /// The result of one scan of a root.
@@ -17,6 +18,8 @@ pub struct ScanSummary {
     pub threads: usize,
     /// The root's tree totals.
     pub totals: TreeTotals,
+    /// The root's bytes by file kind (all zero when the scan had no rules).
+    pub kinds: KindTotals,
     pub coverage: Coverage,
 }
 

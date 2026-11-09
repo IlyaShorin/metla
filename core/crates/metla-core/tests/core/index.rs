@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use metla_core::domain::{
-    Bytes, Coverage, DirId, DirRecord, DirState, Errno, Gap, GapAt, OwnTotals, ScanSummary, Skip,
-    TreeTotals, UnixTime,
+    Bytes, Coverage, DirId, DirRecord, DirState, Errno, Gap, GapAt, KindTotals, OwnTotals,
+    ScanSummary, Skip, TreeTotals, UnixTime,
 };
 use metla_core::index::{IndexError, IndexReader, IndexWriter};
 
@@ -23,16 +23,19 @@ fn tree(bytes: u64, files: u64, dirs: u64) -> TreeTotals {
     }
 }
 
-fn read(id: i64, parent: Option<i64>, name: &str, own: u64, total: TreeTotals) -> DirRecord {
+pub fn read(id: i64, parent: Option<i64>, name: &str, own: u64, total: TreeTotals) -> DirRecord {
     DirRecord {
         id: DirId(id),
         parent: parent.map(DirId),
         name: OsString::from(name),
+        device: 7,
+        inode: 1000 + id.unsigned_abs(),
         state: DirState::Read(OwnTotals {
             bytes: Bytes(own),
             files: 1,
         }),
         tree: total,
+        rule: None,
     }
 }
 
@@ -41,11 +44,14 @@ fn unread(id: i64, parent: i64, name: &str, state: DirState) -> DirRecord {
         id: DirId(id),
         parent: Some(DirId(parent)),
         name: OsString::from(name),
+        device: 7,
+        inode: 1000 + id.unsigned_abs(),
         state,
         tree: TreeTotals {
             newest: None,
             ..tree(0, 0, 1)
         },
+        rule: None,
     }
 }
 
@@ -66,7 +72,7 @@ fn picture() -> Vec<DirRecord> {
     ]
 }
 
-fn summary(complete: bool) -> ScanSummary {
+pub fn summary(complete: bool) -> ScanSummary {
     let mut coverage = Coverage::new(10);
     coverage.record_skip(Skip::OtherVolume);
     if !complete {
@@ -83,19 +89,25 @@ fn summary(complete: bool) -> ScanSummary {
         elapsed: Duration::from_secs(10),
         threads: 2,
         totals: tree(410, 5, 8),
+        kinds: KindTotals::default(),
         coverage,
     }
 }
 
-fn write(index: &Path, rows: Vec<DirRecord>, complete: bool) {
-    let writer = IndexWriter::start_scan(index, STARTED).unwrap();
-    for chunk in rows.chunks(3) {
-        writer.send(chunk.to_vec());
-    }
-    writer.finish(&summary(complete)).unwrap();
+pub fn write(index: &Path, rows: Vec<DirRecord>, complete: bool) {
+    write_summary(index, rows, &summary(complete));
 }
 
-fn reader(index: &Path) -> IndexReader {
+pub fn write_summary(index: &Path, rows: Vec<DirRecord>, summary: &ScanSummary) {
+    let mut writer = IndexWriter::open(index).unwrap();
+    let scan = writer.start_scan(STARTED).unwrap();
+    for chunk in rows.chunks(3) {
+        scan.send(chunk.to_vec());
+    }
+    scan.finish(summary).unwrap();
+}
+
+pub fn reader(index: &Path) -> IndexReader {
     IndexReader::open(index).unwrap()
 }
 
@@ -205,9 +217,11 @@ fn an_interrupted_scan_leaves_the_index_incomplete_with_the_old_picture() {
     let fx = Fixture::new();
     let index = fx.path("index.sqlite");
     write(&index, picture(), true);
-    let writer = IndexWriter::start_scan(&index, STARTED).unwrap();
-    writer.send(vec![read(1, None, "", 7, tree(7, 1, 1))]);
-    drop(writer);
+    {
+        let mut writer = IndexWriter::open(&index).unwrap();
+        let scan = writer.start_scan(STARTED).unwrap();
+        scan.send(vec![read(1, None, "", 7, tree(7, 1, 1))]);
+    }
     let (record, root) = reader(&index)
         .read(|snap| Ok((snap.scan()?.unwrap(), snap.root()?.unwrap())))
         .unwrap();
@@ -221,7 +235,10 @@ fn an_interrupted_scan_leaves_the_index_incomplete_with_the_old_picture() {
 fn a_first_scan_that_never_finished_has_no_picture() {
     let fx = Fixture::new();
     let index = fx.path("index.sqlite");
-    drop(IndexWriter::start_scan(&index, STARTED).unwrap());
+    {
+        let mut writer = IndexWriter::open(&index).unwrap();
+        writer.start_scan(STARTED).unwrap();
+    }
     let (record, root) = reader(&index)
         .read(|snap| Ok((snap.scan()?.unwrap(), snap.root()?)))
         .unwrap();
@@ -234,12 +251,13 @@ fn a_first_scan_that_never_finished_has_no_picture() {
 fn a_failed_write_is_reported_when_the_scan_finishes() {
     let fx = Fixture::new();
     let index = fx.path("index.sqlite");
-    let writer = IndexWriter::start_scan(&index, STARTED).unwrap();
-    writer.send(vec![read(1, None, "", 7, tree(7, 1, 1))]);
-    writer.send(vec![read(1, None, "", 7, tree(7, 1, 1))]);
-    writer.send(vec![read(2, Some(1), "late", 7, tree(7, 1, 1))]);
+    let mut writer = IndexWriter::open(&index).unwrap();
+    let scan = writer.start_scan(STARTED).unwrap();
+    scan.send(vec![read(1, None, "", 7, tree(7, 1, 1))]);
+    scan.send(vec![read(1, None, "", 7, tree(7, 1, 1))]);
+    scan.send(vec![read(2, Some(1), "late", 7, tree(7, 1, 1))]);
     assert!(matches!(
-        writer.finish(&summary(true)),
+        scan.finish(&summary(true)),
         Err(IndexError::Sqlite(_))
     ));
     let record = reader(&index).read(|snap| snap.scan()).unwrap().unwrap();
@@ -261,7 +279,7 @@ fn an_index_with_an_unknown_schema_version_is_rejected() {
          INSERT INTO meta VALUES ('schema_version', 99);",
     );
     assert!(matches!(
-        IndexWriter::start_scan(&index, STARTED),
+        IndexWriter::open(&index),
         Err(IndexError::UnknownSchema(Some(99)))
     ));
     assert!(matches!(
@@ -276,7 +294,7 @@ fn a_database_that_is_not_an_index_is_rejected() {
     let index = fx.path("other.sqlite");
     foreign_database(&index, "CREATE TABLE something (x);");
     assert!(matches!(
-        IndexWriter::start_scan(&index, STARTED),
+        IndexWriter::open(&index),
         Err(IndexError::UnknownSchema(None))
     ));
     assert!(matches!(
@@ -405,13 +423,11 @@ fn every_gap_and_skip_code_survives_the_round_trip() {
             DirState::Read(_) => unreachable!(),
         }
     }
-    let writer = IndexWriter::start_scan(&index, STARTED).unwrap();
-    writer.send(rows.clone());
     let scanned = ScanSummary {
         coverage: coverage.clone(),
         ..summary(true)
     };
-    writer.finish(&scanned).unwrap();
+    write_summary(&index, rows.clone(), &scanned);
     let (children, record) = reader(&index)
         .read(|snap| Ok((snap.children(DirId(1))?, snap.scan()?.unwrap())))
         .unwrap();

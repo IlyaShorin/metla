@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
@@ -9,6 +9,7 @@ use metla_core::domain::{
     Bytes, DirFacts, DirId, DirRecord, DirState, Gap, GapKind, ScanSummary, Skip, TreeTotals,
 };
 use metla_core::index::{IndexReader, IndexWriter};
+use metla_core::rules::RuleSet;
 use metla_core::scan::{
     DirObserver, ROW_BATCH, ScanControl, ScanOptions, ScanRoot, ScanScope, run,
 };
@@ -262,43 +263,79 @@ fn a_directory_deleted_during_the_scan_is_a_vanished_gap() {
     assert_eq!(scanned.summary.totals.files, 1);
 }
 
+/// What the observer saw of one directory.
+#[derive(Debug, PartialEq)]
+struct Seen {
+    entries: Vec<OsString>,
+    parent_markers: Vec<OsString>,
+    grandparent_markers: Vec<OsString>,
+    inside_git_repo: bool,
+    probes: Vec<(OsString, Vec<u8>)>,
+}
+
+fn sorted(names: &[OsString]) -> Vec<OsString> {
+    let mut names = names.to_vec();
+    names.sort();
+    names
+}
+
 #[test]
-fn the_observer_gets_entries_parent_markers_and_repository_context() {
+fn the_observer_gets_entries_markers_probes_and_repository_context() {
     let fx = Fixture::new();
     fx.dir("repo/.git");
     fx.dir("repo/target/debug");
     write_file(&fx.path("repo/Cargo.toml"), 1);
     write_file(&fx.path("repo/README"), 1);
+    fs::write(fx.path("repo/target/CACHEDIR.TAG"), "Signature: 1").unwrap();
     fx.dir("plain");
     let seen = Arc::new(Mutex::new(BTreeMap::new()));
     let sink = Arc::clone(&seen);
     let hook = Hook(move |facts: &DirFacts<'_>| {
-        let mut names: Vec<OsString> = facts.entries.iter().map(|e| e.name.clone()).collect();
-        names.sort();
-        let markers = facts.parent_markers.to_vec();
+        let names: Vec<OsString> = facts.entries.iter().map(|e| e.name.clone()).collect();
+        let probes = facts
+            .probes
+            .iter()
+            .map(|p| (p.name.clone(), p.head.clone()));
         sink.lock().unwrap().insert(
             facts.path.to_path_buf(),
-            (names, markers, facts.inside_git_repo),
+            Seen {
+                entries: sorted(&names),
+                parent_markers: sorted(facts.parent_markers),
+                grandparent_markers: sorted(facts.grandparent_markers),
+                inside_git_repo: facts.inside_git_repo,
+                probes: probes.collect(),
+            },
         );
     });
+    let rules = RuleSet::new(&fx.path("home"), OsStr::new("tester"));
     let options = options(fx.root())
-        .markers(vec!["Cargo.toml".into(), ".git".into()])
+        .rules(Arc::new(rules))
         .observer(Arc::new(hook));
     scan_with(&options, &ScanControl::new(64));
     let seen = seen.lock().unwrap();
     let names = |v: &[&str]| v.iter().map(OsString::from).collect::<Vec<_>>();
-    let target = &seen[&fx.path("repo/target")];
-    assert_eq!(target.0, names(&["debug"]));
-    let mut markers = target.1.clone();
-    markers.sort();
-    assert_eq!(markers, names(&[".git", "Cargo.toml"]));
-    assert!(target.2);
-    assert!(seen[&fx.path("repo/target/debug")].2);
-    assert_eq!(seen[&fx.path("repo/target/debug")].1, names(&[]));
-    assert!(!seen[&fx.path("repo")].2);
-    assert!(!seen[&fx.path("plain")].2);
     assert_eq!(
-        seen[&fx.path("repo")].0,
+        seen[&fx.path("repo/target")],
+        Seen {
+            entries: names(&["CACHEDIR.TAG", "debug"]),
+            parent_markers: names(&["Cargo.toml"]),
+            grandparent_markers: names(&[]),
+            inside_git_repo: true,
+            probes: vec![("CACHEDIR.TAG".into(), b"Signature: 1".to_vec())],
+        }
+    );
+    let debug = &seen[&fx.path("repo/target/debug")];
+    assert_eq!(debug.grandparent_markers, names(&["Cargo.toml"]));
+    assert!(debug.inside_git_repo);
+    assert!(!seen[&fx.path("repo")].inside_git_repo);
+    assert_eq!(
+        seen[&fx.path("repo")].probes,
+        [],
+        "only the rules' files are read"
+    );
+    assert!(!seen[&fx.path("plain")].inside_git_repo);
+    assert_eq!(
+        seen[&fx.path("repo")].entries,
         names(&[".git", "Cargo.toml", "README", "target"])
     );
     assert_eq!(seen.len(), 6);
@@ -322,9 +359,10 @@ fn cancelling_stops_reading_and_leaves_the_index_incomplete() {
     });
     let options = options(fx.root()).threads(1).observer(Arc::new(hook));
     let index = fx.path("index.sqlite");
-    let writer = IndexWriter::start_scan(&index, metla_core::fs::now()).unwrap();
-    let summary = run(&options, &control, &|rows| writer.send(rows)).unwrap();
-    writer.finish(&summary).unwrap();
+    let mut writer = IndexWriter::open(&index).unwrap();
+    let scan = writer.start_scan(metla_core::fs::now()).unwrap();
+    let summary = run(&options, &control, &|rows| scan.send(rows)).unwrap();
+    scan.finish(&summary).unwrap();
     assert_eq!(*read.lock().unwrap(), 5);
     assert!(!summary.is_complete());
     assert!(summary.coverage.gaps(GapKind::Cancelled) >= 16);

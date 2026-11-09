@@ -1,5 +1,6 @@
 use std::ffi::OsString;
 
+use super::rule::RuleId;
 use super::totals::{OwnTotals, TreeTotals};
 
 /// Identifies a directory within one scan's picture.
@@ -97,6 +98,11 @@ pub struct DirRecord {
     pub parent: Option<DirId>,
     /// Empty for the root.
     pub name: OsString,
+    /// The directory's device and inode when it was listed.
+    pub device: u64,
+    pub inode: u64,
     pub state: DirState,
     pub tree: TreeTotals,
+    /// The rule the directory matched: it is a candidate.
+    pub rule: Option<RuleId>,
 }

@@ -3,6 +3,7 @@
 
 mod architecture;
 mod category;
+mod classify;
 mod domain;
 mod fs;
 mod index;

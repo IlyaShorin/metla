@@ -3,10 +3,15 @@
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use metla_core::domain::{Category, DirFacts, Entry, FileKind, Probe, RuleId};
 use metla_core::rules::{Area, PROBE_LIMIT, RuleSet};
+use metla_core::scan::ScanControl;
+
+use crate::scan::{options, scan_with};
+use crate::support::{Fixture, write_file};
 
 const HOME: &str = "/Users/tester";
 
@@ -266,6 +271,83 @@ fn a_scan_root_inherits_the_area_of_the_directories_above_it() {
         Area::Developer
     );
     assert_eq!(above("/Users/tester/Documents"), Area::User);
+}
+
+#[test]
+fn a_scan_totals_the_bytes_of_every_file_kind() {
+    let fx = Fixture::new();
+    fx.build(&[
+        "repo/.git/",
+        "repo/package.json",
+        "repo/node_modules/",
+        "home/.npm/_cacache/",
+        "Tool.app/Contents/",
+    ]);
+    let sizes = [
+        ("plain.jpg", 10_000),
+        ("repo/main.c", 20_000),
+        ("repo/node_modules/x.js", 30_000),
+        ("home/.npm/_cacache/blob", 40_000),
+        ("Tool.app/Contents/binary", 50_000),
+    ];
+    for (file, len) in sizes {
+        write_file(&fx.path(file), len);
+    }
+    let allocated = |file: &str| {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(fx.path(file)).unwrap().blocks() * 512
+    };
+    let rules = RuleSet::new(&fx.home(), OsStr::new("tester"));
+    let options = options(fx.root()).rules(Arc::new(rules));
+    let summary = scan_with(&options, &ScanControl::new(64)).summary;
+    let kinds = summary.kinds;
+    // The fixture lives below /private, a system root.
+    assert_eq!(kinds.get(FileKind::System).0, allocated("plain.jpg"));
+    let developer = [
+        "repo/main.c",
+        "repo/node_modules/x.js",
+        "home/.npm/_cacache/blob",
+    ];
+    let developer: u64 = developer.iter().map(|f| allocated(f)).sum();
+    assert_eq!(kinds.get(FileKind::Developer).0, developer);
+    assert_eq!(
+        kinds.get(FileKind::Applications).0,
+        allocated("Tool.app/Contents/binary")
+    );
+    assert_eq!(kinds.total(), summary.totals.bytes);
+}
+
+#[test]
+fn a_scan_without_rules_classifies_nothing_and_totals_no_kinds() {
+    let fx = Fixture::new();
+    fx.build(&[
+        "home/Library/Caches/Homebrew/",
+        "repo/.git/",
+        "repo/Cargo.toml",
+        "repo/target/",
+    ]);
+    write_file(&fx.path("repo/target/x"), 4096);
+    let scanned = scan_with(&options(fx.root()), &ScanControl::new(64));
+    assert!(scanned.records.values().all(|r| r.rule.is_none()));
+    assert_eq!(scanned.summary.kinds.total().0, 0);
+}
+
+#[test]
+fn records_carry_the_directory_device_and_inode() {
+    use std::os::unix::fs::MetadataExt;
+    let fx = Fixture::new();
+    fx.build(&["a/b/", "c/"]);
+    let path = |p: &str| -> PathBuf { fx.path(p) };
+    let scanned = scan_with(&options(fx.root()), &ScanControl::new(64));
+    for dir in ["", "a", "a/b", "c"] {
+        let meta = std::fs::metadata(path(dir)).unwrap();
+        let record = scanned.at(&path(dir));
+        assert_eq!(
+            (record.device, record.inode),
+            (meta.dev() as u64, meta.ino()),
+            "{dir}"
+        );
+    }
 }
 
 #[test]

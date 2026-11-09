@@ -31,10 +31,11 @@ pub fn scan(root: &Path, index: &Path, threads: Option<usize>) -> Result<ScanRep
     let scope = ScanScope::detect(&root).map_err(|e| e.to_string())?;
     let threads = threads.unwrap_or_else(|| default_threads(cores()));
     let options = ScanOptions::new(root, scope).threads(threads);
-    let writer = IndexWriter::start_scan(index, now()).map_err(|e| e.to_string())?;
+    let mut writer = IndexWriter::open(index).map_err(|e| e.to_string())?;
+    let session = writer.start_scan(now()).map_err(|e| e.to_string())?;
     let control = ScanControl::new(LIVE_LIMIT);
-    let summary = run(&options, &control, &|rows| writer.send(rows)).map_err(|e| e.to_string())?;
-    writer.finish(&summary).map_err(|e| e.to_string())?;
+    let summary = run(&options, &control, &|rows| session.send(rows)).map_err(|e| e.to_string())?;
+    session.finish(&summary).map_err(|e| e.to_string())?;
     let volume = volume(&summary.root)
         .ok()
         .and_then(|v| VolumeUse::of(&v, &summary.root));

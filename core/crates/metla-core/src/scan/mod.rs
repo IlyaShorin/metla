@@ -5,7 +5,6 @@ mod control;
 mod scope;
 mod walk;
 
-use std::ffi::OsString;
 use std::fmt;
 use std::io;
 use std::os::unix::fs::MetadataExt;
@@ -15,6 +14,7 @@ use std::time::Instant;
 
 use crate::domain::{DirFacts, DirRecord, ScanSummary, UnixTime};
 use crate::fs::{now, raise_open_file_limit};
+use crate::rules::RuleSet;
 
 pub use control::{LIVE_DEPTH, ScanControl};
 pub use scope::ScanScope;
@@ -31,6 +31,7 @@ pub const GAP_LIMIT: usize = 32;
 pub struct ScanRoot {
     path: PathBuf,
     device: u64,
+    inode: u64,
     mtime: UnixTime,
 }
 
@@ -44,6 +45,7 @@ impl ScanRoot {
         Ok(ScanRoot {
             path,
             device: meta.dev(),
+            inode: meta.ino(),
             mtime: UnixTime(meta.mtime()),
         })
     }
@@ -54,6 +56,10 @@ impl ScanRoot {
 
     pub fn device(&self) -> u64 {
         self.device
+    }
+
+    pub fn inode(&self) -> u64 {
+        self.inode
     }
 
     pub fn mtime(&self) -> UnixTime {
@@ -72,19 +78,19 @@ pub struct ScanOptions {
     root: ScanRoot,
     scope: ScanScope,
     threads: usize,
-    markers: Vec<OsString>,
+    rules: Option<Arc<RuleSet>>,
     gap_limit: usize,
     observer: Option<Arc<dyn DirObserver>>,
 }
 
 impl ScanOptions {
-    /// One thread, no markers, no observer.
+    /// One thread, no rules, no observer.
     pub fn new(root: ScanRoot, scope: ScanScope) -> ScanOptions {
         ScanOptions {
             root,
             scope,
             threads: 1,
-            markers: Vec::new(),
+            rules: None,
             gap_limit: GAP_LIMIT,
             observer: None,
         }
@@ -95,9 +101,9 @@ impl ScanOptions {
         self
     }
 
-    /// Entry names the observer is told about in each child's facts.
-    pub fn markers(mut self, markers: Vec<OsString>) -> ScanOptions {
-        self.markers = markers;
+    /// Classify every directory with `rules` and total the file kinds.
+    pub fn rules(mut self, rules: Arc<RuleSet>) -> ScanOptions {
+        self.rules = Some(rules);
         self
     }
 
@@ -150,7 +156,7 @@ pub fn run(
     let clock = Instant::now();
     let walk = walk::Walk::new(options, control, sink);
     pool.scope(|scope| walk.run(scope));
-    let (totals, coverage) = walk.finish();
+    let (totals, kinds, coverage) = walk.finish();
     Ok(ScanSummary {
         root: options.root.path.clone(),
         started,
@@ -158,6 +164,7 @@ pub fn run(
         elapsed: clock.elapsed(),
         threads: options.threads,
         totals,
+        kinds,
         coverage,
     })
 }

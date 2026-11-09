@@ -5,12 +5,14 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use rusqlite::types::FromSql;
-use rusqlite::{Connection, OptionalExtension, Params, params};
+use rusqlite::{Connection, OptionalExtension, Params, Statement, params};
 
-use super::codec::{COLUMNS, Row, count, gap, gap_kind, int, path_from, skip};
+use super::codec::{COLUMNS, Row, count, gap, gap_kind, int, kind, path_from, skip};
 use super::schema::open_for_reading;
 use super::{IndexError, Picture, ScanRecord};
-use crate::domain::{Coverage, DirId, DirRecord, GapAt, GapKind, Skip, UnixTime};
+use crate::domain::{
+    Bytes, Coverage, DirId, DirRecord, GapAt, GapKind, KindTotals, Skip, UnixTime,
+};
 
 /// Stored gap counts and skip counts.
 type Counts = (Vec<(GapKind, u64)>, Vec<(Skip, u64)>);
@@ -104,26 +106,16 @@ impl Snapshot<'_> {
 
     /// The full path of a directory of the picture.
     pub fn path_of(&self, id: DirId) -> Result<Option<PathBuf>, IndexError> {
-        let mut names = Vec::new();
-        let mut next = Some(id);
-        while let Some(current) = next {
-            let Some(row) = self.by_id(current)? else {
-                return Ok(None);
-            };
-            if row.parent.is_some() {
-                names.push(row.name);
-            }
-            next = row.parent;
-        }
-        let root = self.picture_root()?.unwrap_or_default();
-        Ok(Some(
-            names.iter().rev().fold(root, |path, name| path.join(name)),
-        ))
+        self.lineage()?.path(id)
     }
 
-    fn by_id(&self, id: DirId) -> Result<Option<DirRecord>, IndexError> {
-        let sql = format!("SELECT {COLUMNS} FROM dirs WHERE id = ?1");
-        Ok(self.records(&sql, [id.0])?.pop())
+    fn lineage(&self) -> Result<Lineage<'_>, IndexError> {
+        Ok(Lineage {
+            statement: self
+                .conn
+                .prepare("SELECT parent_id, name FROM dirs WHERE id = ?1")?,
+            root: self.picture_root()?.unwrap_or_default(),
+        })
     }
 
     fn child(&self, parent: DirId, name: &OsStr) -> Result<Option<DirRecord>, IndexError> {
@@ -161,8 +153,18 @@ impl Snapshot<'_> {
             started: UnixTime(self.meta("picture_started")?.unwrap_or_default()),
             finished: UnixTime(self.meta("picture_finished")?.unwrap_or_default()),
             coverage: self.coverage()?,
+            kinds: self.kinds()?,
             scan,
         }))
+    }
+
+    fn kinds(&self) -> Result<KindTotals, IndexError> {
+        let mut kinds = KindTotals::default();
+        let sql = "SELECT code, bytes FROM kinds";
+        for (code, bytes) in self.query(sql, |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))? {
+            kinds.add(kind(code)?, Bytes(count(bytes)));
+        }
+        Ok(kinds)
     }
 
     fn coverage(&self) -> Result<Coverage, IndexError> {
@@ -213,5 +215,36 @@ impl Snapshot<'_> {
             .query_map([], map)?
             .collect::<Result<Vec<T>, _>>()?;
         Ok(rows)
+    }
+}
+
+/// Builds paths of the picture's directories from their parent links, with
+/// one prepared statement for any number of paths.
+struct Lineage<'c> {
+    statement: Statement<'c>,
+    root: PathBuf,
+}
+
+impl Lineage<'_> {
+    fn path(&mut self, id: DirId) -> Result<Option<PathBuf>, IndexError> {
+        let mut names = Vec::new();
+        let mut next = Some(id);
+        while let Some(current) = next {
+            let step = self
+                .statement
+                .query_row([current.0], |r| {
+                    Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Vec<u8>>(1)?))
+                })
+                .optional()?;
+            let Some((parent, name)) = step else {
+                return Ok(None);
+            };
+            names.extend(parent.map(|_| name));
+            next = parent.map(DirId);
+        }
+        let path = names.iter().rev().fold(self.root.clone(), |path, name| {
+            path.join(OsStr::from_bytes(name))
+        });
+        Ok(Some(path))
     }
 }

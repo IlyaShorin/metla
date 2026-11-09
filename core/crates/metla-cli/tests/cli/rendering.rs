@@ -7,8 +7,8 @@ use metla_cli::{
     scan_json, scan_text, signed_bytes, top_text,
 };
 use metla_core::domain::{
-    Bytes, Coverage, DirState, Errno, Gap, GapAt, OwnTotals, ScanSummary, Skip, TreeTotals,
-    UnixTime,
+    Bytes, Coverage, DirState, Errno, Gap, GapAt, KindTotals, OwnTotals, ScanSummary, Skip,
+    TreeTotals, UnixTime,
 };
 use metla_core::fs::Volume;
 
@@ -110,6 +110,7 @@ fn report(volume: Option<VolumeUse>) -> ScanReport {
                 dirs: 1_200,
                 newest: None,
             },
+            kinds: KindTotals::default(),
             coverage,
         },
         peak_rss: Bytes(25_000_000),

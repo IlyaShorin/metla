@@ -1,7 +1,8 @@
 //! The SQLite index: one row per directory, plus the scan metadata.
 //!
 //! Only [`IndexWriter`] writes: its read-write connection is owned by one
-//! writer thread and never handed out. [`IndexReader`]s open their own
+//! writer thread and never handed out; scans are commands to that
+//! thread. [`IndexReader`]s open their own
 //! read-only connections. A scan is written into a staging table and
 //! swapped in by one transaction when it finishes, so a reader sees either
 //! the previous picture or the new one, never a mix.
@@ -14,10 +15,10 @@ mod writer;
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::domain::{Coverage, UnixTime};
+use crate::domain::{Coverage, KindTotals, UnixTime};
 
 pub use reader::{IndexReader, Snapshot};
-pub use writer::IndexWriter;
+pub use writer::{IndexWriter, ScanWriter};
 
 /// What the index says about scanning.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,11 +32,19 @@ pub struct ScanRecord {
 }
 
 impl ScanRecord {
+    /// The picture is from the latest scan: no scan started since has
+    /// been left unfinished (or is still running).
+    pub fn is_current(&self) -> bool {
+        self.picture.as_ref().is_some_and(|p| p.scan == self.latest)
+    }
+
     /// The latest scan finished and saw everything it wanted to see.
     pub fn is_complete(&self) -> bool {
-        self.picture
-            .as_ref()
-            .is_some_and(|p| p.scan == self.latest && p.coverage.is_complete())
+        self.is_current()
+            && self
+                .picture
+                .as_ref()
+                .is_some_and(|p| p.coverage.is_complete())
     }
 }
 
@@ -46,6 +55,8 @@ pub struct Picture {
     pub started: UnixTime,
     pub finished: UnixTime,
     pub coverage: Coverage,
+    /// The scan's bytes by file kind.
+    pub kinds: KindTotals,
     scan: i64,
 }
 

@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 
 use super::IndexError;
 use crate::domain::{
-    Bytes, DirId, DirRecord, DirState, Errno, Gap, GapKind, OwnTotals, Skip, TreeTotals, UnixTime,
+    Bytes, DirId, DirRecord, DirState, Errno, FileKind, Gap, GapKind, OwnTotals, RuleId, Skip,
+    TreeTotals, UnixTime,
 };
 
 const READ: i64 = 0;
@@ -27,6 +28,29 @@ pub fn int(value: u64) -> i64 {
 
 pub fn count(value: i64) -> u64 {
     value.unsigned_abs()
+}
+
+/// A device or inode number, stored with its bit pattern.
+pub fn id_bits(value: u64) -> i64 {
+    value.cast_signed()
+}
+
+pub fn id_from(bits: i64) -> u64 {
+    bits.cast_unsigned()
+}
+
+/// File kinds are stored as 0, 1, ... in the order of `FileKind::ALL`.
+pub fn kind_code(kind: FileKind) -> i64 {
+    code_in(&FileKind::ALL, 0, &kind)
+}
+
+pub fn kind(code: i64) -> Result<FileKind, IndexError> {
+    value_in(&FileKind::ALL, 0, code).ok_or_else(|| corrupt("kind code", code))
+}
+
+pub fn rule(id: Option<String>) -> Result<Option<RuleId>, IndexError> {
+    id.map(|id| RuleId::parse(&id).ok_or_else(|| IndexError::Corrupt(format!("rule id {id}"))))
+        .transpose()
 }
 
 fn code_in<T: PartialEq>(all: &[T], base: i64, value: &T) -> i64 {
@@ -121,63 +145,65 @@ pub fn path_from(bytes: Vec<u8>) -> PathBuf {
 }
 
 pub const COLUMNS: &str = "id, parent_id, name, own_bytes, own_files, \
-     tree_bytes, tree_files, tree_dirs, tree_mtime, flags";
+     tree_bytes, tree_files, tree_dirs, tree_mtime, flags, device, inode, rule_id";
 
-/// The stored columns of a row, before they are interpreted.
-pub struct Row {
-    id: i64,
-    parent: Option<i64>,
-    name: Vec<u8>,
-    flags: i64,
-    own_bytes: Option<i64>,
-    own_files: Option<i64>,
-    tree: StoredTree,
-}
+/// The stored columns of a row, in the order of [`COLUMNS`], before they
+/// are interpreted.
+type Columns = (
+    i64,
+    Option<i64>,
+    Vec<u8>,
+    Option<i64>,
+    Option<i64>,
+    i64,
+    i64,
+    i64,
+    Option<i64>,
+    i64,
+    i64,
+    i64,
+    Option<String>,
+);
 
-struct StoredTree {
-    bytes: i64,
-    files: i64,
-    dirs: i64,
-    mtime: Option<i64>,
-}
+/// A row as stored.
+pub struct Row(Columns);
 
 impl Row {
     /// Reads a row selected with [`COLUMNS`].
     pub fn from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
-        Ok(Row {
-            id: row.get(0)?,
-            parent: row.get(1)?,
-            name: row.get(2)?,
-            own_bytes: row.get(3)?,
-            own_files: row.get(4)?,
-            tree: StoredTree::from_sql(row)?,
-            flags: row.get(9)?,
-        })
+        Ok(Row(row.try_into()?))
     }
 
     pub fn record(self) -> Result<DirRecord, IndexError> {
+        let (
+            id,
+            parent,
+            name,
+            own_bytes,
+            own_files,
+            bytes,
+            files,
+            dirs,
+            mtime,
+            flags,
+            device,
+            inode,
+            rule_id,
+        ) = self.0;
         Ok(DirRecord {
-            id: DirId(self.id),
-            parent: self.parent.map(DirId),
-            name: OsString::from_vec(self.name),
-            state: state(self.own_bytes, self.own_files, self.flags)?,
+            id: DirId(id),
+            parent: parent.map(DirId),
+            name: OsString::from_vec(name),
+            device: id_from(device),
+            inode: id_from(inode),
+            state: state(own_bytes, own_files, flags)?,
             tree: TreeTotals {
-                bytes: Bytes(count(self.tree.bytes)),
-                files: count(self.tree.files),
-                dirs: count(self.tree.dirs),
-                newest: self.tree.mtime.map(UnixTime),
+                bytes: Bytes(count(bytes)),
+                files: count(files),
+                dirs: count(dirs),
+                newest: mtime.map(UnixTime),
             },
-        })
-    }
-}
-
-impl StoredTree {
-    fn from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredTree> {
-        Ok(StoredTree {
-            bytes: row.get(5)?,
-            files: row.get(6)?,
-            dirs: row.get(7)?,
-            mtime: row.get(8)?,
+            rule: rule(rule_id)?,
         })
     }
 }
