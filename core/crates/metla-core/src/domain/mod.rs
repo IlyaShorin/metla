@@ -15,5 +15,5 @@ pub use dir::{DirId, DirRecord, DirState, Errno, Gap, GapKind, Skip};
 pub use entry::{BLOCK_SIZE, Bytes, Entry, EntryKind, EntryMeta, UnixTime};
 pub use kind::{FileKind, KindTotals};
 pub use rule::{Category, Disposal, QuickCategory, RuleId};
-pub use scan::{DirFacts, LiveDir, ProgressSnapshot, ScanSummary};
+pub use scan::{DirFacts, LiveDir, Probe, ProgressSnapshot, ScanSummary};
 pub use totals::{OwnTotals, TreeTotals};

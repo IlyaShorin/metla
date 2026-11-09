@@ -52,14 +52,26 @@ pub struct LiveDir {
 }
 
 /// What the walker knows about one directory it has just read: the input a
-/// pure classifier needs, at no extra I/O.
+/// pure classifier needs.
 #[derive(Clone, Copy, Debug)]
 pub struct DirFacts<'a> {
     pub path: &'a Path,
     pub entries: &'a [Entry],
-    /// The parent's entries whose names are in the marker list the scan was
-    /// given.
+    /// The parent's entries whose names the rules want as markers.
     pub parent_markers: &'a [OsString],
+    /// The same for the grandparent.
+    pub grandparent_markers: &'a [OsString],
     /// An ancestor directory contains `.git`.
     pub inside_git_repo: bool,
+    /// The heads of the small files the rules asked for, when the
+    /// directory holds them as regular files.
+    pub probes: &'a [Probe],
+}
+
+/// The first bytes of a small file a rule inspects (a `.git` pointer, a
+/// `CACHEDIR.TAG`), read by the walker with a bounded read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Probe {
+    pub name: OsString,
+    pub head: Vec<u8>,
 }

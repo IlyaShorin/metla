@@ -6,6 +6,7 @@ mod category;
 mod domain;
 mod fs;
 mod index;
+mod rules;
 mod scan;
 mod scope;
 mod support;

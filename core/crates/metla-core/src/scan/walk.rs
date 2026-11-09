@@ -238,7 +238,11 @@ impl<'a> Walk<'a> {
                 path,
                 entries,
                 parent_markers: parent.map_or(&[], |p| &p.markers),
+                grandparent_markers: parent
+                    .and_then(|p| p.parent.as_deref())
+                    .map_or(&[], |g| &g.markers),
                 inside_git_repo: inside_repo,
+                probes: &[],
             });
         }
     }
