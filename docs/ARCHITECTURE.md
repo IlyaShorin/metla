@@ -63,7 +63,7 @@ from the engine, called off the main thread.
 The rule is one table in `core/crates/metla-core/tests/core/architecture.rs`,
 which fails when a module's source refers to a module (`crate::x`, grouped
 imports, or `super::` climbing out of the module) the table does not allow.
-Until `engine` exists (M1), `metla-cli` calls `scan`, `index` and `fs`
+Until `engine` exists, `metla-cli` calls `scan`, `index`, `rules` and `fs`
 directly; that is the one temporary exception.
 
 ## 3. Domain model
@@ -96,6 +96,19 @@ impl Category {
 | `Temp`          | `MoveToTrash` (Trash contents: `DeletePermanently`) | never | always a separate confirmation |
 | `GitWorktree`   | `GitWorktreeRemove`  | never                | only clean, pushed, unlocked, unmanaged worktrees |
 
+`Category::disposal()` and `Category::quick()` are exhaustive `match`es, so a
+new category cannot exist without both decisions; a test pins the table.
+The one exception in the Temp row lives next to them: `RuleId::disposal()`
+returns `DeletePermanently` for `temp.trash` (the Trash's contents cannot be
+moved to the Trash) and the category's disposal for every other rule.
+
+A rule id (`RuleId`) is the category's name, a dot and the rule's name
+(`dev-cache.npm`); the category is part of the id, so an id and its
+category cannot disagree, and the index needs no catalogue to group
+candidates. `Category::preselected(activity, recency)` is false for build
+output active within `Recency`'s age (default 14 days; `now` is passed in,
+there is no clock in `domain`, `rules` or `index`) and for worktrees.
+
 Cleanup is requested through two different entry points with different types:
 
 ```rust
@@ -108,7 +121,10 @@ engine.quick_clean(allowed: Vec<QuickCategory>) -> CleanupReport
 `QuickCategory` for them. The quick-clean switch in Settings therefore cannot
 lift the confirmation requirement for other categories.
 
-Other core types: `Candidate` (directory + rule + size + activity),
+Other core types: `Candidate` (id, path, rule, size, file count, activity,
+device and inode for revalidation, preselected), `Exclusion` (an absolute
+path; `hides(path)` is the one place exclusion semantics live), `FileKind`
+and `KindTotals` (bytes per kind for a whole scan),
 `ScanState`, `Coverage` (what the analysis could not see), `Freshness`
 (when the picture was last true), `WorktreeStatus`, `CleanupReport`
 (`found`, `removed`, per-item outcome, measured `freed`).
@@ -117,7 +133,10 @@ Other core types: `Candidate` (directory + rule + size + activity),
 
 * Only metadata is read (`lstat`/`getattrlistbulk`). File contents are never
   opened, with two tiny exceptions used for verification: a worktree's `.git`
-  pointer file and a `CACHEDIR.TAG` signature.
+  pointer file and a `CACHEDIR.TAG` signature. The walker reads them during
+  the scan, only outside candidates, only as regular files that are not
+  cloud placeholders, with `O_NOFOLLOW | O_NONBLOCK` and at most 2048 bytes
+  (`DirHandle::read_head`).
 * Size is **allocated size**. Sparse and transparently compressed files are
   therefore counted by what they occupy, not by logical length.
 * Symlinks are never followed; a symlink counts as itself.
@@ -167,7 +186,10 @@ SQLite in WAL mode at `~/Library/Application Support/Metla/index.sqlite`,
 using the system `libsqlite3`.
 
 * **One writer.** A single thread owns the write connection and receives
-  batches through a bounded channel. Readers use their own connections.
+  commands through a bounded channel: start a scan, rows, finish the scan,
+  add or remove an exclusion. `IndexWriter::open` starts it; a scan is a
+  session (`start_scan(&mut self) -> ScanWriter`), so only one scan can be
+  written at a time. Readers use their own connections.
 * **Directories only.** One row per directory with its own and subtree
   totals. Files are not stored; when the user expands a directory its files
   are listed live by one `readdir` off the UI thread. A Mac with millions of
@@ -177,22 +199,27 @@ using the system `libsqlite3`.
 ```
 dirs(id, parent_id, name BLOB, own_bytes, own_files,
      tree_bytes, tree_files, tree_dirs, tree_mtime,
-     flags, rule_id, kinds BLOB)
+     flags, device, inode, rule_id TEXT)
 meta(key, value)        -- schema version, root, volume UUID, last FSEvents id,
                         -- last full scan start/finish, completeness
 coverage_counts(code, count)                  -- gaps and skips by kind
 coverage_gaps(rank, depth, path BLOB, flags)  -- the shallowest gaps
-exclusions(path)        -- user "keep this" list
-worktrees(dir_id, status_json, checked_at)
+kinds(code, bytes)      -- the picture's bytes per file kind (whole scan)
+exclusions(path BLOB)   -- user "keep this" list
+worktrees(dir_id, status_json, checked_at)    -- M3
 ```
 
 A candidate is a `dirs` row with a non-null `rule_id`; its size is the row's
-`tree_bytes`. There is no second copy of the number.
+`tree_bytes`. There is no second copy of the number. File kinds are totals
+of the whole scan, stored with the picture, not per directory.
 
-Schema version 1 (M1) has `dirs` without `rule_id` and `kinds`, plus `meta`
-and the two coverage tables; the rest arrives with the milestones that use
-it. Opening a file whose `schema_version` is not 1, or that has no Metla
-metadata, fails with `IndexError::UnknownSchema` instead of misreading it.
+Schema version 2 (M2) adds `device`, `inode` (the directory's identity when
+listed, stored with their bit pattern) and `rule_id` (the stable rule id)
+to `dirs`, the partial index `dirs_candidates ON dirs(rule_id) WHERE
+rule_id IS NOT NULL`, and the `kinds` and `exclusions` tables. Opening a
+file whose `schema_version` is not 2 (an M1 index included), or that has
+no Metla metadata, fails with `IndexError::UnknownSchema` instead of
+misreading it; the CLI's indexes are disposable and are rebuilt by a scan.
 
 * **Rows.** Names are stored as raw bytes. `own_bytes`/`own_files` are NULL
   for a directory that was not read. `flags` holds the directory's state:
@@ -217,6 +244,14 @@ metadata, fails with `IndexError::UnknownSchema` instead of misreading it.
 * WAL with `synchronous = NORMAL`; automatic checkpoints only (they never
   wait for readers) and `journal_size_limit` to cut the WAL back after
   them.
+* **Candidate queries** read only candidate rows (`INDEXED BY
+  dirs_candidates`), largest first, inside one read transaction: tallies per
+  rule and per category (every category present), one page of a category,
+  and one candidate by id. Exclusions are applied while reading — a
+  candidate's path is rebuilt from its parent links with one prepared
+  statement and checked with `Exclusion::hides` — so changing an exclusion
+  needs no rescan. `preselected` is computed from `tree_mtime` and the
+  `Recency` the caller passes; it is never stored.
 
 ## 6. Scanning
 
@@ -228,8 +263,10 @@ metadata, fails with `IndexError::UnknownSchema` instead of misreading it.
   counters that descendants add to, so the UI shows growing numbers during
   the first scan while deep rows are still being written.
 * **Classification is free.** The walker already has each directory's entry
-  names; the rule engine is a pure function of those names and the path. No
-  extra I/O happens at scan time.
+  names; the rule engine is a pure function of those names and the path. The
+  only extra I/O is the bounded read of a `.git` pointer file or a
+  `CACHEDIR.TAG` where a directory holds one (outside candidates); measured
+  in PERFORMANCE.md.
 * Errors (`EACCES`, `EPERM`, `ENOENT` races, I/O errors) mark the directory
   and are aggregated into `Coverage`. A scan that met them is "partial".
 * Cancellation is cooperative (checked per directory). Parallelism and I/O
@@ -258,8 +295,20 @@ How the walk is built (M1):
   number, each with counters every descendant adds its own totals to).
 * The walker hands an optional observer the *directory facts* of every
   directory it reads, before its subdirectories are read: path, entries,
-  the parent's entries named in a marker list, and whether an ancestor
-  contains `.git`. M2's classifier plugs in there.
+  the marker entries of the parent and of the grandparent, whether an
+  ancestor contains `.git`, and the probed heads of `.git` / `CACHEDIR.TAG`.
+* With a rule set (`ScanOptions::rules`) the walker classifies each read
+  directory from those facts and records the rule in the row. What a
+  directory passes to its children travels down the way totals travel up:
+  its marker entries (`RuleSet::is_marker`, kept only outside candidates),
+  whether it is in a repository, whether it is or lies inside a candidate
+  (then nothing below is classified or probed; sizes are still counted),
+  and its file-kind *area*. Files are totalled per kind into the scan
+  summary. The scan root inherits the area of the directories above it but
+  not their repository or candidate status.
+* System calls that fail with `EINTR` (`open`, `openat`, `fstatat`,
+  `fstat`, `readdir`, `read`) are repeated instead of turning the
+  directory into a gap.
 
 ## 7. Watching and incremental refresh
 
@@ -298,17 +347,30 @@ what each profile means.
 
 See [RULES.md](RULES.md) for the catalogue. Principles:
 
+* The catalogue is data (`rules/catalogue.rs`); `RuleSet::new(home, user)`
+  compiles it for one home directory, which is always passed in. The
+  module is pure: no file system, no environment, no clock.
 * Known tool locations are matched by exact path patterns under the home
-  directory (for example `~/Library/Caches/Homebrew`).
+  directory (for example `~/Library/Caches/Homebrew`), compiled into a
+  component trie: a directory costs one map lookup per path component, and
+  paths deeper than the deepest pattern are rejected without a lookup.
+  Literal components win over `*`; a last `*` never claims a name another
+  pattern spells out; per-rule deny lists; `[a|b]` conditions one or two
+  levels up.
 * Project build output is matched only when **all** hold: the directory name
   matches, the rule's marker is present (for example a sibling `Cargo.toml`
-  or an inner `CACHEDIR.TAG`), the directory is inside a Git repository, and
+  or an inner `CACHEDIR.TAG` with the standard signature), the directory is
+  inside a Git repository, it is not inside an installed package tree
+  (below `node_modules`, `site-packages`, `dist-packages` or `Cellar`), and
   — checked again before removal — Git reports the path as ignored.
+* A linked worktree is recognised from its `.git` pointer file alone.
+* Precedence: location, then worktree, then project output; then catalogue
+  order.
 * A directory named `cache`, `build` or `dist` with no verifiable marker is
   never a candidate.
-* Nothing inside a candidate is classified again.
-* A user *exclusion* removes a path (and everything under it) from
-  candidates.
+* Nothing inside a candidate is classified again (worktrees included).
+* A user *exclusion* removes a path, everything under it and every
+  candidate that holds it from the candidates.
 
 ## 9. Cleaning
 
