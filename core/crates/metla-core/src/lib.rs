@@ -4,3 +4,4 @@
 //! by `tests/core/architecture.rs`.
 
 pub mod domain;
+pub mod fs;
