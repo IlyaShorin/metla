@@ -60,6 +60,12 @@ nothing. Nothing depends on `engine` except the two outer crates. The UI never
 touches the file system for analysis; every listing, size and candidate comes
 from the engine, called off the main thread.
 
+The rule is one table in `core/crates/metla-core/tests/core/architecture.rs`,
+which fails when a module's source refers to a module (`crate::x`, grouped
+imports, or `super::` climbing out of the module) the table does not allow.
+Until `engine` exists (M1), `metla-cli` calls `scan`, `index` and `fs`
+directly; that is the one temporary exception.
+
 ## 3. Domain model
 
 The model makes the dangerous states unrepresentable instead of checking for
@@ -117,16 +123,43 @@ Other core types: `Candidate` (directory + rule + size + activity),
 * Symlinks are never followed; a symlink counts as itself.
 * A file with `nlink > 1` contributes `allocated / nlink` per link, which is
   stateless (works for incremental rescans) and sums to the right total when
-  all links are on the scanned volume.
+  all links are on the scanned volume. The division rounds down, so a file
+  with three links can be a few bytes short.
+* A directory's own inode contributes nothing. APFS reports no allocated
+  blocks for directories (their entries live in the file-system tree), and
+  what a directory holds is counted through its entries.
 * APFS clones and snapshots cannot be detected from metadata. Sums can exceed
   physical usage, and removing a clone may free nothing. All sizes are shown
   as estimates; only the free-space delta measured after a cleanup is called
   "freed".
 * Dataless (cloud placeholder) directories are not descended into, so a scan
   never triggers a download.
-* The walk starts at `/` and stays on the system and data volumes. Other
-  mounts (`/Volumes/*`, network, disk images) and `/System/Volumes` are
-  skipped and reported as skipped.
+* **Scan scope, as data.** A scan stays on its root's device and records,
+  without descending, every directory on another device (another volume, a
+  disk image, a network share, `/dev`, autofs), every dataless placeholder
+  and every path on the scope's exclusion list. These are *skips*: counted
+  in coverage, but they do not make a scan partial. Only *gaps* (denied,
+  failed, vanished, cancelled) do.
+* **The root `/`.** On current macOS the sealed system volume and the data
+  volume form a volume group. Files on both report the data volume's
+  device; the data volume appears inside `/` through firmlinks (`/Users`,
+  `/Applications`, `/Library`, `/private`, ..., listed in
+  `/usr/share/firmlinks`) and is mounted a second time at
+  `/System/Volumes/Data`. Walking both would count the data volume twice;
+  skipping the second mount would miss what only it holds (the Spotlight
+  index, `.fseventsd`, document revisions, update staging). So the scope
+  walks `/System/Volumes/Data` but excludes each firmlink target inside it
+  whose firmlink source lies under the root (a scan of `/System` keeps
+  `/System/Volumes/Data/Users`). Without a firmlink list such a second
+  mount is skipped whole. The other `/System/Volumes/*` (VM, Preboot,
+  Update, ...) are separate devices and are skipped, like `/Volumes/*`.
+  `/.vol`, `/.nofollow` and `/.resolve` are views of the file system rather
+  than directories and are excluded. The policy is `ScanScope::plan`, a pure
+  function of the root, its device, the mount table and the firmlink list.
+* **Unaccounted.** For a volume root the CLI reports used space (total −
+  available, as Finder counts it) minus the scanned total. The difference
+  holds the container's other volumes, APFS snapshots, purgeable space,
+  metadata and gaps; it is negative when clones are counted more than once.
 
 ## 5. Index
 
@@ -142,17 +175,48 @@ using the system `libsqlite3`.
   stays bounded by the page cache.
 
 ```
-dirs(id, parent_id, name, own_bytes, own_files,
+dirs(id, parent_id, name BLOB, own_bytes, own_files,
      tree_bytes, tree_files, tree_dirs, tree_mtime,
      flags, rule_id, kinds BLOB)
 meta(key, value)        -- schema version, root, volume UUID, last FSEvents id,
                         -- last full scan start/finish, completeness
+coverage_counts(code, count)                  -- gaps and skips by kind
+coverage_gaps(rank, depth, path BLOB, flags)  -- the shallowest gaps
 exclusions(path)        -- user "keep this" list
 worktrees(dir_id, status_json, checked_at)
 ```
 
 A candidate is a `dirs` row with a non-null `rule_id`; its size is the row's
 `tree_bytes`. There is no second copy of the number.
+
+Schema version 1 (M1) has `dirs` without `rule_id` and `kinds`, plus `meta`
+and the two coverage tables; the rest arrives with the milestones that use
+it. Opening a file whose `schema_version` is not 1, or that has no Metla
+metadata, fails with `IndexError::UnknownSchema` instead of misreading it.
+
+* **Rows.** Names are stored as raw bytes. `own_bytes`/`own_files` are NULL
+  for a directory that was not read. `flags` holds the directory's state:
+  0 when read, a gap code (1 denied, 2 failed, 3 vanished, 4 cancelled) or a
+  skip code (16 other volume, 17 mount point, 18 dataless, 19 excluded) in
+  the low byte, and for a failure its errno above it. The codes are part of
+  the file format and are pinned by a test.
+* **Atomic replacement.** `IndexWriter::start_scan` creates a staging table
+  `dirs_next` and increments `scan_seq` in one committed transaction before
+  any row is written. Rows arrive in batches over a bounded channel and are
+  inserted, one transaction per batch, by the writer thread, which owns the
+  only read-write connection. `finish` drops `dirs`, renames `dirs_next`,
+  builds the indexes, stores the coverage and sets `picture_seq =
+  scan_seq`, all in one transaction. A reader runs its queries inside one
+  read transaction (`IndexReader::read`), so it sees the old picture or the
+  new one, never a mix.
+* **Completeness is derived, not stored**: the index is complete when
+  `picture_seq = scan_seq` and the picture has no gaps. A scan that was
+  cancelled finishes as a partial picture; a scan that was interrupted (the
+  writer dropped, the process killed) never sets `picture_seq`, so the old
+  picture stays readable and the index reads as incomplete.
+* WAL with `synchronous = NORMAL`; automatic checkpoints only (they never
+  wait for readers) and `journal_size_limit` to cut the WAL back after
+  them.
 
 ## 6. Scanning
 
@@ -170,6 +234,32 @@ A candidate is a `dirs` row with a non-null `rule_id`; its size is the row's
   and are aggregated into `Coverage`. A scan that met them is "partial".
 * Cancellation is cooperative (checked per directory). Parallelism and I/O
   priority come from the *power profile*.
+
+How the walk is built (M1):
+
+* Every directory is one task on a rayon pool built per scan. A task opens
+  its directory with `openat` relative to the parent's descriptor
+  (`O_NOFOLLOW`), lists it (`readdir` + `fstatat(AT_SYMLINK_NOFOLLOW)`),
+  and spawns one task per subdirectory; nothing recurses on the stack, so
+  depth is limited only by descriptors and memory. Opening relative to the
+  parent also works where the full path is longer than `PATH_MAX`.
+* A parent's descriptor stays open while some child task has not opened
+  itself yet, so descriptors in use are about threads × depth; the scan
+  raises the soft `RLIMIT_NOFILE` (up to `OPEN_MAX`) because the default
+  of 256 is too low for that.
+* A directory's row is emitted when its last child has been delivered;
+  then its totals are delivered to its parent, iteratively up the chain.
+  Rows go to the caller's sink in batches of 1024.
+* An unreadable directory, a cancelled task and a skipped subdirectory each
+  become a row with no own totals and a reason, so the picture is always a
+  whole tree.
+* `ScanControl` is shared with the caller: a cancel flag, atomic progress
+  counters, and the live tree (directories with depth ≤ 3, at most a given
+  number, each with counters every descendant adds its own totals to).
+* The walker hands an optional observer the *directory facts* of every
+  directory it reads, before its subdirectories are read: path, entries,
+  the parent's entries named in a marker list, and whether an ancestor
+  contains `.git`. M2's classifier plugs in there.
 
 ## 7. Watching and incremental refresh
 
