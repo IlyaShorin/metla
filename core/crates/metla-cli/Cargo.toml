@@ -1,0 +1,21 @@
+[package]
+name = "metla-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[[bin]]
+name = "metla-cli"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+metla-core = { path = "../metla-core" }
+
+[dev-dependencies]
+tempfile = "3"
