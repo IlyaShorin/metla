@@ -8,7 +8,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use super::IndexError;
 
 /// Version 2 (M2): directory identity and rule ids in `dirs`, the
-/// candidate index and bytes by file kind.
+/// candidate index, exclusions and bytes by file kind.
 pub const SCHEMA_VERSION: i64 = 2;
 
 const WAL_SIZE_LIMIT: i64 = 32 << 20;
@@ -53,7 +53,8 @@ const OTHER_TABLES: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value) WITH
          path BLOB NOT NULL,
          flags INTEGER NOT NULL
      );
-     CREATE TABLE kinds (code INTEGER PRIMARY KEY, bytes INTEGER NOT NULL);";
+     CREATE TABLE kinds (code INTEGER PRIMARY KEY, bytes INTEGER NOT NULL);
+     CREATE TABLE exclusions (path BLOB PRIMARY KEY) WITHOUT ROWID;";
 
 /// Opens (creating if needed) an index for writing.
 pub fn open_for_writing(path: &Path) -> Result<Connection, IndexError> {

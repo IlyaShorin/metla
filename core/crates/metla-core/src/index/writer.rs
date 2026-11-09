@@ -1,5 +1,5 @@
 //! The single writer: a thread that owns the read-write connection. Scans
-//! are commands to it, applied in the order sent.
+//! and exclusion edits are commands to it, applied in the order sent.
 
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, SyncSender};
@@ -13,7 +13,7 @@ use super::codec::{
     state_columns,
 };
 use super::schema::{DIRS_INDEXES, dirs_table, open_for_writing};
-use crate::domain::{DirRecord, ScanSummary, UnixTime};
+use crate::domain::{DirRecord, Exclusion, ScanSummary, UnixTime};
 
 /// Batches waiting for the writer; senders block when it falls behind.
 const QUEUE_DEPTH: usize = 16;
@@ -24,6 +24,8 @@ enum Command {
     Start(UnixTime, Reply<()>),
     Rows(Vec<DirRecord>),
     Finish(Box<ScanSummary>, Reply<()>),
+    Exclude(Exclusion, Reply<bool>),
+    Include(Exclusion, Reply<bool>),
 }
 
 /// The only writer of an index. Dropping it stops its thread after the
@@ -54,6 +56,17 @@ impl IndexWriter {
     pub fn start_scan(&mut self, started: UnixTime) -> Result<ScanWriter<'_>, IndexError> {
         self.ask(|reply| Command::Start(started, reply))?;
         Ok(ScanWriter { writer: self })
+    }
+
+    /// Keeps `exclusion` and everything beneath it out of the candidates.
+    /// False when it was already excluded.
+    pub fn exclude(&self, exclusion: &Exclusion) -> Result<bool, IndexError> {
+        self.ask(|reply| Command::Exclude(exclusion.clone(), reply))
+    }
+
+    /// Drops an exclusion. False when there was none.
+    pub fn include(&self, exclusion: &Exclusion) -> Result<bool, IndexError> {
+        self.ask(|reply| Command::Include(exclusion.clone(), reply))
     }
 
     fn ask<T>(&self, command: impl FnOnce(Reply<T>) -> Command) -> Result<T, IndexError> {
@@ -120,6 +133,12 @@ impl Server {
             Command::Start(started, reply) => answer(reply, self.start(started)),
             Command::Rows(rows) => self.insert(&rows),
             Command::Finish(summary, reply) => answer(reply, self.finish(&summary)),
+            Command::Exclude(exclusion, reply) => {
+                answer(reply, edit(&self.conn, EXCLUDE, &exclusion))
+            }
+            Command::Include(exclusion, reply) => {
+                answer(reply, edit(&self.conn, INCLUDE, &exclusion))
+            }
         }
     }
 
@@ -263,4 +282,13 @@ fn write_kinds(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexErro
         )?;
     }
     Ok(())
+}
+
+const EXCLUDE: &str = "INSERT OR IGNORE INTO exclusions (path) VALUES (?1)";
+const INCLUDE: &str = "DELETE FROM exclusions WHERE path = ?1";
+
+/// Runs an exclusion edit; true when it changed the list.
+fn edit(conn: &Connection, sql: &str, exclusion: &Exclusion) -> Result<bool, IndexError> {
+    let changed = conn.execute(sql, [path_bytes(exclusion.path())])?;
+    Ok(changed == 1)
 }

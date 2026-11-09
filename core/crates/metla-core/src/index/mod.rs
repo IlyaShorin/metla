@@ -1,8 +1,8 @@
 //! The SQLite index: one row per directory, plus the scan metadata.
 //!
 //! Only [`IndexWriter`] writes: its read-write connection is owned by one
-//! writer thread and never handed out; scans are commands to that
-//! thread. [`IndexReader`]s open their own
+//! writer thread and never handed out; scans and exclusion edits are
+//! commands to that thread. [`IndexReader`]s open their own
 //! read-only connections. A scan is written into a staging table and
 //! swapped in by one transaction when it finishes, so a reader sees either
 //! the previous picture or the new one, never a mix.
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use crate::domain::{Coverage, KindTotals, UnixTime};
 
-pub use reader::{IndexReader, Snapshot};
+pub use reader::{IndexReader, Page, Snapshot};
 pub use writer::{IndexWriter, ScanWriter};
 
 /// What the index says about scanning.

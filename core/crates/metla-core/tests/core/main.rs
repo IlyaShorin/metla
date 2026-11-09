@@ -2,6 +2,7 @@
 //! mutant needs a single link step.
 
 mod architecture;
+mod candidates;
 mod category;
 mod classify;
 mod domain;

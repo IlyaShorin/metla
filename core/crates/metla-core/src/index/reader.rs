@@ -1,5 +1,6 @@
 //! Read-only access through consistent snapshots.
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -11,7 +12,8 @@ use super::codec::{COLUMNS, Row, count, gap, gap_kind, int, kind, path_from, ski
 use super::schema::open_for_reading;
 use super::{IndexError, Picture, ScanRecord};
 use crate::domain::{
-    Bytes, Coverage, DirId, DirRecord, GapAt, GapKind, KindTotals, Skip, UnixTime,
+    Bytes, Candidate, Category, Coverage, DirId, DirRecord, Exclusion, GapAt, GapKind, KindTotals,
+    Recency, RuleId, Skip, Tally, UnixTime,
 };
 
 /// Stored gap counts and skip counts.
@@ -39,6 +41,37 @@ impl IndexReader {
         let result = query(&Snapshot { conn: &tx });
         tx.commit()?;
         result
+    }
+}
+
+/// Which part of a list of candidates to return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Page {
+    pub offset: usize,
+    pub limit: usize,
+}
+
+/// A candidate row with its rule and path, before it is shown.
+struct Found {
+    row: DirRecord,
+    rule: RuleId,
+    path: PathBuf,
+}
+
+impl Found {
+    fn candidate(self, recency: &Recency) -> Candidate {
+        let activity = self.row.tree.newest;
+        Candidate {
+            id: self.row.id,
+            preselected: self.rule.category().preselected(activity, recency),
+            path: self.path,
+            rule: self.rule,
+            bytes: self.row.tree.bytes,
+            files: self.row.tree.files,
+            activity,
+            device: self.row.device,
+            inode: self.row.inode,
+        }
     }
 }
 
@@ -109,6 +142,90 @@ impl Snapshot<'_> {
         self.lineage()?.path(id)
     }
 
+    /// The paths the user keeps, in path order.
+    pub fn exclusions(&self) -> Result<Vec<Exclusion>, IndexError> {
+        let sql = "SELECT path FROM exclusions ORDER BY path";
+        let paths = self.query(sql, |r| r.get::<_, Vec<u8>>(0))?;
+        paths
+            .into_iter()
+            .map(|bytes| {
+                let path = path_from(bytes);
+                Exclusion::new(&path)
+                    .ok_or_else(|| IndexError::Corrupt(format!("exclusion {}", path.display())))
+            })
+            .collect()
+    }
+
+    /// Candidates no exclusion hides, counted per rule.
+    pub fn rule_tallies(&self) -> Result<BTreeMap<RuleId, Tally>, IndexError> {
+        let mut tallies = BTreeMap::<RuleId, Tally>::new();
+        for found in self.visible(None)? {
+            tallies
+                .entry(found.rule)
+                .or_default()
+                .add(found.row.tree.bytes);
+        }
+        Ok(tallies)
+    }
+
+    /// Candidates no exclusion hides, counted per category; every category
+    /// is present.
+    pub fn category_tallies(&self) -> Result<BTreeMap<Category, Tally>, IndexError> {
+        let mut tallies: BTreeMap<Category, Tally> =
+            Category::ALL.map(|c| (c, Tally::default())).into();
+        for (rule, tally) in self.rule_tallies()? {
+            tallies.entry(rule.category()).or_default().merge(&tally);
+        }
+        Ok(tallies)
+    }
+
+    /// One page of the candidates of `category` (of every category when
+    /// `None`) that no exclusion hides, largest first.
+    pub fn candidates(
+        &self,
+        category: Option<Category>,
+        page: Page,
+        recency: &Recency,
+    ) -> Result<Vec<Candidate>, IndexError> {
+        let visible = self.visible(category)?.into_iter();
+        let page = visible.skip(page.offset).take(page.limit);
+        Ok(page.map(|found| found.candidate(recency)).collect())
+    }
+
+    /// The candidate with this id, unless it is not one or an exclusion
+    /// hides it.
+    pub fn candidate(&self, id: DirId, recency: &Recency) -> Result<Option<Candidate>, IndexError> {
+        let row = self.by_id(id)?;
+        let Some((row, rule)) = row.and_then(|row| Some((row.clone(), row.rule?))) else {
+            return Ok(None);
+        };
+        let path = self.path_of(id)?.unwrap_or_default();
+        let found = Found { row, rule, path };
+        let hidden = hides(&self.exclusions()?, &found.path);
+        Ok((!hidden).then(|| found.candidate(recency)))
+    }
+
+    /// The candidates of `category` (all when `None`) that no exclusion
+    /// hides, largest first. Reads only candidate rows.
+    fn visible(&self, category: Option<Category>) -> Result<Vec<Found>, IndexError> {
+        let exclusions = self.exclusions()?;
+        let sql = format!(
+            "SELECT {COLUMNS} FROM dirs INDEXED BY dirs_candidates
+             WHERE rule_id IS NOT NULL ORDER BY tree_bytes DESC, id"
+        );
+        let rows = self.records(&sql, [])?.into_iter();
+        let rows = rows.filter_map(|row| Some((row.rule.clone()?, row)));
+        let mut lineage = self.lineage()?;
+        let mut found = Vec::new();
+        for (rule, row) in rows.filter(|(rule, _)| category.is_none_or(|c| rule.category() == c)) {
+            let path = lineage.path(row.id)?.unwrap_or_default();
+            if !hides(&exclusions, &path) {
+                found.push(Found { row, rule, path });
+            }
+        }
+        Ok(found)
+    }
+
     fn lineage(&self) -> Result<Lineage<'_>, IndexError> {
         Ok(Lineage {
             statement: self
@@ -116,6 +233,11 @@ impl Snapshot<'_> {
                 .prepare("SELECT parent_id, name FROM dirs WHERE id = ?1")?,
             root: self.picture_root()?.unwrap_or_default(),
         })
+    }
+
+    fn by_id(&self, id: DirId) -> Result<Option<DirRecord>, IndexError> {
+        let sql = format!("SELECT {COLUMNS} FROM dirs WHERE id = ?1");
+        Ok(self.records(&sql, [id.0])?.pop())
     }
 
     fn child(&self, parent: DirId, name: &OsStr) -> Result<Option<DirRecord>, IndexError> {
@@ -216,6 +338,11 @@ impl Snapshot<'_> {
             .collect::<Result<Vec<T>, _>>()?;
         Ok(rows)
     }
+}
+
+/// Whether any exclusion hides a candidate at `path`.
+fn hides(exclusions: &[Exclusion], path: &Path) -> bool {
+    exclusions.iter().any(|exclusion| exclusion.hides(path))
 }
 
 /// Builds paths of the picture's directories from their parent links, with
