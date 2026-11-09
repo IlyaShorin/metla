@@ -6,3 +6,4 @@
 pub mod domain;
 pub mod fs;
 pub mod index;
+pub mod scan;

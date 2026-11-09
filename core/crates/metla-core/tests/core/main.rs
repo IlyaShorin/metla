@@ -4,4 +4,6 @@
 mod domain;
 mod fs;
 mod index;
+mod scan;
+mod scope;
 mod support;
