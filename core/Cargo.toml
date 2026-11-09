@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["crates/metla-core"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+publish = false
+
+# The development machine has little free disk space, and mutation testing
+# builds the crate once per worker: no debug info keeps every build small.
+[profile.dev]
+debug = false
+
+[profile.release]
+debug = false
