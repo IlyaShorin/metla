@@ -12,4 +12,5 @@ mod volume;
 
 pub use dir::{DirHandle, ListError, list_dir};
 pub use process::{now, peak_rss, raise_open_file_limit, raised_open_file_limit};
+pub use sys::retry_interrupted;
 pub use volume::{Mount, Volume, mounts, volume};

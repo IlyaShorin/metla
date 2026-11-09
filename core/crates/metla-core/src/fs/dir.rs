@@ -5,8 +5,8 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
 use std::ptr::NonNull;
 
-use super::sys::{c_name, check, errno, meta_of};
-use crate::domain::{Entry, EntryMeta, Errno};
+use super::sys::{c_name, checked, errno, meta_of, retry_interrupted};
+use crate::domain::{Entry, EntryKind, EntryMeta, Errno};
 
 /// Why a directory could not be opened or listed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +30,11 @@ impl ListError {
 
 const OPEN_DIR: libc::c_int = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
 
+/// A small file is opened without following a symlink and without waiting
+/// on a FIFO; anything but a regular file is then refused.
+const OPEN_FILE: libc::c_int =
+    libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+
 /// An open directory. Children are opened relative to it.
 #[derive(Debug)]
 pub struct DirHandle(OwnedFd);
@@ -39,8 +44,7 @@ impl DirHandle {
     pub fn open(path: &Path) -> Result<DirHandle, ListError> {
         let path = c_name(path.as_os_str()).map_err(ListError::from_errno)?;
         // SAFETY: `path` is a valid NUL-terminated string for the call.
-        let fd = unsafe { libc::open(path.as_ptr(), OPEN_DIR) };
-        DirHandle::adopt(fd)
+        adopt(checked(|| unsafe { libc::open(path.as_ptr(), OPEN_DIR) })).map(DirHandle)
     }
 
     /// Opens the child directory `name` without following a symlink.
@@ -50,26 +54,32 @@ impl DirHandle {
 
     /// The directory's own metadata.
     pub fn meta(&self) -> Result<EntryMeta, ListError> {
-        let mut st = MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: the descriptor is open and `st` is writable stat storage.
-        check(unsafe { libc::fstat(self.0.as_raw_fd(), st.as_mut_ptr()) })
-            .map_err(ListError::from_errno)?;
-        // SAFETY: fstat succeeded, so it initialised `st`.
-        Ok(meta_of(unsafe { st.assume_init_ref() }))
+        stat_of(&self.0)
+    }
+
+    /// At most `limit` bytes from the start of the regular file `name` in
+    /// this directory. Used only for tiny files a rule inspects (a `.git`
+    /// pointer file, a `CACHEDIR.TAG`).
+    pub fn read_head(&self, name: &OsStr, limit: usize) -> Result<Vec<u8>, ListError> {
+        let file = self.open_fd(name, OPEN_FILE)?;
+        if stat_of(&file)?.kind != EntryKind::File {
+            return Err(ListError::Io(Errno(libc::EFTYPE)));
+        }
+        let mut head = vec![0u8; limit];
+        let filled = fill(&file, &mut head).map_err(ListError::from_errno)?;
+        head.truncate(filled);
+        Ok(head)
     }
 
     fn open_at(&self, name: &OsStr, flags: libc::c_int) -> Result<DirHandle, ListError> {
-        let name = c_name(name).map_err(ListError::from_errno)?;
-        // SAFETY: the descriptor is open and `name` is NUL-terminated.
-        let fd = unsafe { libc::openat(self.0.as_raw_fd(), name.as_ptr(), flags) };
-        DirHandle::adopt(fd)
+        self.open_fd(name, flags).map(DirHandle)
     }
 
-    fn adopt(fd: libc::c_int) -> Result<DirHandle, ListError> {
-        let fd = check(fd).map_err(ListError::from_errno)?;
-        // SAFETY: `fd` was just returned by a successful open and nothing
-        // else owns it.
-        Ok(DirHandle(unsafe { OwnedFd::from_raw_fd(fd) }))
+    fn open_fd(&self, name: &OsStr, flags: libc::c_int) -> Result<OwnedFd, ListError> {
+        let name = c_name(name).map_err(ListError::from_errno)?;
+        // SAFETY: the descriptor is open and `name` is NUL-terminated.
+        let fd = checked(|| unsafe { libc::openat(self.0.as_raw_fd(), name.as_ptr(), flags) });
+        adopt(fd)
     }
 
     fn stat_entry(&self, name: &OsStr) -> Result<EntryMeta, ListError> {
@@ -77,18 +87,54 @@ impl DirHandle {
         let mut st = MaybeUninit::<libc::stat>::uninit();
         // SAFETY: the descriptor is open, `name` is NUL-terminated and `st`
         // is writable stat storage.
-        let ret = unsafe {
+        checked(|| unsafe {
             libc::fstatat(
                 self.0.as_raw_fd(),
                 name.as_ptr(),
                 st.as_mut_ptr(),
                 libc::AT_SYMLINK_NOFOLLOW,
             )
-        };
-        check(ret).map_err(ListError::from_errno)?;
+        })
+        .map_err(ListError::from_errno)?;
         // SAFETY: fstatat succeeded, so it initialised `st`.
         Ok(meta_of(unsafe { st.assume_init_ref() }))
     }
+}
+
+fn adopt(fd: Result<libc::c_int, i32>) -> Result<OwnedFd, ListError> {
+    let fd = fd.map_err(ListError::from_errno)?;
+    // SAFETY: `fd` was just returned by a successful open and nothing else
+    // owns it.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// Reads from the start of `file` until `buffer` is full or the file ends;
+/// returns how many bytes were read. A full buffer reads as the end.
+fn fill(file: &OwnedFd, buffer: &mut [u8]) -> Result<usize, i32> {
+    let mut filled = 0;
+    loop {
+        let rest = &mut buffer[filled..];
+        // SAFETY: the descriptor is open and `rest` is writable for its
+        // whole length.
+        let read = retry_interrupted(|| {
+            let n = unsafe { libc::read(file.as_raw_fd(), rest.as_mut_ptr().cast(), rest.len()) };
+            usize::try_from(n).map_err(|_| errno())
+        })?;
+        if read == 0 {
+            return Ok(filled);
+        }
+        filled += read;
+    }
+}
+
+/// The metadata of an open descriptor.
+fn stat_of(fd: &OwnedFd) -> Result<EntryMeta, ListError> {
+    let mut st = MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: the descriptor is open and `st` is writable stat storage.
+    checked(|| unsafe { libc::fstat(fd.as_raw_fd(), st.as_mut_ptr()) })
+        .map_err(ListError::from_errno)?;
+    // SAFETY: fstat succeeded, so it initialised `st`.
+    Ok(meta_of(unsafe { st.assume_init_ref() }))
 }
 
 /// Every entry of `dir` except `.` and `..`, with metadata read without
@@ -130,6 +176,10 @@ impl DirStream {
     }
 
     fn next_name(&self) -> Result<Option<OsString>, ListError> {
+        retry_interrupted(|| self.read_name()).map_err(ListError::from_errno)
+    }
+
+    fn read_name(&self) -> Result<Option<OsString>, i32> {
         // SAFETY: `__error` returns this thread's errno location; readdir
         // signals end-of-stream versus failure only through errno.
         unsafe { *libc::__error() = 0 };
@@ -148,10 +198,10 @@ impl DirStream {
     }
 }
 
-fn end_of_stream(errno: i32) -> Result<Option<OsString>, ListError> {
+fn end_of_stream(errno: i32) -> Result<Option<OsString>, i32> {
     match errno {
         0 => Ok(None),
-        failure => Err(ListError::from_errno(failure)),
+        failure => Err(failure),
     }
 }
 

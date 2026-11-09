@@ -21,6 +21,22 @@ pub fn check(ret: libc::c_int) -> Result<libc::c_int, i32> {
     if ret == -1 { Err(errno()) } else { Ok(ret) }
 }
 
+/// Repeats `call` while it fails with `EINTR`: a signal that arrived during
+/// a system call is not a reason to give up on a directory.
+pub fn retry_interrupted<T>(mut call: impl FnMut() -> Result<T, i32>) -> Result<T, i32> {
+    loop {
+        match call() {
+            Err(libc::EINTR) => continue,
+            other => return other,
+        }
+    }
+}
+
+/// [`check`] of a call, repeated while it is interrupted.
+pub fn checked(mut call: impl FnMut() -> libc::c_int) -> Result<libc::c_int, i32> {
+    retry_interrupted(|| check(call()))
+}
+
 /// A name as a C string. Names from the file system never contain NUL;
 /// one that does cannot exist, which is reported as `ENOENT`.
 pub fn c_name(name: &OsStr) -> Result<CString, i32> {

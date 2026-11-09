@@ -6,7 +6,7 @@ use std::path::Path;
 use metla_core::domain::{EntryKind, Errno};
 use metla_core::fs::{
     DirHandle, ListError, list_dir, mounts, peak_rss, raise_open_file_limit,
-    raised_open_file_limit, volume,
+    raised_open_file_limit, retry_interrupted, volume,
 };
 
 use crate::support::{Fixture, write_file};
@@ -200,4 +200,65 @@ fn the_open_file_limit_is_raised_up_to_the_hard_limit_and_open_max() {
     assert_eq!(raised_open_file_limit(256, 4096), Some(4096));
     assert_eq!(raised_open_file_limit(10_240, u64::MAX), None);
     assert_eq!(raised_open_file_limit(50_000, u64::MAX), None);
+}
+
+#[test]
+fn an_interrupted_call_is_repeated_until_it_succeeds_or_really_fails() {
+    let mut calls = 0;
+    let result = retry_interrupted(|| {
+        calls += 1;
+        match calls {
+            1 | 2 => Err(libc::EINTR),
+            _ => Ok(7),
+        }
+    });
+    assert_eq!((result, calls), (Ok(7), 3));
+    let mut calls = 0;
+    let result: Result<i32, i32> = retry_interrupted(|| {
+        calls += 1;
+        Err(libc::EACCES)
+    });
+    assert_eq!((result, calls), (Err(libc::EACCES), 1));
+}
+
+fn head(dir: &Path, name: &str, limit: usize) -> Result<Vec<u8>, ListError> {
+    DirHandle::open(dir)
+        .unwrap()
+        .read_head(OsStr::new(name), limit)
+}
+
+#[test]
+fn the_head_of_a_small_file_is_read_up_to_a_limit() {
+    let fx = Fixture::new();
+    fs::write(fx.path(".git"), b"gitdir: /x/.git/worktrees/a\n").unwrap();
+    assert_eq!(
+        head(fx.root(), ".git", 1024).unwrap(),
+        b"gitdir: /x/.git/worktrees/a\n"
+    );
+    assert_eq!(head(fx.root(), ".git", 6).unwrap(), b"gitdir");
+    let big = vec![b'x'; 70_000];
+    fs::write(fx.path("big"), &big).unwrap();
+    assert_eq!(head(fx.root(), "big", 65_536).unwrap(), &big[..65_536]);
+    fs::write(fx.path("empty"), b"").unwrap();
+    assert_eq!(head(fx.root(), "empty", 10).unwrap(), b"");
+}
+
+#[test]
+fn only_a_regular_file_is_read_and_a_symlink_is_not_followed() {
+    let fx = Fixture::new();
+    fs::write(fx.path("real"), b"data").unwrap();
+    symlink("real", fx.path("link")).unwrap();
+    fs::create_dir(fx.path("dir")).unwrap();
+    let status = std::process::Command::new("mkfifo")
+        .arg(fx.path("pipe"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(head(fx.root(), "link", 10).is_err());
+    assert!(head(fx.root(), "dir", 10).is_err());
+    assert!(
+        head(fx.root(), "pipe", 10).is_err(),
+        "a FIFO must not block"
+    );
+    assert_eq!(head(fx.root(), "missing", 10).err(), Some(ListError::Gone));
 }
