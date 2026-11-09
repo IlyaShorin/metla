@@ -1,0 +1,24 @@
+# Rust
+target/
+# Swift
+.build/
+.swiftpm/
+*.xcodeproj/
+DerivedData/
+# Generated bindings and build products
+/app/Sources/MetlaCoreFFI/generated/
+/build/
+/dist/
+# Quality tool output (summaries live in docs/QUALITY.md)
+.metrics/
+.uml-viewer/
+/uml
+uml-viewer-log.txt
+get-uml-viewer
+# Local
+.DS_Store
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
+.env*
