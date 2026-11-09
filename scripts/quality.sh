@@ -9,7 +9,8 @@
 #   UB_TOOLS                 tool checkout root (default ~/.local/share/ub-tools)
 #   CRAPPER, DRYER, MUTATOR  override a single tool's executable
 #   MUTATE_ALL=1             rerun every mutant, not only changed functions
-#   MUTATOR_WORKERS          parallel mutants per file (default 3)
+#   MUTATOR_WORKERS          parallel mutants per file (default 2: every
+#                            worker builds its own copy of the crates)
 #   MUTATOR_TIMEOUT_FACTOR   mutant timeout / baseline time (default 30:
 #                            each worker builds its own copy of the crate)
 #
@@ -24,7 +25,7 @@ ub_tools="${UB_TOOLS:-$HOME/.local/share/ub-tools}"
 crapper="${CRAPPER:-$ub_tools/crapper/crapper}"
 dryer="${DRYER:-$ub_tools/dryer/dryer}"
 mutator="${MUTATOR:-$ub_tools/mutator/mutator}"
-workers="${MUTATOR_WORKERS:-3}"
+workers="${MUTATOR_WORKERS:-2}"
 timeout_factor="${MUTATOR_TIMEOUT_FACTOR:-30}"
 
 crap_limit=10
