@@ -3,4 +3,5 @@
 
 mod domain;
 mod fs;
+mod index;
 mod support;
