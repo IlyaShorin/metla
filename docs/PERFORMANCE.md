@@ -73,3 +73,39 @@ that. A cold-cache number is still to be measured.
   alone is 9.1 GB) and APFS overhead. The 29 GB on the two scanned volumes
   are the 374 gaps, APFS snapshots and file-system metadata, none of which a
   metadata walk without Full Disk Access can see.
+
+## M2: the cost of classification
+
+**Question.** Does classifying every directory (rule matching, marker
+collection, reading `.git` pointer files and `CACHEDIR.TAG` heads, file-kind
+totals) cost noticeable scan time?
+
+**Conditions.** Same machine and macOS as the M1 baseline, release build,
+10 scan threads, `metla-cli scan --root / --index :memory: --json`, with
+and without `--no-rules`, run alternately (without, with, without, with)
+so that background load falls on both sides. The index lived in an
+in-memory SQLite database: the disk had about 0.5 GB free, too little for
+an on-disk index of the whole volume, so these wall times leave out the
+index's disk writes that the M1 numbers include. Background system
+services (media analysis, a malware scan, FSEvents) were active; all runs
+were warm.
+
+| | no rules, run 1 | rules, run 1 | no rules, run 2 | rules, run 2 |
+|---|---:|---:|---:|---:|
+| scan wall time | 93.0 s | 97.3 s | 96.2 s | 95.8 s |
+| process wall time | 95.1 s | 99.1 s | 98.1 s | 97.7 s |
+| CPU user / system | 16.8 s / 395.5 s | 18.0 s / 404.8 s | 16.4 s / 391.8 s | 17.8 s / 396.6 s |
+| directories | 2,225,454 | 2,225,457 | 2,225,457 | 2,225,461 |
+| files | 12,858,924 | 12,858,931 | 12,858,916 | 12,858,927 |
+| peak RSS | 285.9 MB | 279.0 MB | 281.3 MB | 281.4 MB |
+| gaps: denied / failed | 398 / 0 | 398 / 0 | 398 / 0 | 398 / 0 |
+
+* **Result.** Classification adds about 1.3 s of user CPU to a scan of
+  2.2 million directories (16.6 s → 17.9 s on average, about 0.6 µs per
+  directory before parallelism). The wall-time difference of the means,
+  94.6 s → 96.5 s (+2 %), is smaller than the spread between the two runs
+  without rules (3.2 s); the scan stays bound by system time in the kernel.
+* **Failures.** All four runs recorded 0 failed directories. M1 lost one
+  directory to `EINTR`, which the fs calls now retry; these runs do not
+  show whether an interruption happened and was retried (the retry itself
+  is tested deterministically).
