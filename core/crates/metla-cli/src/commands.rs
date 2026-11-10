@@ -10,6 +10,7 @@ use metla_core::domain::{
     Bytes, Candidate, Category, CleanupPreview, CleanupReport, Confirmation, DirId, DirState,
     EntryKind, Exclusion, Recency, Separate,
 };
+use metla_core::engine::Profiles;
 use metla_core::fs::{DirHandle, list_dir, now, peak_rss, volume};
 use metla_core::git::{Git, WorktreeSettings, verify_outputs};
 use metla_core::index::{
@@ -26,10 +27,10 @@ use crate::report::{Checked, Listed, ScanReport, VolumeUse};
 /// How many shallow directories the live tree tracks.
 const LIVE_LIMIT: usize = 4096;
 
-/// The `Interactive` power profile: all cores but two, at least one (also
-/// when the core count is unknown).
+/// The `Interactive` power profile's threads: all cores but two, at most
+/// eight, at least one (also when the core count is unknown).
 pub fn default_threads(cores: usize) -> usize {
-    cores.saturating_sub(2).max(1)
+    Profiles::standard(cores).interactive.threads
 }
 
 /// The number of cores, or 0 when it cannot be known.

@@ -158,3 +158,13 @@ fn a_file_is_not_a_scan_root() {
     std::fs::write(fx.path("file"), b"x").unwrap();
     assert!(ScanRoot::new(&fx.path("file")).is_err());
 }
+
+#[test]
+fn the_excluded_paths_are_listed_and_second_mounts_are_not() {
+    let scope = ScanScope::new(SYSTEM)
+        .exclude(PathBuf::from("/a"))
+        .skip_mount(PathBuf::from("/m"))
+        .exclude(PathBuf::from("/b"));
+    let excluded: Vec<&Path> = scope.excluded().collect();
+    assert_eq!(excluded, [Path::new("/a"), Path::new("/b")]);
+}

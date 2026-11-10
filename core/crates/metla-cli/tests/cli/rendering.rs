@@ -60,7 +60,8 @@ fn rates_are_per_second() {
 
 #[test]
 fn all_but_two_cores_scan_by_default() {
-    assert_eq!(default_threads(12), 10);
+    assert_eq!(default_threads(12), 8, "the Interactive profile's");
+    assert_eq!(default_threads(9), 7);
     assert_eq!(default_threads(2), 1);
     assert_eq!(default_threads(1), 1);
     assert_eq!(default_threads(0), 1);

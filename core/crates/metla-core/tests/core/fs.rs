@@ -347,3 +347,18 @@ fn usage_counts_cpu_time_switches_and_the_peak_rss() {
     assert!(after.peak_rss.0 > 1 << 20);
     assert_eq!(peak_rss(), metla_core::fs::usage().peak_rss);
 }
+
+#[test]
+fn usage_reads_the_cpu_time_the_system_reports() {
+    let used = metla_core::fs::usage();
+    let mut raw = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    let raw = unsafe {
+        libc::getrusage(libc::RUSAGE_SELF, raw.as_mut_ptr());
+        raw.assume_init()
+    };
+    let seconds = std::time::Duration::from_secs(raw.ru_utime.tv_sec as u64);
+    let after = seconds + std::time::Duration::from_micros(raw.ru_utime.tv_usec as u64);
+    assert!(used.user <= after, "{:?} > {after:?}", used.user);
+    assert!(after - used.user < std::time::Duration::from_millis(500));
+    assert!(used.user >= seconds.saturating_sub(std::time::Duration::from_millis(1)));
+}

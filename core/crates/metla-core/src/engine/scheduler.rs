@@ -202,7 +202,7 @@ impl Scheduler {
         ScanOptions::new(self.root.clone(), self.scope.clone())
             .rules(Arc::clone(&self.shared.rules))
             .threads(profile.threads)
-            .throttled(profile.throttled)
+            .priority(profile.priority())
     }
 
     /// What is due: a full scan the profile allows, then one batch.

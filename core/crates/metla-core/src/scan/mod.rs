@@ -72,6 +72,15 @@ pub trait DirObserver: Send + Sync {
     fn observe(&self, facts: &DirFacts<'_>);
 }
 
+/// How the scan threads run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Priority {
+    #[default]
+    Normal,
+    /// Background priority: CPU and I/O yield to everything else.
+    Background,
+}
+
 /// What to scan and how.
 pub struct ScanOptions {
     root: ScanRoot,
@@ -80,7 +89,6 @@ pub struct ScanOptions {
     throttled: bool,
     classic: bool,
     rules: Option<Arc<RuleSet>>,
-    gap_limit: usize,
     observer: Option<Arc<dyn DirObserver>>,
 }
 
@@ -94,7 +102,6 @@ impl ScanOptions {
             throttled: false,
             classic: false,
             rules: None,
-            gap_limit: GAP_LIMIT,
             observer: None,
         }
     }
@@ -104,9 +111,9 @@ impl ScanOptions {
         self
     }
 
-    /// Run the scan threads at background priority, with throttled I/O.
-    pub fn throttled(mut self, throttled: bool) -> ScanOptions {
-        self.throttled = throttled;
+    /// Run the scan threads at `priority`.
+    pub fn priority(mut self, priority: Priority) -> ScanOptions {
+        self.throttled = priority == Priority::Background;
         self
     }
 
@@ -120,11 +127,6 @@ impl ScanOptions {
     /// Classify every directory with `rules` and total the file kinds.
     pub fn rules(mut self, rules: Arc<RuleSet>) -> ScanOptions {
         self.rules = Some(rules);
-        self
-    }
-
-    pub fn gap_limit(mut self, limit: usize) -> ScanOptions {
-        self.gap_limit = limit;
         self
     }
 

@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 
+use crate::scan::Priority;
 use crate::watch::Timing;
 
 /// How much CPU and I/O the engine may use.
@@ -45,6 +46,10 @@ pub struct Profiles {
     pub saver: Profile,
 }
 
+/// More scan threads than this gain little and cost much more CPU on the
+/// machine measured (PERFORMANCE.md, M4 thread sweep).
+pub const INTERACTIVE_THREADS: usize = 8;
+
 /// `Off`: no threads, no watching, no scans of its own.
 pub const OFF: Profile = Profile {
     threads: 0,
@@ -53,6 +58,16 @@ pub const OFF: Profile = Profile {
     full_scans: false,
     throttled: true,
 };
+
+impl Profile {
+    /// The priority its scan threads run at.
+    pub fn priority(&self) -> Priority {
+        match self.throttled {
+            true => Priority::Background,
+            false => Priority::Normal,
+        }
+    }
+}
 
 impl Profiles {
     /// The profiles for a machine with `cores` cores.
@@ -67,7 +82,7 @@ impl Profiles {
         };
         Profiles {
             interactive: Profile {
-                threads: cores.saturating_sub(2).max(1),
+                threads: cores.saturating_sub(2).clamp(1, INTERACTIVE_THREADS),
                 timing: Some(timing(1, 30, 256, 4096)),
                 pause: Duration::ZERO,
                 full_scans: true,

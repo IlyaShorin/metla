@@ -42,9 +42,13 @@ impl TreeTotals {
     }
 
     pub fn add_own(&mut self, own: &OwnTotals) {
-        self.bytes += own.bytes;
-        self.files += own.files;
-        self.newest = self.newest.max(own.newest);
+        let files = TreeTotals {
+            bytes: own.bytes,
+            files: own.files,
+            dirs: 0,
+            newest: own.newest,
+        };
+        self.add_tree(&files);
     }
 
     pub fn add_tree(&mut self, other: &TreeTotals) {

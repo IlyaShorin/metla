@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rayon::Scope;
 
 use super::control::{LiveChain, LiveCounters, ScanControl, add_live};
-use super::{ROW_BATCH, ScanOptions};
+use super::{GAP_LIMIT, ROW_BATCH, ScanOptions};
 use crate::domain::{
     Area, Bytes, Coverage, DirFacts, DirId, DirRecord, DirState, Entry, EntryKind, FileKind, Gap,
     GapAt, KindTotals, OwnTotals, Passed, Probe, RuleId, Skip, Stamp, TreeTotals, UnixTime,
@@ -258,7 +258,7 @@ impl<'a> Walk<'a> {
             control,
             sink,
             rows: Mutex::default(),
-            coverage: Mutex::new(Coverage::new(options.gap_limit)),
+            coverage: Mutex::new(Coverage::new(GAP_LIMIT)),
             next_id: AtomicI64::new(next_id.0),
             totals: Mutex::default(),
             kinds: Default::default(),

@@ -185,6 +185,11 @@ fn a_first_opening_scans_and_a_later_one_answers_from_the_saved_picture() {
     assert!(first.totals.unwrap().files >= 3);
     assert_eq!(first.categories[&Category::AppCache].count, 1);
     assert_eq!(first.root, place.fx.root());
+    assert_eq!(
+        engine.freshness().unwrap(),
+        first.freshness,
+        "the cheap read agrees"
+    );
     assert!(first.volume.is_some());
     assert_eq!(engine.counters().full_scans, 1);
     assert!(told.saw(Changed::Picture) && told.saw(Changed::Activity));
@@ -315,7 +320,7 @@ fn exclusions_hide_candidates_at_once_and_are_kept() {
 fn the_power_profiles_are_the_documented_table() {
     let table = Profiles::standard(12);
     let rows = [
-        (table.interactive, 10, 1, 30, 256, 4096, 0, true, false),
+        (table.interactive, 8, 1, 30, 256, 4096, 0, true, false),
         (table.background, 2, 2, 60, 64, 4096, 100, true, false),
         (table.saver, 1, 10, 300, 16, 1024, 1000, false, true),
     ];
@@ -330,11 +335,36 @@ fn the_power_profiles_are_the_documented_table() {
         assert_eq!((profile.full_scans, profile.throttled), (full, throttled));
     }
     assert_eq!(Profiles::standard(2).interactive.threads, 1, "never none");
+    assert_eq!(Profiles::standard(9).interactive.threads, 7, "cores - 2");
+    assert_eq!(Profiles::standard(10).interactive.threads, 8);
     let off = table.of(PowerProfile::Off);
     assert_eq!((off.threads, off.timing, off.full_scans), (0, None, false));
     assert_eq!(table.of(PowerProfile::Saver), table.saver);
     assert_eq!(table.of(PowerProfile::Interactive), table.interactive);
     assert_eq!(PowerProfile::default(), PowerProfile::Background);
+    use metla_core::scan::Priority;
+    assert_eq!(table.saver.priority(), Priority::Background);
+    assert_eq!(table.background.priority(), Priority::Normal);
+}
+
+#[test]
+fn engine_errors_explain_themselves() {
+    let cases = [
+        (EngineError::Setup("no root".into()), "no root"),
+        (EngineError::NotInPicture, "not in the picture"),
+        (EngineError::Stopped, "the engine has stopped"),
+        (
+            EngineError::Clean(CleanError::Root("gone".into())),
+            "root: gone",
+        ),
+        (
+            EngineError::Index(metla_core::index::IndexError::WriterGone),
+            "index writer stopped",
+        ),
+    ];
+    for (error, text) in cases {
+        assert_eq!(error.to_string(), text);
+    }
 }
 
 #[test]
