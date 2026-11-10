@@ -79,22 +79,31 @@ fn rows(index: &Path) -> Result<Vec<(PathBuf, DirRecord)>, String> {
     Ok(rows)
 }
 
-/// Whether the engine's picture is what a fresh scan of the root writes.
-fn exactly_right(place: &Place) -> Result<bool, String> {
+/// How the engine scans the root, for a scan of its own.
+fn options(place: &Place) -> Result<ScanOptions, String> {
     let (home, user) = home_and_user(place.home.as_deref())?;
     let root = ScanRoot::new(&place.root).map_err(|e| e.to_string())?;
     let scope = ScanScope::detect(&root).map_err(|e| e.to_string())?;
-    let options = ScanOptions::new(root, scope)
+    Ok(ScanOptions::new(root, scope)
         .rules(Arc::new(RuleSet::new(&home, &user)))
-        .threads(2);
-    let fresh = place.data_dir.join("fresh.sqlite");
-    let mut writer = IndexWriter::open(&fresh).map_err(|e| e.to_string())?;
+        .threads(2))
+}
+
+/// Scans the root into a new index at `fresh`.
+fn scan_afresh(place: &Place, fresh: &Path) -> Result<(), String> {
+    let options = options(place)?;
+    let mut writer = IndexWriter::open(fresh).map_err(|e| e.to_string())?;
     let session = writer.start_scan(UnixTime(0)).map_err(|e| e.to_string())?;
     let summary = run(&options, &ScanControl::new(0), &|r| session.send(r));
     session
         .finish(&summary.map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
-    drop(writer);
+        .map_err(|e| e.to_string())
+}
+
+/// Whether the engine's picture is what a fresh scan of the root writes.
+fn exactly_right(place: &Place) -> Result<bool, String> {
+    let fresh = place.data_dir.join("fresh.sqlite");
+    scan_afresh(place, &fresh)?;
     let kept = rows(&place.data_dir.join(metla_core::engine::INDEX_FILE))?;
     let same = kept == rows(&fresh)?;
     for suffix in ["", "-wal", "-shm"] {
@@ -106,13 +115,10 @@ fn exactly_right(place: &Place) -> Result<bool, String> {
 /// Churns below `<root>/churn` for `length` while the engine follows the
 /// root; then measures how long until its picture is exactly right.
 pub fn bench_churn(place: &Place, length: Duration, per_burst: usize) -> Result<String, String> {
-    fixture(&place.root)?;
     if place.data_dir.starts_with(&place.root) {
         return Err("the data directory must lie outside the root".into());
     }
-    let (engine, _) = open(place, false)?;
-    engine.start_scan().map_err(|e| e.to_string())?;
-    waited(Duration::from_secs(600), || idle(&engine)).ok_or("the first scan did not end")?;
+    let engine = scanned(place)?;
     let before = (engine.counters(), usage());
     let stop = Arc::new(AtomicBool::new(false));
     let dir = place.root.join("churn");
@@ -159,35 +165,42 @@ pub fn bench_churn(place: &Place, length: Duration, per_burst: usize) -> Result<
 /// How long a small write takes to show in the engine's totals, three
 /// times, with `profile`.
 pub fn bench_refresh(place: &Place) -> Result<String, String> {
-    fixture(&place.root)?;
-    let (engine, _) = open(place, false)?;
-    engine.start_scan().map_err(|e| e.to_string())?;
-    waited(Duration::from_secs(600), || idle(&engine)).ok_or("the first scan did not end")?;
+    let engine = scanned(place)?;
     let probe = place.root.join("refresh-probe");
     fs::create_dir_all(&probe).map_err(|e| e.to_string())?;
     waited(Duration::from_secs(600), || idle(&engine)).ok_or("never idle")?;
     let mut lines = format!("refresh with {:?}:", place.profile);
     for round in 0..3 {
-        let total = || {
-            let root = DirRef::Path(place.root.clone());
-            let folder = engine.children(
-                &root,
-                Page {
-                    offset: 0,
-                    limit: 0,
-                },
-            );
-            folder.ok().map(|f| f.dir.tree.bytes)
-        };
-        let before = total();
-        fs::write(probe.join(format!("w{round}")), vec![9u8; 1 << 20])
-            .map_err(|e| e.to_string())?;
-        let shown = waited(Duration::from_secs(900), || total() != before);
-        let shown = shown.map_or("not within 15 min".to_owned(), seconds);
+        let file = probe.join(format!("w{round}"));
+        let shown = shown_after_write(&engine, &place.root, &file)?;
         lines.push_str(&format!(" {shown}"));
-        waited(Duration::from_secs(900), || idle(&engine)).ok_or("never idle")?;
     }
     let _ = fs::remove_dir_all(&probe);
     lines.push('\n');
     Ok(lines)
+}
+
+/// The engine on a fixture root, once its first full scan has ended.
+fn scanned(place: &Place) -> Result<Engine, String> {
+    fixture(&place.root)?;
+    let (engine, _) = open(place, false)?;
+    engine.start_scan().map_err(|e| e.to_string())?;
+    waited(Duration::from_secs(600), || idle(&engine)).ok_or("the first scan did not end")?;
+    Ok(engine)
+}
+
+/// Writes 1 MiB to `file`; how long until the root's total shows it.
+/// Returns once the engine is idle again.
+fn shown_after_write(engine: &Engine, root: &Path, file: &Path) -> Result<String, String> {
+    let root = DirRef::Path(root.to_path_buf());
+    let whole = Page {
+        offset: 0,
+        limit: 0,
+    };
+    let total = || engine.children(&root, whole).ok().map(|f| f.dir.tree.bytes);
+    let before = total();
+    fs::write(file, vec![9u8; 1 << 20]).map_err(|e| e.to_string())?;
+    let shown = waited(Duration::from_secs(900), || total() != before);
+    waited(Duration::from_secs(900), || idle(engine)).ok_or("never idle")?;
+    Ok(shown.map_or("not within 15 min".to_owned(), seconds))
 }

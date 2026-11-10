@@ -53,24 +53,10 @@ pub enum Command {
         classic: bool,
         json: bool,
     },
-    Top {
+    /// `top`, `ls`, `candidates` and `summary`: they only read the index.
+    Show {
         index: PathBuf,
-        under: Option<PathBuf>,
-        limit: usize,
-    },
-    Ls {
-        index: PathBuf,
-        path: PathBuf,
-    },
-    Candidates {
-        index: PathBuf,
-        category: Option<Category>,
-        limit: usize,
-        json: bool,
-    },
-    Summary {
-        index: PathBuf,
-        json: bool,
+        view: View,
     },
     Exclude {
         index: PathBuf,
@@ -97,6 +83,26 @@ pub enum Command {
     Bench {
         place: Place,
         bench: Bench,
+    },
+}
+
+/// What a read-only command shows of an index.
+#[derive(Debug, PartialEq, Eq)]
+pub enum View {
+    Top {
+        under: Option<PathBuf>,
+        limit: usize,
+    },
+    Ls {
+        path: PathBuf,
+    },
+    Candidates {
+        category: Option<Category>,
+        limit: usize,
+        json: bool,
+    },
+    Summary {
+        json: bool,
     },
 }
 
@@ -297,11 +303,12 @@ fn scan(parsed: &mut Parsed) -> Result<Command, String> {
 }
 
 fn top(parsed: &mut Parsed) -> Result<Command, String> {
-    Ok(Command::Top {
-        index: parsed.path("--index")?,
+    let index = parsed.path("--index")?;
+    let view = View::Top {
         under: parsed.take("--under").map(PathBuf::from),
         limit: parsed.number("--limit")?.unwrap_or(TOP_LIMIT),
-    })
+    };
+    Ok(Command::Show { index, view })
 }
 
 fn ls(parsed: &mut Parsed) -> Result<Command, String> {
@@ -310,23 +317,26 @@ fn ls(parsed: &mut Parsed) -> Result<Command, String> {
         1 => PathBuf::from(parsed.positional.remove(0)),
         _ => return Err("ls needs exactly one path".into()),
     };
-    Ok(Command::Ls { index, path })
+    let view = View::Ls { path };
+    Ok(Command::Show { index, view })
 }
 
 fn candidates(parsed: &mut Parsed) -> Result<Command, String> {
-    Ok(Command::Candidates {
-        index: parsed.path("--index")?,
+    let index = parsed.path("--index")?;
+    let view = View::Candidates {
         category: parsed.category()?,
         limit: parsed.number("--limit")?.unwrap_or(CANDIDATE_LIMIT),
         json: parsed.switch("--json"),
-    })
+    };
+    Ok(Command::Show { index, view })
 }
 
 fn summary(parsed: &mut Parsed) -> Result<Command, String> {
-    Ok(Command::Summary {
-        index: parsed.path("--index")?,
+    let index = parsed.path("--index")?;
+    let view = View::Summary {
         json: parsed.switch("--json"),
-    })
+    };
+    Ok(Command::Show { index, view })
 }
 
 fn exclude(parsed: &mut Parsed) -> Result<Command, String> {

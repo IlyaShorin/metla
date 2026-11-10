@@ -17,9 +17,10 @@ mod report;
 
 use std::ffi::OsString;
 use std::io::Write;
+use std::path::Path;
 
 pub use args::{
-    BURST, Bench, CANDIDATE_LIMIT, CHURN, Command, Edit, LATENCY, TOP_LIMIT, USAGE, parse,
+    BURST, Bench, CANDIDATE_LIMIT, CHURN, Command, Edit, LATENCY, TOP_LIMIT, USAGE, View, parse,
 };
 pub use cleaned::{Cleaned, clean_text, outcome_text};
 pub use commands::{ScanHow, default_threads};
@@ -82,21 +83,7 @@ fn execute(command: Command, out: &mut dyn Write) -> Result<String, String> {
             let report = commands::scan(&root, &index, &how);
             report.map(|report| rendered(&report, json, scan_text, scan_json))
         }
-        Command::Top {
-            index,
-            under,
-            limit,
-        } => commands::top(&index, under.as_deref(), limit).map(|rows| top_text(&rows)),
-        Command::Ls { index, path } => commands::ls(&index, &path).map(|rows| ls_text(&rows)),
-        Command::Candidates {
-            index,
-            category,
-            limit,
-            json,
-        } => commands::candidates(&index, category, limit)
-            .map(|shown| rendered(&shown, json, candidates_text, candidates_json)),
-        Command::Summary { index, json } => commands::summary(&index)
-            .map(|shown| rendered(&shown, json, summary_text, summary_json)),
+        Command::Show { index, view } => show(&index, view),
         Command::Exclude { index, edit } => {
             commands::exclude(&index, &edit).map(|edited| edited_text(&edited))
         }
@@ -108,10 +95,32 @@ fn execute(command: Command, out: &mut dyn Write) -> Result<String, String> {
             yes,
         } => commands::clean(&index, &root, category, yes).map(|done| clean_text(&done)),
         Command::Watch { place, limit } => live::watch(&place, limit, out).map(|()| String::new()),
-        Command::Bench { place, bench } => match bench {
-            Bench::Open => live::bench_open(&place),
-            Bench::Churn { length, per_burst } => bench::bench_churn(&place, length, per_burst),
-            Bench::Refresh => bench::bench_refresh(&place),
-        },
+        Command::Bench { place, bench } => measure(&place, bench),
+    }
+}
+
+fn show(index: &Path, view: View) -> Result<String, String> {
+    match view {
+        View::Top { under, limit } => {
+            commands::top(index, under.as_deref(), limit).map(|rows| top_text(&rows))
+        }
+        View::Ls { path } => commands::ls(index, &path).map(|rows| ls_text(&rows)),
+        View::Candidates {
+            category,
+            limit,
+            json,
+        } => commands::candidates(index, category, limit)
+            .map(|shown| rendered(&shown, json, candidates_text, candidates_json)),
+        View::Summary { json } => {
+            commands::summary(index).map(|shown| rendered(&shown, json, summary_text, summary_json))
+        }
+    }
+}
+
+fn measure(place: &Place, bench: Bench) -> Result<String, String> {
+    match bench {
+        Bench::Open => live::bench_open(place),
+        Bench::Churn { length, per_burst } => bench::bench_churn(place, length, per_burst),
+        Bench::Refresh => bench::bench_refresh(place),
     }
 }

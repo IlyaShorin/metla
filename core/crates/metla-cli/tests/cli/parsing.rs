@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use metla_cli::{CANDIDATE_LIMIT, Command, Edit, TOP_LIMIT, parse};
+use metla_cli::{CANDIDATE_LIMIT, Command, Edit, TOP_LIMIT, View, parse};
 use metla_core::domain::Category;
 
 fn args(text: &str) -> Vec<OsString> {
@@ -42,18 +42,22 @@ fn scan_takes_root_index_threads_and_json() {
 fn top_has_a_default_limit_and_an_optional_anchor() {
     assert_eq!(
         parse(&args("top --index /i")),
-        Ok(Command::Top {
+        Ok(Command::Show {
             index: PathBuf::from("/i"),
-            under: None,
-            limit: TOP_LIMIT,
+            view: View::Top {
+                under: None,
+                limit: TOP_LIMIT,
+            },
         })
     );
     assert_eq!(
         parse(&args("top --index /i --under /r/a --limit 5")),
-        Ok(Command::Top {
+        Ok(Command::Show {
             index: PathBuf::from("/i"),
-            under: Some(PathBuf::from("/r/a")),
-            limit: 5,
+            view: View::Top {
+                under: Some(PathBuf::from("/r/a")),
+                limit: 5,
+            },
         })
     );
 }
@@ -62,9 +66,11 @@ fn top_has_a_default_limit_and_an_optional_anchor() {
 fn ls_takes_one_path() {
     assert_eq!(
         parse(&args("ls --index /i /r/a")),
-        Ok(Command::Ls {
+        Ok(Command::Show {
             index: PathBuf::from("/i"),
-            path: PathBuf::from("/r/a"),
+            view: View::Ls {
+                path: PathBuf::from("/r/a"),
+            },
         })
     );
     assert!(parse(&args("ls --index /i")).is_err());
@@ -77,20 +83,24 @@ fn candidates_take_a_category_a_limit_and_json() {
         parse(&args(
             "candidates --index /i --category build --limit 5 --json"
         )),
-        Ok(Command::Candidates {
+        Ok(Command::Show {
             index: PathBuf::from("/i"),
-            category: Some(Category::BuildArtifact),
-            limit: 5,
-            json: true,
+            view: View::Candidates {
+                category: Some(Category::BuildArtifact),
+                limit: 5,
+                json: true,
+            },
         })
     );
     assert_eq!(
         parse(&args("candidates --index /i")),
-        Ok(Command::Candidates {
+        Ok(Command::Show {
             index: PathBuf::from("/i"),
-            category: None,
-            limit: CANDIDATE_LIMIT,
-            json: false,
+            view: View::Candidates {
+                category: None,
+                limit: CANDIDATE_LIMIT,
+                json: false,
+            },
         })
     );
 }
@@ -99,9 +109,9 @@ fn candidates_take_a_category_a_limit_and_json() {
 fn summary_takes_an_index_and_json() {
     assert_eq!(
         parse(&args("summary --index /i --json")),
-        Ok(Command::Summary {
+        Ok(Command::Show {
             index: PathBuf::from("/i"),
-            json: true,
+            view: View::Summary { json: true },
         })
     );
 }
