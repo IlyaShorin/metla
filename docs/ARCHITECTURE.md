@@ -283,9 +283,11 @@ when a preview is made and again before removal.
   `Recency` the caller passes; it is never stored. A candidate is offered
   only if no exclusion hides it, it is not at or below a directory cleaned
   since the scan, and — for project output — Git verified it.
-  `Snapshot::reclaimable` sums the preselected candidates ("can be
-  freed"); `Snapshot::unverified` lists the project output Git has not
-  been asked about.
+  `Snapshot::reclaimable` sums the preselected candidates by what
+  cleaning them does: `freed` (deleted permanently or removed by Git:
+  "can be freed") and `trashed` (moved to the Trash: shown apart, "not
+  freed until the Trash is emptied"); `Snapshot::unverified` lists the
+  project output Git has not been asked about.
 * **After a cleanup** the caller records every item whose outcome may
   have changed the disk (anything but `Skipped`) with `mark_cleaned`; the
   index stops offering those directories and everything below them until

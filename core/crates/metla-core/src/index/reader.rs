@@ -15,7 +15,7 @@ use super::schema::open_for_reading;
 use super::{IndexError, Picture, ScanRecord};
 use crate::domain::{
     Bytes, Candidate, Category, Coverage, DirId, DirRecord, Exclusion, GapAt, GapKind, KindTotals,
-    Manager, Recency, RuleId, Skip, Tally, UnixTime, Verdict,
+    Manager, Recency, Reclaimable, RuleId, Skip, Tally, UnixTime, Verdict,
 };
 
 /// Stored gap counts and skip counts.
@@ -215,18 +215,19 @@ impl Snapshot<'_> {
         Ok(tallies)
     }
 
-    /// What can be freed by default: the preselected candidates. Worktrees
-    /// are never preselected, so nothing is counted twice.
-    pub fn reclaimable(&self, recency: &Recency) -> Result<Tally, IndexError> {
-        let mut tally = Tally::default();
+    /// What cleaning the preselected candidates would free, and what it
+    /// would only move to the Trash. Worktrees are never preselected, so
+    /// nothing is counted twice.
+    pub fn reclaimable(&self, recency: &Recency) -> Result<Reclaimable, IndexError> {
+        let mut reclaimable = Reclaimable::default();
         let found = self
             .visible(None)?
             .into_iter()
             .map(|f| f.candidate(recency));
         for candidate in found.filter(|c| c.preselected) {
-            tally.add(candidate.bytes);
+            reclaimable.add(&candidate);
         }
-        Ok(tally)
+        Ok(reclaimable)
     }
 
     /// Project output Git has not been asked about yet, with its path.

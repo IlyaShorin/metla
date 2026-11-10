@@ -165,7 +165,15 @@ fn the_summary_totals_categories_rules_and_kinds() {
     assert!(out.contains("\ndata types\n"));
     assert!(out.contains("coverage     complete\n"));
     let json = fx.ask("summary", &["--json"]);
-    assert!(json.contains("\"reclaimable\":{\"count\":2,"), "{json}");
+    assert!(json.contains("\"freed\":{\"count\":2,"), "{json}");
+    assert!(
+        json.contains("\"trashed\":{\"count\":0,\"bytes\":0}"),
+        "{json}"
+    );
+    assert!(
+        !out.contains("to the Trash"),
+        "nothing preselected moves: {out}"
+    );
     assert!(json.contains("\"current\":true,\"coverage\":\"complete\""));
 }
 

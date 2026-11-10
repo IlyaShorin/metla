@@ -22,7 +22,7 @@
 | **Exclusion** | A path the user wants kept. It, everything beneath it, and any candidate that holds it never appear as candidates. Applied when the index is read. |
 | **Activity** | The newest modification time seen anywhere in a candidate's tree. Recently active build output is not preselected. |
 | **Recent-activity age** | How old activity may be and still count as recent (default 14 days). |
-| **Preselected** | Checked by default in a cleanup selection: every candidate except recently active build output, worktrees, and anything inside a managed worktree. Derived when read, never stored. "Can be freed" is the total of the preselected candidates. |
+| **Preselected** | Checked by default in a cleanup selection: every candidate except recently active build output, worktrees, and anything inside a managed worktree. Derived when read, never stored. "Can be freed" is the total of the preselected candidates that are deleted permanently; what would move to the Trash is shown apart, because it is not freed until the Trash is emptied. |
 | **Tally** | A count of candidates and their estimated bytes. |
 | **File kind** | What a file is for "By data type": Applications, Developer, Media, Documents, Archives and disk images, System, Other. |
 | **Area** | Where a directory is for file kinds (user, system, application bundle, developer); a directory takes the stronger of its parent's area and its own. |

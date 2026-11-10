@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use metla_core::domain::{
-    Bytes, Candidate, DirId, DirRecord, Manager, Recency, ScanSummary, Tally, TreeTotals, UnixTime,
-    Verdict,
+    Bytes, Candidate, DirId, DirRecord, Manager, Recency, Reclaimable, ScanSummary, Tally,
+    TreeTotals, UnixTime, Verdict,
 };
 use metla_core::index::{IndexWriter, Page};
 
@@ -179,12 +179,42 @@ fn nothing_inside_a_managed_worktree_is_preselected_or_reclaimable() {
         .read(|snap| snap.reclaimable(&recency()))
         .unwrap();
     assert_eq!(
-        reclaimable,
+        reclaimable.freed,
         Tally {
             count: 3,
             bytes: Bytes(600 + 20 + 10)
         },
         "wt/target, web/dist-newstyle and com.x; worktrees never"
+    );
+    assert_eq!(reclaimable.trashed, Tally::default());
+}
+
+#[test]
+fn what_would_move_to_the_trash_is_not_counted_as_freed() {
+    let fx = Fixture::new();
+    let index = fx.path("index.sqlite");
+    let rows = vec![
+        read(1, None, "", 0, TreeTotals::directory(UnixTime(0))),
+        row(2, 1, "com.x", 100, "app-cache.library"),
+        row(3, 1, "Logs", 30, "log.user-library"),
+        row(4, 1, ".Trash", 7, "temp.trash"),
+        row(5, 1, "tmp", 5, "temp.other"),
+    ];
+    write_summary(&index, rows, &summary(true));
+    let reclaimable = reader(&index)
+        .read(|snap| snap.reclaimable(&recency()))
+        .unwrap();
+    let tally = |count, bytes| Tally {
+        count,
+        bytes: Bytes(bytes),
+    };
+    assert_eq!(
+        reclaimable,
+        Reclaimable {
+            freed: tally(2, 107),
+            trashed: tally(2, 35),
+        },
+        "the cache and the Trash's contents are removed; logs and temporary data move"
     );
 }
 

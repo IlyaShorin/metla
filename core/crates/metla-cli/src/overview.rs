@@ -6,8 +6,8 @@ use std::fmt::Write;
 use std::path::PathBuf;
 
 use metla_core::domain::{
-    Candidate, Category, Coverage, Disposal, Exclusion, FileKind, KindTotals, RuleId, Tally,
-    UnixTime,
+    Candidate, Category, Coverage, Disposal, Exclusion, FileKind, KindTotals, Reclaimable, RuleId,
+    Tally, UnixTime,
 };
 
 use crate::format::{ago, bytes, count};
@@ -36,8 +36,9 @@ pub struct Freshness {
 pub struct Overview {
     /// `None` until a scan has finished.
     pub freshness: Option<Freshness>,
-    /// What can be freed by default: the preselected candidates.
-    pub reclaimable: Tally,
+    /// What cleaning the preselected candidates would free, and what it
+    /// would only move to the Trash.
+    pub reclaimable: Reclaimable,
     pub categories: BTreeMap<Category, Tally>,
     pub rules: BTreeMap<RuleId, Tally>,
 }
@@ -139,13 +140,21 @@ pub fn summary_text(shown: &Shown<Overview>) -> String {
         Some(freshness) => freshness_text(&mut out, shown.now, freshness),
         None => line(&mut out, "picture", "none: no scan has finished"),
     }
-    let reclaimable = &overview.reclaimable;
+    let Reclaimable { freed, trashed } = &overview.reclaimable;
     let freed = format!(
         "{} in {} preselected candidates (estimate)",
-        bytes(reclaimable.bytes),
-        count(reclaimable.count)
+        bytes(freed.bytes),
+        count(freed.count)
     );
     line(&mut out, "can be freed", freed);
+    if trashed.count > 0 {
+        let trashed = format!(
+            "{} in {} preselected candidates, not freed until the Trash is emptied",
+            bytes(trashed.bytes),
+            count(trashed.count)
+        );
+        line(&mut out, "to the Trash", trashed);
+    }
     for (category, tally) in &overview.categories {
         let _ = writeln!(
             out,
@@ -205,7 +214,8 @@ pub fn summary_json(shown: &Shown<Overview>) -> String {
         .collect();
     json_object(&[
         ("picture", picture),
-        ("reclaimable", tally_json(&overview.reclaimable, &[])),
+        ("freed", tally_json(&overview.reclaimable.freed, &[])),
+        ("trashed", tally_json(&overview.reclaimable.trashed, &[])),
         ("categories", format!("[{}]", categories.join(","))),
     ])
 }

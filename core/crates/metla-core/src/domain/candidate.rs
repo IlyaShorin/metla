@@ -81,6 +81,27 @@ impl Tally {
     }
 }
 
+/// What cleaning the preselected candidates would do with their bytes.
+/// Moving to the Trash frees nothing until the Trash is emptied, so it is
+/// never counted as freed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Reclaimable {
+    /// Removed for good ("can be freed").
+    pub freed: Tally,
+    /// Moved to the Trash.
+    pub trashed: Tally,
+}
+
+impl Reclaimable {
+    pub fn add(&mut self, candidate: &Candidate) {
+        let tally = match candidate.disposal() {
+            Disposal::MoveToTrash => &mut self.trashed,
+            Disposal::DeletePermanently | Disposal::GitWorktreeRemove => &mut self.freed,
+        };
+        tally.add(candidate.bytes);
+    }
+}
+
 /// A path the user wants kept: absolute, without `.` or `..` components
 /// and without a trailing slash.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
