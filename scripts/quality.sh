@@ -12,8 +12,23 @@
 #   MUTATE_ALL=1             rerun every mutant, not only changed functions
 #   MUTATOR_WORKERS          parallel mutants per file (default 2: every
 #                            worker builds its own copy of the crates)
-#   MUTATOR_TIMEOUT_FACTOR   mutant timeout / baseline time (default 30:
-#                            each worker builds its own copy of the crate)
+#   MUTATOR_TIMEOUT_SECONDS  the shortest mutant timeout (default 90)
+#   MUTATOR_TIMEOUT_FACTOR   mutant timeout / baseline time; by default
+#                            max(3, ceil(MUTATOR_TIMEOUT_SECONDS / baseline)),
+#                            the baseline being one warm run of the crate's
+#                            tests, timed here
+#
+# Mutant timeouts. A mutant's timeout is the factor times the mutator's own
+# baseline, so it comes to about max(90 s, 3 × baseline). The floor covers
+# the first mutant of every worker, which builds the crates in the worker's
+# own target directory: two workers building at once from empty target
+# directories took 9.2 s each for metla-core's tests and 6.5 s for
+# metla-cli's (Apple M3 Pro, load average about 7), so 90 s is well above
+# 1.5 times a cold build plus a test run. Too short a timeout would count a
+# slow, passing mutant as killed and hide a survivor. The mutator reports a
+# timed-out mutant as killed; scripts/mutant-test.sh leaves a trace of every
+# test run, and a run without an end is a mutant stopped at its timeout,
+# counted per file below.
 #
 # The tools do not analyse Swift; the Swift app has its own gates.
 
@@ -27,7 +42,7 @@ crapper="${CRAPPER:-$ub_tools/crapper/crapper}"
 dryer="${DRYER:-$ub_tools/dryer/dryer}"
 mutator="${MUTATOR:-$ub_tools/mutator/mutator}"
 workers="${MUTATOR_WORKERS:-2}"
-timeout_factor="${MUTATOR_TIMEOUT_FACTOR:-30}"
+timeout_floor="${MUTATOR_TIMEOUT_SECONDS:-90}"
 
 crap_limit=10
 dry_limit=0.8
@@ -112,17 +127,49 @@ PY
 section "mutator (no survivors, no uncovered sites)"
 mutate_all=()
 [[ "${MUTATE_ALL:-0}" == "1" ]] && mutate_all=(--mutate-all)
+
+# Seconds one warm run of a crate's tests takes.
+baseline() {
+    (cd "core/crates/$1" && cargo test --no-run >/dev/null 2>&1)
+    python3 -I - "$repo/core/crates/$1" <<'PY'
+import subprocess, sys, time
+started = time.monotonic()
+subprocess.run(["cargo", "test"], cwd=sys.argv[1], capture_output=True)
+print(f"{time.monotonic() - started:.1f}")
+PY
+}
+
+# The timeout factor for a crate: the override, or max(3, ceil(floor / baseline)).
+factor_for() {
+    [[ -n "${MUTATOR_TIMEOUT_FACTOR:-}" ]] && { echo "$MUTATOR_TIMEOUT_FACTOR"; return; }
+    python3 -I -c 'import math, sys; print(max(3, math.ceil(float(sys.argv[2]) / float(sys.argv[1]))))' \
+        "$(baseline "$1")" "$timeout_floor"
+}
+
+factors=""
+for crate in $(ls core/crates); do
+    factor=$(factor_for "$crate")
+    factors="$factors $crate=$factor"
+    echo "$crate: timeout factor $factor (floor ${timeout_floor} s)"
+done
+
 total_sites=0
 while IFS= read -r file; do
     out="$log_dir/mutate-$(echo "$file" | tr '/' '_').txt"
-    "$mutator" --use-existing-coverage --max-workers "$workers" \
-        --timeout-factor "$timeout_factor" ${mutate_all[@]+"${mutate_all[@]}"} "$file" \
-        </dev/null >"$out" 2>&1
+    trace="$log_dir/trace-$(echo "$file" | tr '/' '_').txt"
+    crate=$(echo "$file" | cut -d/ -f3)
+    factor=$(echo "$factors" | tr ' ' '\n' | sed -n "s/^$crate=//p")
+    : >"$trace"
+    MUTANT_TRACE="$trace" "$mutator" --use-existing-coverage --max-workers "$workers" \
+        --timeout-factor "$factor" ${mutate_all[@]+"${mutate_all[@]}"} \
+        --test-command "$(printf '%q %q' "$repo/scripts/mutant-test.sh" "core/crates/$crate")" \
+        "$file" </dev/null >"$out" 2>&1
     code=$?
     read -r killed survived uncovered sites < <(awk '$1 == "Total" {print $2, $3, $4, $5}' "$out")
     killed=${killed:-0}; survived=${survived:-0}; uncovered=${uncovered:-0}; sites=${sites:-0}
-    printf '%-52s sites %3s  killed %3s  survived %s  uncovered %s\n' \
-        "${file#core/crates/}" "$sites" "$killed" "$survived" "$uncovered"
+    timeouts=$(( $(grep -c '^start' "$trace") - $(grep -c '^end' "$trace") ))
+    printf '%-52s sites %3s  killed %3s (by timeout %s)  survived %s  uncovered %s\n' \
+        "${file#core/crates/}" "$sites" "$killed" "$timeouts" "$survived" "$uncovered"
     total_sites=$((total_sites + sites))
     grep -E "^(SURVIVED|UNCOVERED)" "$out" | sed 's/^/    /'
     if [[ $code -ne 0 || $survived -ne 0 || $uncovered -ne 0 ]]; then
