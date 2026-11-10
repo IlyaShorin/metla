@@ -231,19 +231,29 @@ extern "C" fn deliver(
     // context's info, which is the sink this stream owns.
     let (sink, events) = unsafe {
         let paths = std::slice::from_raw_parts(paths as *const *const c_char, count);
+        let paths: Vec<&CStr> = paths.iter().map(|path| CStr::from_ptr(*path)).collect();
         let flags = std::slice::from_raw_parts(flags, count);
         let ids = std::slice::from_raw_parts(ids, count);
-        let events = (0..count).map(|i| Event {
-            path: PathBuf::from(std::ffi::OsStr::from_bytes(
-                CStr::from_ptr(paths[i]).to_bytes(),
-            )),
-            flags: Flags::from_bits(flags[i]),
-            id: ids[i],
-        });
-        (&*(info as *const Sink), events.collect::<Vec<Event>>())
+        (&*(info as *const Sink), events_of(&paths, flags, ids))
     };
     // A panic must not unwind into the system's code.
     let _ = catch_unwind(AssertUnwindSafe(|| sink(events)));
+}
+
+/// The events of one batch as FSEvents hands it over: a path, the flags
+/// and the id of each, in the same order. Pure, so it is tested without
+/// waiting for a real delivery.
+pub fn events_of(paths: &[&CStr], flags: &[u32], ids: &[u64]) -> Vec<Event> {
+    paths
+        .iter()
+        .zip(flags)
+        .zip(ids)
+        .map(|((path, flags), id)| Event {
+            path: PathBuf::from(std::ffi::OsStr::from_bytes(path.to_bytes())),
+            flags: Flags::from_bits(*flags),
+            id: *id,
+        })
+        .collect()
 }
 
 /// The id of the latest event the system has recorded.

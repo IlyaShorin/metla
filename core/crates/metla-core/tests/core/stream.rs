@@ -1,12 +1,16 @@
-//! The FSEvents stream itself, on a temporary directory. Delivery is
-//! forced with a flush, so these tests do not wait for the stream's
-//! latency. The engine's tests with real streams are in `fsevents`.
+//! The FSEvents stream itself, on a temporary directory. The regular
+//! suite starts, flushes and stops streams and decodes batches, but never
+//! waits for fseventsd to deliver: under load it delivers seconds late,
+//! which made the suite fail on its own now and then. The tests that need
+//! a real delivery are ignored by default (`--ignored`, run once by
+//! `scripts/quality.sh`), like the engine's in `fsevents`.
 
+use std::ffi::CStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use metla_core::watch::{Event, Flags, Stream, current_event_id, volume_uuid};
+use metla_core::watch::{Event, Flags, Stream, current_event_id, events_of, volume_uuid};
 
 use crate::support::Fixture;
 
@@ -50,6 +54,7 @@ fn wait_for(stream: &Stream, seen: &Seen, dir: &Path, flags: Flags) -> Event {
 }
 
 #[test]
+#[ignore = "real FSEvents delivery; run with --ignored"]
 fn a_stream_reports_the_directory_that_changed() {
     let fx = Fixture::new();
     let dir = fx.dir("watched/sub");
@@ -62,6 +67,7 @@ fn a_stream_reports_the_directory_that_changed() {
 }
 
 #[test]
+#[ignore = "real FSEvents delivery; run with --ignored"]
 fn a_stream_started_from_an_earlier_event_replays_what_happened_since() {
     let fx = Fixture::new();
     let dir = fx.dir("earlier");
@@ -76,6 +82,7 @@ fn a_stream_started_from_an_earlier_event_replays_what_happened_since() {
 }
 
 #[test]
+#[ignore = "real FSEvents delivery; run with --ignored"]
 fn a_stopped_stream_delivers_nothing() {
     let fx = Fixture::new();
     let dir = fx.dir("quiet");
@@ -108,4 +115,38 @@ fn the_history_has_ids_that_grow_and_a_volume_uuid() {
     assert_eq!(volume_uuid(device as u64), Some(uuid));
     assert!(current_event_id() > 0);
     assert!(Stream::start(Path::new("/no\0where"), None, Duration::ZERO, |_| {}).is_err());
+}
+
+/// From now on, and replaying from the latest event: either way the
+/// stream starts, a flush returns and the drop stops it.
+#[test]
+fn a_stream_starts_flushes_and_stops_without_waiting_for_a_delivery() {
+    let fx = Fixture::new();
+    for since in [None, Some(current_event_id())] {
+        let (stream, _) = start(fx.root(), since);
+        stream.flush();
+        drop(stream);
+    }
+}
+
+#[test]
+fn a_batch_is_decoded_event_by_event_in_order() {
+    let paths: [&CStr; 2] = [c"/watched/a", c"/watched/b c"];
+    let events = events_of(&paths, &[0x01, 0x10], &[7, 9]);
+    assert_eq!(
+        events,
+        [
+            Event {
+                path: PathBuf::from("/watched/a"),
+                flags: Flags::MUST_SCAN_SUBDIRS,
+                id: 7
+            },
+            Event {
+                path: PathBuf::from("/watched/b c"),
+                flags: Flags::HISTORY_DONE,
+                id: 9
+            },
+        ]
+    );
+    assert!(events_of(&[], &[], &[]).is_empty());
 }

@@ -10,4 +10,4 @@ mod sys;
 pub use coalescer::{Coalescer, Event, Timing};
 pub use flags::Flags;
 pub use resume::resume_after;
-pub use sys::{Stream, current_event_id, volume_uuid};
+pub use sys::{Stream, current_event_id, events_of, volume_uuid};

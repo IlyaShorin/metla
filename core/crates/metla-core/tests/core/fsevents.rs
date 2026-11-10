@@ -1,11 +1,12 @@
 //! The engine with a real FSEvents stream on a synthetic root.
 //!
-//! The tests with a 20 ms latency and settle times of milliseconds are in
-//! the regular suite. The others use the standard table's Interactive
-//! profile (a latency and a settle time of a second: the app's window is
-//! visible), take seconds each, and are ignored by default: `cargo test
-//! -- --ignored fsevents` runs them, and `scripts/quality.sh` runs them
-//! once, apart from the mutation runs.
+//! Every test that waits for fseventsd to deliver an event is ignored by
+//! default: under load it delivers seconds late, and a suite that fails
+//! on its own would also "kill" mutants it has nothing to do with.
+//! `cargo test -- --ignored` runs them, and `scripts/quality.sh` runs
+//! them once, apart from the mutation runs. The regular suite keeps the
+//! tests that start, replace and stop streams on a root where nothing is
+//! written, and asserts nothing about deliveries.
 
 use std::fs;
 use std::time::{Duration, Instant};
@@ -55,6 +56,7 @@ fn interactive(place: &Place) -> EngineConfig {
 const DELIVERY: Duration = Duration::from_secs(60);
 
 #[test]
+#[ignore = "real FSEvents delivery; run with --ignored"]
 fn the_engine_follows_a_real_stream_and_resumes_after_the_stored_event() {
     let place = Place::new(HOME);
     let quick = || real(&place, Duration::from_millis(20), profiles());
@@ -90,6 +92,7 @@ fn held_back(place: &Place) -> EngineConfig {
 }
 
 #[test]
+#[ignore = "real FSEvents delivery; run with --ignored"]
 fn another_latency_replaces_the_stream_and_replays_what_it_held_back() {
     let place = Place::new(HOME);
     let engine = Engine::open(held_back(&place)).unwrap();
@@ -118,6 +121,7 @@ fn another_latency_replaces_the_stream_and_replays_what_it_held_back() {
 }
 
 #[test]
+#[ignore = "real FSEvents delivery; run with --ignored"]
 fn attention_hands_over_at_once_what_the_stream_held_back() {
     let place = Place::new(HOME);
     let engine = Engine::open(held_back(&place)).unwrap();
@@ -132,6 +136,47 @@ fn attention_hands_over_at_once_what_the_stream_held_back() {
     engine.set_attention(false).unwrap();
     until(&engine, |e| e.counters().streams == 3);
     assert_eq!(engine.counters().full_scans, 1, "replayed, not rescanned");
+}
+
+/// Waits until the engine has handled the commands sent so far.
+fn handled(engine: &Engine, woken: u64) {
+    until(engine, |e| e.counters().wakeups > woken);
+    settled(engine);
+}
+
+#[test]
+fn another_latency_replaces_the_stream_and_the_same_latency_keeps_it() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(held_back(&place)).unwrap();
+    settled(&engine);
+    assert_eq!(engine.counters().streams, 1);
+    engine.set_power_profile(PowerProfile::Interactive).unwrap();
+    until(&engine, |e| e.counters().streams == 2);
+    let woken = engine.counters().wakeups;
+    engine.set_power_profile(PowerProfile::Saver).unwrap();
+    handled(&engine, woken);
+    assert_eq!(
+        engine.counters().streams,
+        2,
+        "the same latency, the same stream"
+    );
+    assert_eq!(engine.counters().full_scans, 1, "resumed, not rescanned");
+}
+
+#[test]
+fn attention_follows_with_interactive_latency_and_then_with_the_profile() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(held_back(&place)).unwrap();
+    settled(&engine);
+    engine.set_attention(true).unwrap();
+    until(&engine, |e| e.counters().streams == 2);
+    engine.set_attention(false).unwrap();
+    until(&engine, |e| e.counters().streams == 3);
+    let woken = engine.counters().wakeups;
+    engine.set_attention(false).unwrap();
+    handled(&engine, woken);
+    assert_eq!(engine.counters().streams, 3, "no change, no new stream");
+    assert_eq!(engine.counters().full_scans, 1, "resumed, not rescanned");
 }
 
 #[test]

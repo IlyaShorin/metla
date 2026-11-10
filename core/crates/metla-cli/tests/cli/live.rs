@@ -278,21 +278,32 @@ fn later(path: &Path, after: Duration) -> std::thread::JoinHandle<()> {
     })
 }
 
+/// Nothing is written while it watches, so no line waits for fseventsd:
+/// the first scan's picture is the line printed.
+#[test]
+fn watch_scans_a_new_root_and_prints_a_line_for_its_picture() {
+    let bed = Bed::new();
+    let (code, out, err) = bed.run("watch --seconds 3");
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert!(out.starts_with("watching "), "{out}");
+    assert!(out.contains("\nbatch 0  tasks 0  "), "{out}");
+    assert!(out.contains(" batches, "), "{out}");
+    let (code, opened, _) = bed.run("bench open");
+    assert_eq!(code, 0);
+    assert!(opened.starts_with("open + first snapshot: "), "{opened}");
+}
+
 /// Watches for long enough that a change shows even while fseventsd
 /// delivers late because other builds and tests write to the same volume.
 #[test]
-fn watch_scans_a_new_root_and_prints_every_batch() {
+#[ignore = "real FSEvents delivery; run with --ignored"]
+fn watch_prints_a_batch_for_a_change_on_disk() {
     let bed = Bed::new();
     let writer = later(&bed.root.join("work/new"), Duration::from_millis(400));
     let (code, out, err) = bed.run("watch --seconds 8");
     writer.join().unwrap();
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
-    assert!(out.starts_with("watching "), "{out}");
     assert!(out.contains("\nbatch 1  tasks "), "{out}");
-    assert!(out.contains(" batches, "), "{out}");
-    let (code, opened, _) = bed.run("bench open");
-    assert_eq!(code, 0);
-    assert!(opened.starts_with("open + first snapshot: "), "{opened}");
 }
 
 #[test]
