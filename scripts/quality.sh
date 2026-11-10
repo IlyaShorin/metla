@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Quality gates for the Rust core (core/):
 #   cargo fmt --check, cargo clippy -D warnings, cargo test,
+#   the slow tests with real FSEvents latency (the ignored group, once),
 #   crapper (every function CRAP < 10), dryer (no pair scoring >= 0.8),
 #   mutator (no surviving mutant, no uncovered site).
 # Exits non-zero when any gate fails, and when a tool analysed nothing.
@@ -57,6 +58,11 @@ section "cargo clippy --all-targets -- -D warnings"
 section "cargo test"
 (cd core && cargo test 2>&1) | tee "$log_dir/test.txt" | grep -E "^test result|FAILED|panicked"
 [[ ${PIPESTATUS[0]} -eq 0 ]] || fail "cargo test"
+
+section "slow tests: real FSEvents streams (ignored group, run once)"
+(cd core && cargo test -p metla-core --test core -- --ignored 2>&1) | tee "$log_dir/slow.txt" \
+    | grep -E "^test result|FAILED|panicked|^fsevents:"
+[[ ${PIPESTATUS[0]} -eq 0 ]] || fail "slow tests"
 
 section "crapper (CRAP < $crap_limit)"
 "$crapper" core >"$log_dir/crap.txt" 2>&1 || fail "crapper run"

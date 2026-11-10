@@ -213,6 +213,7 @@ impl Engine {
             commands: queue,
             sender: commands.clone(),
             stream: None,
+            origin: None,
             clock: Instant::now(),
             manual: 0,
             next_batch: None,

@@ -7,7 +7,7 @@
 //! and delivers each batch on a serial dispatch queue of its own to the
 //! caller's sink.
 
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -68,12 +68,10 @@ unsafe extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
     static kCFTypeArrayCallBacks: c_void;
-    fn CFStringCreateWithBytes(
+    fn CFStringCreateWithCString(
         allocator: CFTypeRef,
-        bytes: *const u8,
-        length: CFIndex,
+        string: *const c_char,
         encoding: u32,
-        external: u8,
     ) -> CFTypeRef;
     fn CFArrayCreate(
         allocator: CFTypeRef,
@@ -125,6 +123,8 @@ impl Stream {
         latency: Duration,
         sink: impl Fn(Vec<Event>) + Send + 'static,
     ) -> Result<Stream, String> {
+        let root_text = CString::new(root.as_os_str().as_bytes())
+            .map_err(|_| format!("{} holds a NUL byte", root.display()))?;
         let sink: *mut Sink = Box::into_raw(Box::new(Box::new(sink)));
         let context = StreamContext {
             version: 0,
@@ -133,17 +133,9 @@ impl Stream {
             release: std::ptr::null(),
             copy_description: std::ptr::null(),
         };
-        let bytes = root.as_os_str().as_bytes();
-        // SAFETY: the bytes outlive the call, which copies them.
-        let path = unsafe {
-            CFStringCreateWithBytes(
-                std::ptr::null(),
-                bytes.as_ptr(),
-                bytes.len() as CFIndex,
-                UTF8,
-                0,
-            )
-        };
+        // SAFETY: a NUL-terminated string that outlives the call, which
+        // copies it.
+        let path = unsafe { CFStringCreateWithCString(std::ptr::null(), root_text.as_ptr(), UTF8) };
         // SAFETY: one valid CFString; the array retains it.
         let paths = unsafe {
             CFArrayCreate(
@@ -271,7 +263,7 @@ pub fn volume_uuid(device: u64) -> Option<String> {
     }
     // SAFETY: `uuid` is a valid CFUUID; the string is released below.
     let text = unsafe { CFUUIDCreateString(std::ptr::null(), uuid) };
-    let mut buffer = [0 as c_char; 64];
+    let mut buffer = [c_char::default(); 64];
     // SAFETY: the buffer is writable for its length; both objects are
     // released once.
     let ok = unsafe {

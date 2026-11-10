@@ -46,7 +46,7 @@ impl Told {
 }
 
 /// Moves into a directory outside the tree.
-struct Away(PathBuf);
+pub struct Away(pub PathBuf);
 
 impl TrashHost for Away {
     fn trash(&self, path: &Path) -> Result<(), String> {
@@ -55,7 +55,7 @@ impl TrashHost for Away {
     }
 }
 
-fn quick(full_scans: bool) -> Profile {
+pub fn quick(full_scans: bool) -> Profile {
     Profile {
         threads: 2,
         timing: Some(Timing {
@@ -72,7 +72,7 @@ fn quick(full_scans: bool) -> Profile {
     }
 }
 
-fn profiles() -> Profiles {
+pub fn profiles() -> Profiles {
     Profiles {
         interactive: quick(true),
         background: quick(true),
@@ -84,13 +84,13 @@ fn profiles() -> Profiles {
 }
 
 /// A tree, the directory for the engine's data and Git, and a Trash.
-struct Place {
-    fx: Fixture,
-    aux: Fixture,
+pub struct Place {
+    pub fx: Fixture,
+    pub aux: Fixture,
 }
 
 impl Place {
-    fn new(lines: &[&str]) -> Place {
+    pub fn new(lines: &[&str]) -> Place {
         let fx = Fixture::new();
         fx.build(lines);
         fs::write(fx.path(FIXTURE_MARKER), "").unwrap();
@@ -100,7 +100,7 @@ impl Place {
         }
     }
 
-    fn config(&self, profile: PowerProfile) -> EngineConfig {
+    pub fn config(&self, profile: PowerProfile) -> EngineConfig {
         EngineConfig {
             root: self.fx.root().to_path_buf(),
             home: self.fx.home(),
@@ -115,26 +115,31 @@ impl Place {
         }
     }
 
-    fn open(&self) -> Engine {
+    pub fn open(&self) -> Engine {
         Engine::open(self.config(PowerProfile::Background)).unwrap()
     }
 
-    fn path(&self, relative: &str) -> PathBuf {
+    pub fn path(&self, relative: &str) -> PathBuf {
         self.fx.path(&relative.replacen('~', "home", 1))
     }
 }
 
 /// Waits until `done` holds, at most ten seconds.
-fn until(engine: &Engine, done: impl Fn(&Engine) -> bool) {
+pub fn until(engine: &Engine, done: impl Fn(&Engine) -> bool) {
+    within(engine, Duration::from_secs(10), done);
+}
+
+/// Waits until `done` holds, at most `limit`.
+pub fn within(engine: &Engine, limit: Duration, done: impl Fn(&Engine) -> bool) {
     let started = Instant::now();
     while !done(engine) {
-        assert!(started.elapsed() < Duration::from_secs(10), "timed out");
+        assert!(started.elapsed() < limit, "timed out");
         std::thread::sleep(Duration::from_millis(5));
     }
 }
 
 /// Waits until the engine has nothing to do.
-fn settled(engine: &Engine) {
+pub fn settled(engine: &Engine) {
     until(engine, |e| {
         let freshness = e.snapshot().unwrap().freshness;
         freshness.state == EngineState::Idle && !freshness.needs_full_scan
@@ -152,7 +157,7 @@ fn a_reported_change_is_pending_at_once() {
     assert!(!freshness.is_current() || engine.counters().tasks >= 1);
 }
 
-fn offered(engine: &Engine, place: &Place) -> BTreeSet<String> {
+pub fn offered(engine: &Engine, place: &Place) -> BTreeSet<String> {
     let listed = engine.candidates(None, ALL).unwrap();
     let relative = listed.iter().map(|l| {
         let path = l.candidate.path.strip_prefix(place.fx.root()).unwrap();
@@ -161,7 +166,7 @@ fn offered(engine: &Engine, place: &Place) -> BTreeSet<String> {
     relative.collect()
 }
 
-const HOME: &[&str] = &[
+pub const HOME: &[&str] = &[
     "~/Library/Caches/com.example.app/blob=cached",
     "~/Library/Logs/com.example.app/today.log=log",
     "~/Documents/notes.txt=notes",

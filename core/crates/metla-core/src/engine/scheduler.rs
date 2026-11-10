@@ -66,6 +66,9 @@ pub struct Scheduler {
     pub commands: Receiver<Command>,
     pub sender: Sender<Command>,
     pub stream: Option<Stream>,
+    /// The event id the stream started after: where a restart resumes
+    /// when no event has come yet.
+    pub origin: Option<u64>,
     pub clock: Instant,
     /// Ids for changes reported by hand.
     pub manual: u64,
@@ -187,6 +190,7 @@ impl Scheduler {
         let sink = move |events| {
             let _ = sender.send(Command::Events(events));
         };
+        self.origin = Some(since.unwrap_or_else(current_event_id));
         self.stream = Stream::start(self.root.path(), since, latency, sink).ok();
         since.is_some() && self.stream.is_some()
     }
@@ -200,7 +204,8 @@ impl Scheduler {
 
     /// Stores the id after which a restarted stream must resume.
     fn mark_events(&mut self) {
-        let (Some(_), Some(id)) = (&self.stream, self.coalescer.settled()) else {
+        let settled = self.coalescer.settled().or(self.origin);
+        let (Some(_), Some(id)) = (&self.stream, settled) else {
             return;
         };
         let Some(uuid) = volume_uuid(self.root.device()) else {
