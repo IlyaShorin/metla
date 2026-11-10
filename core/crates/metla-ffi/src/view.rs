@@ -392,14 +392,25 @@ impl From<Settings> for EngineSettings {
 }
 
 impl From<EngineSettings> for Settings {
-    fn from(settings: EngineSettings) -> Settings {
+    /// Checked where it comes in: a quick category given twice is kept
+    /// once.
+    fn from(given: EngineSettings) -> Settings {
+        let EngineSettings {
+            background,
+            reduce_on_battery,
+            recent_age,
+            stale_after,
+            hotkey,
+            quick,
+        } = given;
+        let quick = quick.into_iter().collect();
         Settings {
-            background: settings.background,
-            reduce_on_battery: settings.reduce_on_battery,
-            recent_age: settings.recent_age,
-            stale_after: settings.stale_after,
-            hotkey: settings.hotkey,
-            quick: settings.quick.into_iter().collect(),
+            quick,
+            hotkey,
+            stale_after,
+            recent_age,
+            reduce_on_battery,
+            background,
         }
     }
 }
