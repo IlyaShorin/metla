@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>overview.partialDenied</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@folders@</string>
+		<key>folders</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>Нет доступа к %d папкам.</string>
+			<key>many</key>
+			<string>Нет доступа к %d папкам.</string>
+			<key>one</key>
+			<string>Нет доступа к %d папке.</string>
+			<key>other</key>
+			<string>Нет доступа к %d папки.</string>
+		</dict>
+	</dict>
+	<key>overview.partialOther</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@folders@</string>
+		<key>folders</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>Ещё %d папки не удалось прочитать.</string>
+			<key>many</key>
+			<string>Ещё %d папок не удалось прочитать.</string>
+			<key>one</key>
+			<string>Ещё %d папку не удалось прочитать.</string>
+			<key>other</key>
+			<string>Ещё %d папки не удалось прочитать.</string>
+		</dict>
+	</dict>
+	<key>status.files</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@files@</string>
+		<key>files</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>%2$@ файла</string>
+			<key>many</key>
+			<string>%2$@ файлов</string>
+			<key>one</key>
+			<string>%2$@ файл</string>
+			<key>other</key>
+			<string>%2$@ файла</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

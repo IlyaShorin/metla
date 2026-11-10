@@ -1,0 +1,171 @@
+/* Слова приложения. Ключи — идентификаторы; названия правил —
+   "rule.<id правила>", без перевода берётся английское из каталога. */
+
+"app.failed" = "Не удалось запустить движок";
+
+"sidebar.disk" = "Диск";
+"sidebar.overview" = "Обзор";
+"sidebar.folders" = "Папки";
+"sidebar.cleanable" = "Можно очистить";
+
+"toolbar.refresh" = "Обновить";
+"toolbar.stop" = "Остановить";
+"toolbar.clean" = "Очистить…";
+
+"clean.title" = "Очистка — в следующей версии";
+"clean.placeholder" = "Эта версия показывает, что можно очистить. Предпросмотр и очистка выбранного появятся в следующей версии.";
+"clean.close" = "Закрыть";
+
+"category.appCache" = "Кэши приложений";
+"category.devCache" = "Кэши разработки";
+"category.buildArtifact" = "Артефакты сборок";
+"category.log" = "Логи";
+"category.gitWorktree" = "Git worktree";
+"category.temp" = "Временные данные";
+"category.hint" = "Правый клик по строке: «Показать в Finder», «Показать в Папках», «Не предлагать». Пробел — отметить, ⌘A — отметить всё.";
+"category.selected" = "выбрано %1$d из %2$d · %3$@";
+"category.clean" = "Очистить выбранное…";
+"category.check" = "Отметить %@";
+"category.path" = "Путь";
+"category.rule" = "Правило";
+"category.managed" = "управляемый worktree";
+"category.branch" = "Ветка";
+"category.state" = "Состояние";
+"category.activity" = "Активность";
+"category.size" = "Размер";
+
+"menu.reveal" = "Показать в Finder";
+"menu.showInFolders" = "Показать в Папках";
+"menu.exclude" = "Не предлагать (исключение)";
+
+"disposal.permanently" = "навсегда";
+"disposal.trash" = "в Корзину";
+"disposal.worktree" = "git worktree remove";
+
+"kind.applications" = "Приложения";
+"kind.developer" = "Разработка";
+"kind.media" = "Медиа";
+"kind.documents" = "Документы";
+"kind.archives" = "Архивы и образы дисков";
+"kind.system" = "Система";
+"kind.other" = "Другое";
+
+"reason.uncommitted" = "Незакоммиченные изменения";
+"reason.untracked" = "Неотслеживаемые файлы";
+"reason.unpushed" = "Неотправленные коммиты";
+"reason.locked" = "Заблокирован";
+"reason.prunable" = "Можно удалить командой prune";
+"reason.operation" = "Идёт операция Git";
+"reason.inUse" = "Используется";
+"reason.managedCodex" = "Управляется Codex";
+"reason.managedClaude" = "Управляется Claude";
+"reason.notListed" = "Git его не перечисляет";
+"reason.failed" = "Git не смог ответить";
+"worktree.checking" = "Проверяется…";
+"worktree.clean" = "Чистый";
+
+"status.scanning" = "Сканирование · %@";
+"status.scanningShare" = "Сканирование: %1$d%% · %2$@";
+"status.updating" = "Обновление…";
+"status.cleaning" = "Очистка…";
+"status.paused" = "Полное сканирование ждёт питания";
+"status.noSpace" = "Не хватает места на диске для обновления";
+"status.indexFailed" = "Не удаётся записать индекс";
+"status.scanFailed" = "Не удалось просканировать диск";
+"status.off" = "Фоновый анализ выключен";
+"status.never" = "Ещё не сканировалось";
+"status.updated" = "Обновлено %@";
+"status.partialSuffix" = " · анализ неполный";
+"status.outdatedSuffix" = " · нужно полное сканирование";
+
+"overview.restCategories" = "Логи, worktree, временные";
+"overview.other" = "Остальные данные";
+"overview.free" = "Свободно";
+"overview.scanning" = "Сканирование… Числа растут по мере подсчёта папок.";
+"overview.partialTitle" = "Анализ неполный.";
+"overview.partialLowerBound" = "Размеры ниже — нижняя оценка.";
+"overview.showFolders" = "Показать папки";
+"overview.openAccess" = "Открыть настройки доступа";
+"overview.used" = "занято %1$@ из %2$@";
+"overview.freeOf" = "свободно %@";
+"overview.diskBar" = "Занятое место по категориям";
+"overview.canBeFreed" = "Можно освободить";
+"overview.estimate" = "Оценка по занятому месту. Клоны APFS и снимки могут уменьшить реальный результат.";
+"overview.toTrash" = "и %@ в Корзину — место освободится, когда Корзину очистят";
+"overview.largest" = "Самые тяжёлые папки";
+"overview.allFolders" = "Все папки";
+"overview.notJunk" = "Большой размер — не признак мусора. Это просто карта диска.";
+"overview.byKind" = "По типу данных";
+
+"folders.name" = "Имя";
+"folders.share" = "Доля в родителе";
+"folders.items" = "Объектов";
+"folders.size" = "Размер";
+"folders.hint" = "→ раскрыть · ⌘↩ показать в Finder · ⌘E исключить";
+"folders.nothingSelected" = "Ничего не выбрано";
+"folders.selected" = "Выбрано: %1$@ · %2$@";
+"folders.noAccess" = "нет доступа";
+"folders.skipped" = "пропущено";
+"folders.more" = "ещё %@";
+
+/* Названия правил по id (docs/RULES.md). */
+"rule.app-cache.library" = "Кэш приложения";
+"rule.app-cache.container" = "Кэш приложения в песочнице";
+"rule.app-cache.chromium" = "Кэш браузера";
+"rule.app-cache.electron" = "Кэш приложения Electron";
+"rule.app-cache.firefox" = "Кэш Firefox";
+"rule.dev-cache.homebrew" = "Загрузки Homebrew";
+"rule.dev-cache.npm" = "Кэш npm";
+"rule.dev-cache.yarn" = "Кэш Yarn";
+"rule.dev-cache.pnpm" = "Хранилище pnpm";
+"rule.dev-cache.bun" = "Кэш Bun";
+"rule.dev-cache.deno" = "Кэш Deno";
+"rule.dev-cache.pip" = "Кэш pip";
+"rule.dev-cache.uv" = "Кэш uv";
+"rule.dev-cache.poetry" = "Кэш Poetry";
+"rule.dev-cache.cargo-registry" = "Загрузки Cargo";
+"rule.dev-cache.go-build" = "Кэш сборки Go";
+"rule.dev-cache.go-mod" = "Загрузки модулей Go";
+"rule.dev-cache.gradle" = "Кэши Gradle";
+"rule.dev-cache.cocoapods" = "Кэш CocoaPods";
+"rule.dev-cache.swiftpm" = "Кэш пакетов Swift";
+"rule.dev-cache.xcode-derived-data" = "Производные данные Xcode";
+"rule.dev-cache.xcode-device-support" = "Файлы поддержки устройств";
+"rule.dev-cache.core-simulator" = "Кэши симулятора";
+"rule.dev-cache.jetbrains" = "Кэш IDE JetBrains";
+"rule.dev-cache.vscode" = "Кэш редактора";
+"rule.dev-cache.playwright" = "Браузеры Playwright";
+"rule.dev-cache.bazel" = "Выходной каталог Bazel";
+"rule.dev-cache.ccache" = "ccache";
+"rule.dev-cache.sccache" = "sccache";
+"rule.dev-cache.flutter-pub" = "Кэш пакетов Dart";
+"rule.dev-cache.terraform" = "Кэш плагинов Terraform";
+"rule.build.cargo-target" = "Сборка Cargo";
+"rule.build.node-modules" = "Пакеты Node";
+"rule.build.next" = "Сборка Next.js";
+"rule.build.nuxt" = "Сборка Nuxt";
+"rule.build.turbo" = "Кэш Turborepo";
+"rule.build.parcel-cache" = "Кэш Parcel";
+"rule.build.swiftpm" = "Сборка SwiftPM";
+"rule.build.xcode-derived-data" = "Сборка проекта Xcode";
+"rule.build.cocoapods" = "Зависимости CocoaPods";
+"rule.build.gradle-build" = "Сборка Gradle";
+"rule.build.gradle-cache" = "Кэш проекта Gradle";
+"rule.build.maven-target" = "Сборка Maven";
+"rule.build.python-pycache" = "Байт-код Python";
+"rule.build.pytest-cache" = "Кэш pytest";
+"rule.build.mypy-cache" = "Кэш mypy";
+"rule.build.ruff-cache" = "Кэш Ruff";
+"rule.build.tox" = "Окружения tox";
+"rule.build.cmake" = "Каталог сборки CMake";
+"rule.build.dart-tool" = "Кэш инструментов Dart";
+"rule.build.flutter-build" = "Сборка Flutter";
+"rule.build.zig-cache" = "Сборка Zig";
+"rule.build.elixir" = "Сборка Mix";
+"rule.build.haskell" = "Сборка Haskell";
+"rule.build.terraform" = "Рабочий каталог Terraform";
+"rule.log.user-library" = "Логи приложений";
+"rule.log.diagnostic-reports" = "Отчёты о сбоях и диагностике";
+"rule.log.app-support" = "Логи приложений";
+"rule.temp.trash" = "Корзина";
+"rule.worktree.linked" = "Связанный Git worktree";

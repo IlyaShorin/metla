@@ -1,0 +1,109 @@
+/* The app's words. Keys are ids; rule titles are "rule.<rule id>" and
+   fall back to the catalogue's English title. */
+
+"app.failed" = "The engine could not start";
+
+"sidebar.disk" = "Disk";
+"sidebar.overview" = "Overview";
+"sidebar.folders" = "Folders";
+"sidebar.cleanable" = "Can be cleaned";
+
+"toolbar.refresh" = "Refresh";
+"toolbar.stop" = "Stop";
+"toolbar.clean" = "Clean…";
+
+"clean.title" = "Cleaning comes next";
+"clean.placeholder" = "This version shows what can be cleaned. Previewing and cleaning the selection arrives in the next version.";
+"clean.close" = "Close";
+
+"category.appCache" = "App caches";
+"category.devCache" = "Developer caches";
+"category.buildArtifact" = "Build artifacts";
+"category.log" = "Logs";
+"category.gitWorktree" = "Git worktrees";
+"category.temp" = "Temporary data";
+"category.hint" = "Right-click a row: Reveal in Finder, Show in Folders, Exclude. Space checks a row, ⌘A checks all.";
+"category.selected" = "selected %1$d of %2$d · %3$@";
+"category.clean" = "Clean selected…";
+"category.check" = "Check %@";
+"category.path" = "Path";
+"category.rule" = "Rule";
+"category.managed" = "managed worktree";
+"category.branch" = "Branch";
+"category.state" = "State";
+"category.activity" = "Activity";
+"category.size" = "Size";
+
+"menu.reveal" = "Reveal in Finder";
+"menu.showInFolders" = "Show in Folders";
+"menu.exclude" = "Exclude — keep this";
+
+"disposal.permanently" = "permanently";
+"disposal.trash" = "to Trash";
+"disposal.worktree" = "git worktree remove";
+
+"kind.applications" = "Applications";
+"kind.developer" = "Developer";
+"kind.media" = "Media";
+"kind.documents" = "Documents";
+"kind.archives" = "Archives and disk images";
+"kind.system" = "System";
+"kind.other" = "Other";
+
+"reason.uncommitted" = "Uncommitted";
+"reason.untracked" = "Untracked";
+"reason.unpushed" = "Unpushed";
+"reason.locked" = "Locked";
+"reason.prunable" = "Prunable";
+"reason.operation" = "Operation in progress";
+"reason.inUse" = "In use";
+"reason.managedCodex" = "Managed by Codex";
+"reason.managedClaude" = "Managed by Claude";
+"reason.notListed" = "Not listed by Git";
+"reason.failed" = "Git could not tell";
+"worktree.checking" = "Checking…";
+"worktree.clean" = "Clean";
+
+"status.scanning" = "Scanning · %@";
+"status.scanningShare" = "Scanning %1$d%% · %2$@";
+"status.updating" = "Updating…";
+"status.cleaning" = "Cleaning…";
+"status.paused" = "Full scan waits for power";
+"status.noSpace" = "Not enough disk space to refresh";
+"status.indexFailed" = "The index cannot be written";
+"status.scanFailed" = "The disk could not be scanned";
+"status.off" = "Background analysis off";
+"status.never" = "Never scanned";
+"status.updated" = "Updated %@";
+"status.partialSuffix" = " · partial";
+"status.outdatedSuffix" = " · needs a full scan";
+
+"overview.restCategories" = "Logs, worktrees, temporary";
+"overview.other" = "Other data";
+"overview.free" = "Free";
+"overview.scanning" = "Scanning… The numbers grow as folders are counted.";
+"overview.partialTitle" = "Partial analysis.";
+"overview.partialLowerBound" = "Sizes below are a lower bound.";
+"overview.showFolders" = "Show folders";
+"overview.openAccess" = "Open access settings";
+"overview.used" = "%1$@ used of %2$@";
+"overview.freeOf" = "%@ free";
+"overview.diskBar" = "Used space by category";
+"overview.canBeFreed" = "Can be freed";
+"overview.estimate" = "An estimate from allocated sizes. APFS clones and snapshots can make the real result smaller.";
+"overview.toTrash" = "and %@ to the Trash, not freed until the Trash is emptied";
+"overview.largest" = "Largest folders";
+"overview.allFolders" = "All folders";
+"overview.notJunk" = "A large size is not a sign of junk. This is just a map of the disk.";
+"overview.byKind" = "By data type";
+
+"folders.name" = "Name";
+"folders.share" = "Share of parent";
+"folders.items" = "Items";
+"folders.size" = "Size";
+"folders.hint" = "→ expand · ⌘↩ Reveal in Finder · ⌘E exclude";
+"folders.nothingSelected" = "Nothing selected";
+"folders.selected" = "Selected: %1$@ · %2$@";
+"folders.noAccess" = "no access";
+"folders.skipped" = "skipped";
+"folders.more" = "%@ more";
