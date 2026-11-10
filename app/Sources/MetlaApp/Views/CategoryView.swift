@@ -110,7 +110,7 @@ struct CategoryView: View {
                 .lineLimit(1).truncationMode(.middle)
                 .help(row.path)
         }
-        .width(min: 180, ideal: 340)
+        .width(min: 160, ideal: worktrees ? 230 : 340)
     }
 
     private var rule: some TableColumnContent<CandidateRow, Never> {
@@ -118,14 +118,14 @@ struct CategoryView: View {
             Text(row.managed ? row.rule + " \u{00B7} " + strings.text("category.managed") : row.rule)
                 .lineLimit(1)
         }
-        .width(min: 120, ideal: 170)
+        .width(min: 110, ideal: worktrees ? 140 : 170)
     }
 
     private var branch: some TableColumnContent<CandidateRow, Never> {
         TableColumn(strings.text("category.branch")) { (row: CandidateRow) in
             Text(row.branch ?? "\u{2014}").lineLimit(1)
         }
-        .width(min: 60, ideal: 110)
+        .width(min: 60, ideal: 90)
     }
 
     private var state: some TableColumnContent<CandidateRow, Never> {
@@ -134,7 +134,7 @@ struct CategoryView: View {
                 .foregroundStyle(row.selectable ? Color.primary : Color.secondary)
                 .help(row.state ?? "")
         }
-        .width(min: 80, ideal: 160)
+        .width(min: 80, ideal: 150)
     }
 
     private var activity: some TableColumnContent<CandidateRow, KeyPathComparator<CandidateRow>> {
@@ -143,7 +143,7 @@ struct CategoryView: View {
                 .foregroundStyle(row.recent ? Color.orange : Color.secondary)
                 .fontWeight(row.recent ? .medium : .regular)
         }
-        .width(min: 80, ideal: 110)
+        .width(min: 70, ideal: 95)
     }
 
     private var size: some TableColumnContent<CandidateRow, KeyPathComparator<CandidateRow>> {
