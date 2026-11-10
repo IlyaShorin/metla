@@ -11,6 +11,11 @@ publish.workspace = true
 test = false
 doctest = false
 
+[features]
+# Lets a release build of the app make the capability to clean a root that
+# is not a fixture. Development builds and the CLI never have it.
+production = []
+
 [dependencies]
 libc = "0.2"
 rayon = "1.12"

@@ -3,6 +3,7 @@
 //! Module dependencies follow docs/ARCHITECTURE.md §2; the rule is checked
 //! by `tests/core/architecture.rs`.
 
+pub mod clean;
 pub mod domain;
 pub mod fs;
 pub mod git;

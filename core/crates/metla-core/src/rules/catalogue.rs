@@ -15,6 +15,9 @@ pub struct Rule {
     pub title: &'static str,
     pub why: &'static str,
     pub matcher: Matcher,
+    /// The directory is a place its owner expects to exist: a cleanup
+    /// removes what it holds and keeps the directory.
+    pub keeps: bool,
 }
 
 #[derive(Debug)]
@@ -71,6 +74,7 @@ const fn denying(
         title: "",
         why: "",
         matcher: Matcher::Location { patterns, deny },
+        keeps: false,
     }
 }
 
@@ -85,12 +89,20 @@ const fn project(
         title: "",
         why: "",
         matcher: Matcher::Project { names, markers },
+        keeps: false,
     }
 }
 
 impl Rule {
     const fn says(self, title: &'static str, why: &'static str) -> Rule {
         Rule { title, why, ..self }
+    }
+
+    const fn keeps(self) -> Rule {
+        Rule {
+            keeps: true,
+            ..self
+        }
     }
 }
 
@@ -115,57 +127,77 @@ const NODE: &[Marker] = &[Sibling("package.json")];
 
 pub const CATALOGUE: &[Rule] = &[
     denying(AppCache, "library", &["~/Library/Caches/*"], APPLE_CACHES)
-        .says("Application cache", "Apps rebuild their cache directory."),
+        .says("Application cache", "Apps rebuild their cache directory.")
+    .keeps(),
     denying(
         AppCache,
         "container",
         &["~/Library/Containers/*/Data/Library/Caches"],
         &["com.apple.*"],
     )
-    .says("Sandboxed app cache", "A sandboxed app rebuilds its cache."),
+    .says("Sandboxed app cache", "A sandboxed app rebuilds its cache.")
+    .keeps(),
     location(
         AppCache,
         "chromium",
         &["~/Library/Application Support/{Google/Chrome,BraveSoftware/Brave-Browser,Microsoft Edge,Arc/User Data,Chromium}/*[Preferences]/{Cache,Code Cache,GPUCache,Service Worker/CacheStorage}"],
     )
-    .says("Browser cache", "The browser downloads it again."),
+    .says("Browser cache", "The browser downloads it again.")
+    .keeps(),
     location(
         AppCache,
         "electron",
         &["~/Library/Application Support/*[Local Storage|Preferences]/{Cache,Code Cache,GPUCache,CachedData}"],
     )
-    .says("Electron app cache", "The app's runtime rebuilds it."),
+    .says("Electron app cache", "The app's runtime rebuilds it.")
+    .keeps(),
     location(AppCache, "firefox", &["~/Library/Caches/Firefox/Profiles/*/cache2"])
-        .says("Firefox cache", "The browser downloads it again."),
+        .says("Firefox cache", "The browser downloads it again.")
+    .keeps(),
     location(DevCache, "homebrew", &["~/Library/Caches/Homebrew"])
-        .says("Homebrew downloads", "Homebrew downloads them again."),
-    location(DevCache, "npm", &["~/.npm/_cacache"]).says("npm cache", "npm downloads it again."),
+        .says("Homebrew downloads", "Homebrew downloads them again.")
+    .keeps(),
+    location(DevCache, "npm", &["~/.npm/_cacache"]).says("npm cache", "npm downloads it again.")
+    .keeps(),
     location(DevCache, "yarn", &["~/Library/Caches/Yarn", "~/.yarn/berry/cache"])
-        .says("Yarn cache", "Yarn downloads it again."),
+        .says("Yarn cache", "Yarn downloads it again.")
+    .keeps(),
     location(DevCache, "pnpm", &["~/Library/pnpm/store", "~/Library/Caches/pnpm"])
-        .says("pnpm store", "pnpm downloads it again."),
-    location(DevCache, "bun", &["~/.bun/install/cache"]).says("Bun cache", "Bun downloads it again."),
-    location(DevCache, "deno", &["~/Library/Caches/deno"]).says("Deno cache", "Deno downloads it again."),
-    location(DevCache, "pip", &["~/Library/Caches/pip"]).says("pip cache", "pip downloads it again."),
-    location(DevCache, "uv", &["~/.cache/uv"]).says("uv cache", "uv downloads it again."),
+        .says("pnpm store", "pnpm downloads it again.")
+    .keeps(),
+    location(DevCache, "bun", &["~/.bun/install/cache"]).says("Bun cache", "Bun downloads it again.")
+    .keeps(),
+    location(DevCache, "deno", &["~/Library/Caches/deno"]).says("Deno cache", "Deno downloads it again.")
+    .keeps(),
+    location(DevCache, "pip", &["~/Library/Caches/pip"]).says("pip cache", "pip downloads it again.")
+    .keeps(),
+    location(DevCache, "uv", &["~/.cache/uv"]).says("uv cache", "uv downloads it again.")
+    .keeps(),
     location(DevCache, "poetry", &["~/Library/Caches/pypoetry"])
-        .says("Poetry cache", "Poetry downloads it again."),
+        .says("Poetry cache", "Poetry downloads it again.")
+    .keeps(),
     location(
         DevCache,
         "cargo-registry",
         &["~/.cargo/registry/{cache,src}", "~/.cargo/git/checkouts"],
     )
-    .says("Cargo downloads", "Cargo downloads and unpacks them again."),
+    .says("Cargo downloads", "Cargo downloads and unpacks them again.")
+    .keeps(),
     location(DevCache, "go-build", &["~/Library/Caches/go-build"])
-        .says("Go build cache", "Go rebuilds it."),
+        .says("Go build cache", "Go rebuilds it.")
+    .keeps(),
     location(DevCache, "go-mod", &["~/go/pkg/mod/cache/download"])
-        .says("Go module downloads", "Go downloads them again."),
+        .says("Go module downloads", "Go downloads them again.")
+    .keeps(),
     location(DevCache, "gradle", &["~/.gradle/{caches,daemon}"])
-        .says("Gradle caches", "Gradle downloads and rebuilds them."),
+        .says("Gradle caches", "Gradle downloads and rebuilds them.")
+    .keeps(),
     location(DevCache, "cocoapods", &["~/Library/Caches/CocoaPods"])
-        .says("CocoaPods cache", "CocoaPods downloads it again."),
+        .says("CocoaPods cache", "CocoaPods downloads it again.")
+    .keeps(),
     location(DevCache, "swiftpm", &["~/Library/Caches/org.swift.swiftpm"])
-        .says("Swift package cache", "SwiftPM downloads it again."),
+        .says("Swift package cache", "SwiftPM downloads it again.")
+    .keeps(),
     location(DevCache, "xcode-derived-data", &["~/Library/Developer/Xcode/DerivedData/*"])
         .says("Xcode derived data", "Xcode rebuilds it."),
     location(
@@ -175,7 +207,8 @@ pub const CATALOGUE: &[Rule] = &[
     )
     .says("Device support files", "Xcode copies them again from a connected device."),
     location(DevCache, "core-simulator", &["~/Library/Developer/CoreSimulator/Caches"])
-        .says("Simulator caches", "The simulator rebuilds them."),
+        .says("Simulator caches", "The simulator rebuilds them.")
+    .keeps(),
     location(DevCache, "jetbrains", &["~/Library/Caches/JetBrains/*"])
         .says("JetBrains IDE cache", "The IDE rebuilds its indexes."),
     location(
@@ -183,19 +216,26 @@ pub const CATALOGUE: &[Rule] = &[
         "vscode",
         &["~/Library/Application Support/{Code,Cursor,VSCodium}/{CachedData,CachedExtensionVSIXs,Cache,Code Cache,GPUCache}"],
     )
-    .says("Editor cache", "The editor rebuilds it."),
+    .says("Editor cache", "The editor rebuilds it.")
+    .keeps(),
     location(DevCache, "playwright", &["~/Library/Caches/ms-playwright"])
-        .says("Playwright browsers", "Playwright downloads them again."),
+        .says("Playwright browsers", "Playwright downloads them again.")
+    .keeps(),
     location(DevCache, "bazel", &["/private/var/tmp/_bazel_<user>"])
-        .says("Bazel output base", "Bazel rebuilds it."),
+        .says("Bazel output base", "Bazel rebuilds it.")
+    .keeps(),
     location(DevCache, "ccache", &["~/Library/Caches/ccache", "~/.ccache"])
-        .says("ccache", "The compiler cache refills itself."),
+        .says("ccache", "The compiler cache refills itself.")
+    .keeps(),
     location(DevCache, "sccache", &["~/Library/Caches/Mozilla.sccache"])
-        .says("sccache", "The compiler cache refills itself."),
+        .says("sccache", "The compiler cache refills itself.")
+    .keeps(),
     location(DevCache, "flutter-pub", &["~/.pub-cache/hosted"])
-        .says("Dart package cache", "pub downloads it again."),
+        .says("Dart package cache", "pub downloads it again.")
+    .keeps(),
     location(DevCache, "terraform", &["~/.terraform.d/plugin-cache"])
-        .says("Terraform plugin cache", "Terraform downloads it again."),
+        .says("Terraform plugin cache", "Terraform downloads it again.")
+    .keeps(),
     project(
         "cargo-target",
         &["target"],
@@ -295,16 +335,19 @@ pub const CATALOGUE: &[Rule] = &[
     location(Log, "user-library", &["~/Library/Logs/*"])
         .says("Application logs", "Logs are history, not state; they go to the Trash."),
     location(Log, "diagnostic-reports", &["~/Library/Logs/DiagnosticReports"])
-        .says("Crash and diagnostic reports", "Reports are history, not state; they go to the Trash."),
+        .says("Crash and diagnostic reports", "Reports are history, not state; they go to the Trash.")
+    .keeps(),
     location(Log, "app-support", &["~/Library/Application Support/*/{logs,Logs}"])
         .says("Application logs", "Logs are history, not state; they go to the Trash."),
     location(Temp, "trash", &["~/.Trash"])
-        .says("Trash", "Everything in it was already thrown away."),
+        .says("Trash", "Everything in it was already thrown away.")
+    .keeps(),
     Rule {
         category: GitWorktree,
         name: "linked",
         title: "Linked Git worktree",
         why: "Removed only when clean, pushed, unlocked and not managed by another tool.",
         matcher: Matcher::LinkedWorktree,
+        keeps: false,
     },
 ];
