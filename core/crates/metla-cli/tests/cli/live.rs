@@ -260,11 +260,13 @@ fn later(path: &Path, after: Duration) -> std::thread::JoinHandle<()> {
     })
 }
 
+/// Watches for long enough that a change shows even while fseventsd
+/// delivers late because other builds and tests write to the same volume.
 #[test]
 fn watch_scans_a_new_root_and_prints_every_batch() {
     let bed = Bed::new();
     let writer = later(&bed.root.join("work/new"), Duration::from_millis(400));
-    let (code, out, err) = bed.run("watch --seconds 2");
+    let (code, out, err) = bed.run("watch --seconds 8");
     writer.join().unwrap();
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert!(out.starts_with("watching "), "{out}");
