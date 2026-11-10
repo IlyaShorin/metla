@@ -7,6 +7,7 @@ mod category;
 mod classify;
 mod cleaning;
 mod cleanworktrees;
+mod coalescer;
 mod domain;
 mod fs;
 mod gitrun;

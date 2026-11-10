@@ -11,3 +11,4 @@ pub mod git;
 pub mod index;
 pub mod rules;
 pub mod scan;
+pub mod watch;

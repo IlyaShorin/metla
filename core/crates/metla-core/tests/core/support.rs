@@ -82,3 +82,27 @@ pub fn write_file(path: &Path, len: usize) {
     let mut file = File::create(path).unwrap();
     file.write_all(&vec![7u8; len]).unwrap();
 }
+
+/// A small seeded generator (xorshift64*), so a failing case can be
+/// replayed from the seed it prints.
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Rng {
+        Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+    }
+
+    pub fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    /// A number in `0..n`.
+    pub fn below(&mut self, n: u64) -> u64 {
+        self.next() % n.max(1)
+    }
+}
