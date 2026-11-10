@@ -147,12 +147,20 @@ pub fn bench_churn(
     stop.store(true, Ordering::Release);
     let churned = churner.join().map_err(|_| "the churn failed")?;
     let ended = Instant::now();
+    // FSEvents hands events over in order but late, so an engine idle
+    // right after the churn may still have the churn's last events to
+    // come. A directory made now, once the picture holds it, shows that
+    // every earlier event has been handed over.
+    let sentinel = place.root.join("churn-ended");
+    fs::create_dir_all(&sentinel).map_err(|e| e.to_string())?;
     if look {
         engine.set_attention(true).map_err(|e| e.to_string())?;
     }
-    let quiet = waited(place.patience, || idle(&engine)).ok_or("never idle")?;
+    let seen = || in_picture(&engine, &sentinel);
+    let quiet = waited(place.patience, || seen() && idle(&engine)).ok_or("never idle")?;
     let after = (engine.counters(), usage());
     let right = exactly_right(place)?;
+    let _ = fs::remove_dir(&sentinel);
     let to_right = ended.elapsed();
     let did = after.0.since(&before.0);
     let engine_cpu = after.1.since(&before.1).cpu();
@@ -215,18 +223,26 @@ fn scanned(place: &Place) -> Result<Engine, String> {
     Ok(engine)
 }
 
+/// No entries: only a directory's own totals are read.
+const NONE: Page = Page {
+    offset: usize::MIN,
+    limit: usize::MIN,
+};
+
+/// Whether the engine's picture has the directory `path`.
+fn in_picture(engine: &Engine, path: &Path) -> bool {
+    engine
+        .children(&DirRef::Path(path.to_path_buf()), NONE)
+        .is_ok()
+}
+
 /// Writes 1 MiB to `file`; how long until the root's total shows all of
 /// it (FSEvents may report one write in two deliveries, so a total that
 /// merely changed can still miss part of it, and the next round would
 /// start from a wrong total). Returns once the engine is idle again.
 fn shown_after_write(engine: &Engine, place: &Place, file: &Path) -> Result<String, String> {
     let root = DirRef::Path(place.root.clone());
-    // No entries: only the directory's own totals are read.
-    let none = Page {
-        offset: usize::MIN,
-        limit: usize::MIN,
-    };
-    let total = || engine.children(&root, none).ok().map(|f| f.dir.tree.bytes);
+    let total = || engine.children(&root, NONE).ok().map(|f| f.dir.tree.bytes);
     let before = total().ok_or("the root is not in the picture")?;
     // The clock starts before the write: on a busy machine this thread
     // can wait longer than the stream's latency between the write and its
