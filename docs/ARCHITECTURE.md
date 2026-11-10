@@ -63,8 +63,10 @@ from the engine, called off the main thread.
 The rule is one table in `core/crates/metla-core/tests/core/architecture.rs`,
 which fails when a module's source refers to a module (`crate::x`, grouped
 imports, or `super::` climbing out of the module) the table does not allow.
-Until `engine` exists, `metla-cli` calls `scan`, `index`, `rules` and `fs`
-directly; that is the one temporary exception.
+Until `engine` exists, `metla-cli` calls `scan`, `index`, `rules`, `fs`,
+`git` and `clean` directly; that is the one temporary exception. `clean`
+does not read the index: its caller passes the candidates, the exclusions
+in force and the time in, and records the outcome in the index itself.
 
 ## 3. Domain model
 
@@ -105,29 +107,47 @@ moved to the Trash) and the category's disposal for every other rule.
 A rule id (`RuleId`) is the category's name, a dot and the rule's name
 (`dev-cache.npm`); the category is part of the id, so an id and its
 category cannot disagree, and the index needs no catalogue to group
-candidates. `Category::preselected(activity, recency)` is false for build
+candidates. `Category::preselected(activity, recency, managed)` is false for build
 output active within `Recency`'s age (default 14 days; `now` is passed in,
-there is no clock in `domain`, `rules` or `index`) and for worktrees.
+there is no clock in `domain`, `rules` or `index`), for worktrees, and for
+anything inside a worktree another tool manages (`Manager::of(path,
+home)`: Codex Desktop below `~/.codex/worktrees`, Claude Code below a
+`.claude/worktrees` directory — the one place this is decided).
 
-Cleanup is requested through two different entry points with different types:
+Cleanup is requested through two different entry points with different types
+(`clean::Cleaner`; the engine will wrap it):
 
 ```rust
-engine.preview(selection: Vec<CandidateId>) -> CleanupPreview   // what, how much, which disposal
-engine.execute_confirmed(preview_id)        -> CleanupReport    // after the user confirmed that exact preview
-engine.quick_clean(allowed: Vec<QuickCategory>) -> CleanupReport
+cleaner.preview(candidates: Vec<Candidate>, now) -> CleanupPreview          // what, how much, which group, warnings
+cleaner.execute(id, &Confirmation, &Context, &CleanControl, &dyn TrashHost) -> Result<CleanupReport, CleanError>
+cleaner.quick_clean(&[QuickCategory], candidates, ...) -> Result<CleanupReport, CleanError>
 ```
 
 `quick_clean` cannot be handed a worktree or a log: there is no value of
-`QuickCategory` for them. The quick-clean switch in Settings therefore cannot
-lift the confirmation requirement for other categories.
+`QuickCategory` for them, and it takes only preselected candidates and
+confirms nothing beyond the preview. The quick-clean switch in Settings
+therefore cannot lift the confirmation requirement for other categories.
+
+Confirmation is typed. `Group::of(rule)` is `Quick` for the quick-eligible
+categories, otherwise `Separate(MoveToTrash | EmptyTrash |
+RemoveWorktrees)`. A `Confirmation` carries the separate groups the user
+confirmed and the items confirmed one by one; executing a preview confirms
+its quick group; an item inside a managed worktree needs its own entry. An
+item not covered is `Skipped(NotConfirmed)`.
 
 Other core types: `Candidate` (id, path, rule, size, file count, activity,
-device and inode for revalidation, preselected), `Exclusion` (an absolute
+device and inode for revalidation, the managing tool if any, preselected),
+`Verdict` (Git's word on project output), `Exclusion` (an absolute
 path; `hides(path)` is the one place exclusion semantics live), `FileKind`
 and `KindTotals` (bytes per kind for a whole scan),
 `ScanState`, `Coverage` (what the analysis could not see), `Freshness`
-(when the picture was last true), `WorktreeStatus`, `CleanupReport`
-(`found`, `removed`, per-item outcome, measured `freed`).
+(when the picture was last true), `WorktreeStatus` (`Removable { branch }`
+or `Blocked(Reasons)`, never both, the reasons never empty),
+`CleanupPreview` (id, items with warnings, rejected candidates with the
+reason), `Outcome` (`Removed`, `Partial(Leftovers)`, `Skipped(SkipReason)`,
+`Failed`, `AlreadyGone`, `MovedToTrash`) and `CleanupReport` (per-item
+found and removed bytes and outcome, free space before and after; found,
+removed and measured freed are three sums of three measurements).
 
 ## 4. Measuring size
 
@@ -206,7 +226,7 @@ coverage_counts(code, count)                  -- gaps and skips by kind
 coverage_gaps(rank, depth, path BLOB, flags)  -- the shallowest gaps
 kinds(code, bytes)      -- the picture's bytes per file kind (whole scan)
 exclusions(path BLOB)   -- user "keep this" list
-worktrees(dir_id, status_json, checked_at)    -- M3
+stale(dir_id)           -- directories cleaned since the scan
 ```
 
 A candidate is a `dirs` row with a non-null `rule_id`; its size is the row's
@@ -220,6 +240,15 @@ rule_id IS NOT NULL`, and the `kinds` and `exclusions` tables. Opening a
 file whose `schema_version` is not 2 (an M1 index included), or that has
 no Metla metadata, fails with `IndexError::UnknownSchema` instead of
 misreading it; the CLI's indexes are disposable and are rebuilt by a scan.
+
+Schema version 3 (M3) adds `dirs.verdict` (Git's verdict on project
+output: 0 `Verified`, 1 `NotIgnored`, 2 `HasTrackedFiles`, 3
+`Unverifiable`; NULL until Git was asked), the `stale` table and the
+picture's home directory in `meta`. Verdicts (`IndexWriter::set_verdicts`)
+and cleaned directories (`mark_cleaned`) name directories of one picture
+and carry its `PictureId`; the writer applies them only while that picture
+is current. A worktree's status is not stored: it is computed with Git
+when a preview is made and again before removal.
 
 * **Rows.** Names are stored as raw bytes. `own_bytes`/`own_files` are NULL
   for a directory that was not read. `flags` holds the directory's state:
@@ -251,7 +280,18 @@ misreading it; the CLI's indexes are disposable and are rebuilt by a scan.
   candidate's path is rebuilt from its parent links with one prepared
   statement and checked with `Exclusion::hides` — so changing an exclusion
   needs no rescan. `preselected` is computed from `tree_mtime` and the
-  `Recency` the caller passes; it is never stored.
+  `Recency` the caller passes; it is never stored. A candidate is offered
+  only if no exclusion hides it, it is not at or below a directory cleaned
+  since the scan, and — for project output — Git verified it.
+  `Snapshot::reclaimable` sums the preselected candidates ("can be
+  freed"); `Snapshot::unverified` lists the project output Git has not
+  been asked about.
+* **After a cleanup** the caller records every item whose outcome may
+  have changed the disk (anything but `Skipped`) with `mark_cleaned`; the
+  index stops offering those directories and everything below them until
+  the next scan replaces the picture. Ancestors' totals are left as they
+  were until then (M4's incremental rescans will refresh them); this is the
+  simplest option that never advertises a removed candidate.
 
 ## 6. Scanning
 
@@ -302,7 +342,8 @@ How the walk is built (M1):
   directory passes to its children travels down the way totals travel up:
   its marker entries (`RuleSet::is_marker`, kept only outside candidates),
   whether it is in a repository, whether it is or lies inside a candidate
-  (then nothing below is classified or probed; sizes are still counted),
+  other than a linked worktree (then nothing below is classified or
+  probed; sizes are still counted),
   and its file-kind *area*. Files are totalled per kind into the scan
   summary. The scan root inherits the area of the directories above it but
   not their repository or candidate status.
@@ -364,56 +405,115 @@ See [RULES.md](RULES.md) for the catalogue. Principles:
   (below `node_modules`, `site-packages`, `dist-packages` or `Cellar`), and
   — checked again before removal — Git reports the path as ignored.
 * A linked worktree is recognised from its `.git` pointer file alone.
+* After every scan the caller asks Git about all project output not yet
+  judged (`git::verify_outputs`: directories grouped by repository — the
+  nearest ancestor holding `.git` — and one `check-ignore --no-index
+  --stdin -z` plus one `ls-files -z` batch of at most 512 paths per
+  repository) and stores the verdicts; only `Verified` output is offered.
 * Precedence: location, then worktree, then project output; then catalogue
   order.
 * A directory named `cache`, `build` or `dist` with no verifiable marker is
   never a candidate.
-* Nothing inside a candidate is classified again (worktrees included).
+* Nothing inside a candidate is classified again — except inside a linked
+  worktree (`Category::classifies_within`), whose build output is offered
+  on its own because most worktrees cannot be removed whole. A preview
+  drops an item nested in another item of the same preview.
 * A user *exclusion* removes a path, everything under it and every
   candidate that holds it from the candidates.
 
 ## 9. Cleaning
 
-1. **Preview.** Selected candidates become preview items: path, estimated
-   size, disposal, rule, warnings. The preview has an id.
-2. **Revalidate each item right before acting**: still exists, same
-   device/inode as scanned, not a symlink, not a mount point, inside the
-   engine root, not excluded, rule still matches (markers re-checked, Git
-   ignore re-checked for build output). Anything that fails is skipped with
-   a reason.
-3. **Act.**
-   * `DeletePermanently`: descriptor-relative removal (`openat`/`unlinkat`),
-     never following symlinks, never crossing devices; errors are collected
-     per entry and the rest continues; cancellable between entries.
-   * `MoveToTrash`: delegated to the host (`FileManager.trashItem`) through
-     a typed callback, so "Put Back" works.
-   * `GitWorktreeRemove`: `git worktree remove <path>` without `--force`.
-4. **Report.** Per item: estimated (found) bytes, removed bytes, outcome
-   (`Removed`, `Partial`, `Skipped(reason)`, `Failed(error)`,
-   `AlreadyGone`). Overall: volume free space before and after. Items moved
-   to the Trash are reported as "not freed until the Trash is emptied".
+`clean::Cleaner` makes previews and executes each at most once. It is made
+for one root; without the release app's `Production` capability that root
+must hold a `.metla-fixture` regular file (§12). The root's device and
+inode, and the marker, are checked again every time it executes.
+
+1. **Preview.** `preview(candidates, now)`: duplicates are dropped; a
+   worktree whose status (computed now with Git) is blocked is set aside
+   with its reasons; an item inside another item of the preview is set
+   aside with the id of the one that holds it. Items carry warnings
+   (recently active build output; inside a managed worktree, which must be
+   confirmed by itself) and are listed largest first; totals per group.
+2. **Execute.** `execute(id, confirmation, context, control, trash)`: an
+   unknown or already executed preview id is an error, not a removal. Per
+   item, in order: cancelled → `Skipped(Cancelled)`; not covered by the
+   confirmation → `Skipped(NotConfirmed)`; then revalidation; then the
+   action. Free space is measured (`statfs`) before and after.
+3. **Revalidate each item right before acting** (a failed check changes
+   nothing): the path lies inside the root (no `..`); no exclusion in force
+   hides it (itself, beneath it or above it); every component from the
+   root down is opened relative to its parent without following a symlink
+   and must be a directory (`AncestorChanged` otherwise); the item is still
+   a directory (`Symlink`, `NotADirectory`), on the scanned device
+   (`MountPoint`: another volume is there) with the scanned inode
+   (`Replaced`), checked on the name and again on the opened descriptor;
+   its rule still matches the facts read now — its entries, the parent's
+   and grandparent's markers, whether a directory from the root down holds
+   `.git`, the `.git` and `CACHEDIR.TAG` probes (`RuleMismatch`); project
+   output is still ignored and holds nothing tracked (`NotIgnored`,
+   `HasTrackedFiles`, `Unverifiable`). A vanished item or ancestor is
+   `AlreadyGone`; one that cannot be read is `Unreadable(errno)`. The
+   opened descriptor is what the action works on.
+4. **Act.**
+   * `DeletePermanently`: `fs::remove_contents` empties the opened
+     directory with `openat(O_NOFOLLOW|O_DIRECTORY)` and `unlinkat`,
+     iteratively; symlinks are unlinked, never followed; a directory on
+     another device is left and reported; nothing is chmodded — an entry
+     that cannot be removed is recorded and the rest continues (`Partial`
+     with the count, the first 16 paths with their errno, the volumes
+     left); cancellation is checked before every entry; removed bytes use
+     the scan's hard-link share rule. Then the candidate directory itself
+     is removed — only if nothing stayed and its rule does not keep it
+     (RULES.md, "Keeps").
+   * `MoveToTrash`: through the `TrashHost` the caller supplies (the app:
+     `FileManager.trashItem`, so "Put Back" works; tests and the CLI: a
+     fixture's own trash directory) — the directory, or its entries when
+     the rule keeps it. `MovedToTrash` counts in found, not in removed; a
+     host refusal is `Failed`.
+   * `GitWorktreeRemove`: the tree is surveyed (bytes, newest change), the
+     status is recomputed with that fresh activity, and only `Removable`
+     proceeds, through `git worktree remove` in the main repository; Git's
+     refusal is `Failed` with its message. Removed bytes are the survey
+     before minus a survey after.
+5. **Report.** Per item: found (the estimate), removed (measured as
+   unlinked), outcome. Overall: found, removed, moved to the Trash, and
+   freed — the measured change in free space, which may differ either way.
 
 Running a cleanup twice, or again after a crash, converges: missing items
-are `AlreadyGone`, never an error.
+are `AlreadyGone`, never an error; a half-emptied directory is emptied; a
+kept directory that is already empty is `Removed` with 0 bytes.
 
 ### Git worktrees
 
 Discovered during the scan (a directory whose `.git` is a file pointing into
-`…/.git/worktrees/<name>`). Before a worktree can be offered or removed its
-status is computed with stock Git commands:
+`…/.git/worktrees/<name>`). `git::inspect_worktree(path, activity, now,
+settings)` decides with stock Git commands, run with
+`GIT_OPTIONAL_LOCKS=0`, `LC_ALL=C`, no pager, no prompts, a time limit that
+also bounds collecting the output, and the binary injected
+(`Git::system()` calls the real binary behind macOS's `/usr/bin/git`
+shim, which costs about 40 ms a call). It collects every reason at once:
 
-* exact path match against `git worktree list --porcelain` of the main repo;
-* `git status --porcelain=v2 --branch --untracked-files=all`: modified,
-  staged, untracked, conflicted files;
-* unpushed commits: ahead of upstream, or — without an upstream — commits
-  not reachable from any remote ref;
-* locked, or an operation in progress (rebase, merge, cherry-pick, bisect);
-* recent activity (configurable age, default 30 days);
-* managed by another tool: Codex Desktop (`~/.codex/worktrees`) and Claude
-  Code (`.claude/worktrees`) worktrees are shown but can never be removed by
-  Metla.
+* the repository from the `.git` pointer; exactly one entry of `git
+  worktree list --porcelain -z` (run in the repository) is this directory
+  after canonicalisation, and not the main worktree — else `NotListed`;
+* that entry's `locked` and `prunable`;
+* `rebase-merge`, `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`,
+  `REVERT_HEAD` or `BISECT_LOG` in the worktree's git directory —
+  `OperationInProgress`; stash entries are repository-wide and not a
+  reason;
+* `index.lock` there, or the newest of the tree's activity and the git
+  directory's `index`, `HEAD` and `logs/HEAD` within the staleness age
+  (default 30 days; unknown activity counts as recent) — `InUse`;
+* `git status --porcelain=v2 --branch --untracked-files=all -z`: staged,
+  modified or conflicted — `Uncommitted`; untracked — `Untracked`;
+* ahead of the upstream, or any commit reachable from HEAD and from no
+  remote ref (`rev-list --count HEAD --not --remotes`, which also covers a
+  detached HEAD, a missing or local upstream, and a repository without
+  remotes) — `Unpushed`;
+* Codex Desktop and Claude Code worktrees — `Managed(…)`;
+* any Git failure or unparsable output — `InspectionFailed`.
 
-Only a worktree that passes every check is removable. There is no force path.
+Only a worktree with no reason is removable. There is no force path.
 
 ## 10. The Rust/Swift boundary
 
@@ -447,8 +547,13 @@ Only a worktree that passes every check is removable. There is no force path.
 ## 12. Development safety
 
 * Deletion is only ever exercised on synthetic trees under a temporary
-  directory. The CLI's cleaning command refuses to run unless the root
-  contains a `.metla-fixture` marker.
+  directory. A `Cleaner` refuses a root without a `.metla-fixture` regular
+  file unless it is given `clean::Production`, which only
+  `Production::release_app()` makes, and that function exists only in a
+  release build (`not(debug_assertions)`) with metla-core's `production`
+  feature. The CLI never names it (a test reads its sources), so
+  `metla-cli clean` works only on fixtures; `metla-cli fixture create
+  <dir>` builds one.
 * The app honours `METLA_ROOT` and `METLA_DATA_DIR` so it can be driven
   against a fixture with a separate index.
 * Scanning the real disk is read-only; real paths never go into the

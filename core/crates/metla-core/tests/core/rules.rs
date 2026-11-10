@@ -40,6 +40,32 @@ fn the_catalogue_holds_exactly_the_rules_documented_in_rules_md() {
     assert_eq!(ids.len(), 60);
 }
 
+/// The rules whose row of RULES.md says they keep their directory.
+fn documented_keepers() -> BTreeSet<String> {
+    let doc = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/RULES.md");
+    let text = std::fs::read_to_string(doc).unwrap();
+    let rows = text.lines().filter_map(|line| {
+        let mut cells = line.strip_prefix("| `")?.split('|');
+        let id = cells.next()?.trim().trim_end_matches('`');
+        (cells.next()?.trim() == "yes").then(|| id.to_owned())
+    });
+    rows.collect()
+}
+
+#[test]
+fn the_rules_that_keep_their_directory_are_the_documented_ones() {
+    let rules = rules();
+    let keepers: BTreeSet<String> = rules
+        .rules()
+        .filter(|(_, rule)| rule.keeps)
+        .map(|(id, _)| id.to_string())
+        .collect();
+    assert_eq!(keepers, documented_keepers());
+    assert_eq!(keepers.len(), 30);
+    assert!(keepers.contains("temp.trash"));
+    assert!(!keepers.iter().any(|id| id.starts_with("build.")));
+}
+
 #[test]
 fn every_rule_says_what_it_is_and_why_removing_it_is_safe() {
     for (id, rule) in rules().rules() {

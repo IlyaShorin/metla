@@ -109,3 +109,53 @@ were warm.
   directory to `EINTR`, which the fs calls now retry; these runs do not
   show whether an interruption happened and was retried (the retry itself
   is tested deterministically).
+
+## M3: asking Git about project output
+
+**Question.** What does verifying every project-output candidate with Git
+after a scan cost, and what does it change?
+
+**Conditions.** Same machine, release build, `metla-cli scan --root /
+--json` with the rules for the user's home, 10 threads, the index on a
+RAM disk (deleted afterwards). Git is the system's (Apple Git 2.50.1),
+called directly rather than through the `/usr/bin/git` shim, with
+`GIT_OPTIONAL_LOCKS=0`; both commands it runs only read. Warm cache.
+
+| | |
+|---|---:|
+| scan wall time | 95.0 s |
+| process wall time (scan, index swap, Git pass) | 105.8 s |
+| directories | 2,230,628 |
+| project-output directories asked about | 2,161 |
+| repositories (nearest ancestor holding `.git`) | 204 |
+| Git pass wall time | 8.6 s |
+| verified / not ignored / tracked inside / unverifiable | 2,103 / 8 / 0 / 50 |
+| peak RSS | 127.9 MB |
+
+* **Cost.** Two Git calls per repository (one `check-ignore --no-index
+  --stdin -z`, one `ls-files -z` per 512 paths): about 21 ms per call on
+  average, 4 ms per directory, 9 % on top of the scan. The macOS shim
+  `/usr/bin/git` costs about 40 ms per call on its own (13 ms for the real
+  binary with `--version`), which is why `Git::system()` resolves the real
+  one once.
+* **What it removes.** 58 matches are no longer offered: 8 that Git does
+  not ignore, and 50 that sit below a `.git` entry Git does not accept as a
+  repository (each in its own, so one bad `.git` never spoils another
+  repository's batch).
+* **Worktrees.** With classification continuing inside linked worktrees,
+  1,873 verified build-output directories (78.2 GB) were found inside the
+  232 worktrees (104.3 GB in all); 27 of them (under 0.1 GB) are inside
+  Codex-managed and 28 (1.4 GB) inside Claude-managed worktrees and are not
+  preselected. Category totals: build output 2,103 candidates, 109.4 GB;
+  worktrees 232, 104.3 GB. "Can be freed" (the preselected candidates):
+  2,130 candidates, 91.8 GB.
+
+## M3: removal
+
+* `fs::remove_contents` removes 20,000 files from one directory in about
+  2.9 s and a directory tree of 1,600 nested directories in about 6.4 s on
+  the RAM disk. The second figure is the kernel's: removing a directory
+  costs more the deeper it lies (a raw `rmdir` loop in Python over the same
+  chain took 5.8 s at 1,600 levels, 0.5 s at 800, 0.03 s at 400), whether
+  or not the ancestors' descriptors are held open. Real trees are rarely
+  more than a few dozen levels deep.

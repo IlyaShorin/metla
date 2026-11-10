@@ -58,6 +58,10 @@ default. Header shows "selected N of M · size" and **Clean selected…**.
 * Git worktrees add status columns: branch, state (Clean, Uncommitted,
   Untracked, Unpushed, Locked, In use, Managed by Codex/Claude). Only
   removable worktrees have an enabled checkbox; the others show why not.
+* Build output inside a worktree is listed under Build artifacts like any
+  other. Inside a worktree Codex or Claude manages it is never checked by
+  default, carries a "managed worktree" note, and the preview asks for
+  each such item on its own.
 
 **Folders**
 
@@ -83,7 +87,10 @@ the action. The destructive button is never the default button.
 
 When the selection mixes quick-eligible categories with others, the sheet
 shows them as separate groups and the other groups need their own
-confirmation checkbox before the destructive button enables.
+confirmation checkbox before the destructive button enables. An item inside
+a managed worktree has a checkbox of its own; an item inside another
+selected item is shown once (the outer one), and blocked worktrees are
+listed apart with their reasons.
 
 **Progress and report**
 
