@@ -301,8 +301,13 @@ fn a_scan_totals_the_bytes_of_every_file_kind() {
     let options = options(fx.root()).rules(Arc::new(rules));
     let summary = scan_with(&options, &ScanControl::new(64)).summary;
     let kinds = summary.kinds;
-    // The fixture lives below /private, a system root.
-    assert_eq!(kinds.get(FileKind::System).0, allocated("plain.jpg"));
+    // A photo of the user's own is Media, unless the temporary directory
+    // lies in a system area (below /private, the default on macOS).
+    let photo = match fx.root().starts_with("/private") {
+        true => FileKind::System,
+        false => FileKind::Media,
+    };
+    assert_eq!(kinds.get(photo).0, allocated("plain.jpg"));
     let developer = [
         "repo/main.c",
         "repo/node_modules/x.js",
