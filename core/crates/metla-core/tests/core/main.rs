@@ -15,6 +15,7 @@ mod fsevents;
 mod gitrun;
 mod incremental;
 mod index;
+mod kept;
 mod offered;
 mod porcelain;
 mod preview;

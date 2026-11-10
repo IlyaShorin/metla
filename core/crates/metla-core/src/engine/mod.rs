@@ -6,6 +6,7 @@
 //! scans, rescans, cleanups — runs on the engine's scheduler thread, one
 //! at a time, and reports through the observer (`Changed`, no data).
 
+mod kept;
 mod listing;
 mod profile;
 mod refresh;
@@ -37,6 +38,7 @@ use crate::rules::RuleSet;
 use crate::scan::{ScanRoot, ScanScope};
 use crate::watch::Coalescer;
 
+pub use kept::{decode_report, encode_report};
 pub use listing::{LISTED_FILES, Largest, Rest};
 pub use profile::{OFF, PowerProfile, Profile, Profiles};
 pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
@@ -55,6 +57,8 @@ use worktrees::Statuses;
 pub const INDEX_FILE: &str = "index.sqlite";
 /// Where the settings are kept in the index.
 const SETTINGS_NOTE: &str = "settings";
+/// Where the last cleanup's report is kept in the index.
+pub(crate) const REPORT_NOTE: &str = "report";
 
 /// What an engine is made for.
 pub struct EngineConfig {
@@ -149,6 +153,12 @@ fn data_files(data_dir: &Path) -> Result<(PathBuf, PathBuf), EngineError> {
     let data_dir = setup(data_dir, std::fs::canonicalize(data_dir))?;
     let index = data_dir.join(INDEX_FILE);
     Ok((data_dir, index))
+}
+
+/// The last cleanup's report kept in the index, if there is one.
+fn kept_report(reader: &mut IndexReader) -> Result<Option<CleanupReport>, EngineError> {
+    let note = reader.read(|snap| snap.note(REPORT_NOTE))?;
+    Ok(note.and_then(|bytes| decode_report(&bytes)))
 }
 
 /// The settings kept in the index, or the defaults.
@@ -284,6 +294,7 @@ impl Engine {
         let writer = open_index(&index, config.index_limit)?;
         let mut reader = IndexReader::open(&index)?;
         let settings = stored_settings(&mut reader)?;
+        let report = kept_report(&mut reader)?;
         let root = setup(&config.root, ScanRoot::new(&config.root))?;
         let needs_full_scan = needs_full_scan(&mut reader, &root, &config, &settings)?;
         let watching = config.watching;
@@ -297,6 +308,7 @@ impl Engine {
             profile: config.profile,
         };
         let (shared, worktrees) = share(parts, &root, settings, needs_full_scan);
+        *lock(&shared.report) = report.map(Ok);
         let (commands, queue) = mpsc::channel();
         let editor = writer.editor();
         let files = (data_dir, index);

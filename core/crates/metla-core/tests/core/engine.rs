@@ -331,15 +331,40 @@ fn an_exclusion_tells_what_it_hides_kept_or_not() {
     let caches = engine.category_totals().unwrap()[&Category::AppCache];
     assert_eq!(caches.count, 1);
     let library = kept("~/Library");
-    assert_eq!(engine.hidden_by(&library).unwrap().count, 2, "cache and logs");
+    assert_eq!(
+        engine.hidden_by(&library).unwrap().count,
+        2,
+        "cache and logs"
+    );
     let cache = kept("~/Library/Caches");
     assert_eq!(engine.hidden_by(&cache).unwrap(), caches);
     engine.add_exclusion(&cache).unwrap();
     assert_eq!(engine.hidden_by(&cache).unwrap(), caches, "once kept");
     let inside = kept("~/Library/Caches/com.example.app/blob");
-    assert_eq!(engine.hidden_by(&inside).unwrap(), caches, "the one holding it");
+    assert_eq!(
+        engine.hidden_by(&inside).unwrap(),
+        caches,
+        "the one holding it"
+    );
     let documents = kept("~/Documents");
     assert_eq!(engine.hidden_by(&documents).unwrap(), Tally::default());
+}
+
+/// The last report survives a restart: the app shows it again from the
+/// engine.
+#[test]
+fn the_last_report_is_kept_across_openings() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    settled(&engine);
+    assert!(engine.last_report().is_none());
+    engine.quick_clean(vec![QuickCategory::AppCache]).unwrap();
+    until(&engine, |e| e.last_report().is_some());
+    let report = engine.last_report().unwrap().unwrap();
+    assert_eq!(report.items.len(), 1);
+    drop(engine);
+    let again = place.open();
+    assert_eq!(again.last_report().unwrap().unwrap(), report);
 }
 
 #[test]

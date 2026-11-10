@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
+use super::REPORT_NOTE;
+use super::kept::encode_report;
 use super::profile::Profile;
 use super::refresh::{RefreshError, Refreshed, refresh};
 use super::shared::{RunningScan, Shared, lock};
@@ -432,6 +434,9 @@ impl Scheduler {
             Ok(cleaner) => act(cleaner, &context, &control, &*trash),
             Err(why) => Err(why.clone()),
         };
+        if let Ok(report) = &result {
+            let _ = self.writer.set_note(REPORT_NOTE, &encode_report(report));
+        }
         if let (Ok(report), Some(picture)) = (&result, picture) {
             self.cleaned(picture, report);
         }

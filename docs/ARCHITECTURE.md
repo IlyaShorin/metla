@@ -599,6 +599,11 @@ execution compute them again.
 
 Settings (background analysis, battery behaviour, ages, hotkey mode,
 quick categories) are kept as an index note, one `key=value` line each.
+The last cleanup's report is kept as a note too (`engine::encode_report`:
+one tab-separated line for the report and one per item, enumerations by
+their place in a fixed table, any byte of a path or message escaped), so
+`last_report` answers after a restart; a note that does not read back
+exactly is ignored.
 
 ### Power profiles
 
