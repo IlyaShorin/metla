@@ -73,6 +73,7 @@ public final class FoldersModel {
     private let client: EngineClient
     private let names: Names
     private var nodes: [String: FolderNode] = [:]
+    private var reloading: Task<Void, Never>?
 
     public init(root: String, client: EngineClient, names: Names) {
         self.rootPath = root
@@ -81,8 +82,21 @@ public final class FoldersModel {
     }
 
     /// The root's entries, again; directories that were expanded are
-    /// expanded again (a rescan may have given them new ids).
+    /// expanded again (a rescan may have given them new ids). Reloads run
+    /// one after another: the app reloads when the picture changes while
+    /// the user may reload too, and two interleaved reloads would each
+    /// see the other's half-built tree and lose what was expanded.
     public func reload() async {
+        let previous = reloading
+        let next = Task { [weak self] in
+            await previous?.value
+            await self?.reloadNow()
+        }
+        reloading = next
+        await next.value
+    }
+
+    private func reloadNow() async {
         let expanded = nodes.values.filter(\.isExpanded).map(\.path).sorted()
         nodes = [:]
         top = await entries(of: .path(rootPath), parent: rootPath) ?? []

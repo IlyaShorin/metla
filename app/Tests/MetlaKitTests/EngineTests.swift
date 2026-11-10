@@ -128,6 +128,25 @@ import Testing
         #expect(try await client.exclusions() == [row.path])
     }
 
+    /// The app reloads Folders when the picture changes, perhaps while
+    /// the user's own reload runs: what was expanded stays expanded.
+    @Test func reloadsAtOnceKeepWhatWasExpanded() async throws {
+        let model = try await started()
+        defer { model.stop() }
+        await model.show(.folders)
+        let folders = try #require(model.folders)
+        let home = try #require(folders.top.first { $0.name == "home" })
+        await folders.expand(home)
+        let code = try #require(home.children?.first { $0.name == "code" })
+        await folders.expand(code)
+        async let first: Void = folders.reload()
+        async let second: Void = folders.reload()
+        async let third: Void = folders.reload()
+        _ = await (first, second, third)
+        #expect(folders.node(home.path)?.isExpanded == true)
+        #expect(folders.node(code.path)?.isExpanded == true)
+    }
+
     @Test func foldersOpenALevelAtATimeDownToFiles() async throws {
         let model = try await started()
         defer { model.stop() }
