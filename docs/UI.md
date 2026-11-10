@@ -15,7 +15,8 @@ is shipped as a localisation.
 * Section "Can be cleaned": one row per category with its estimated size —
   App caches, Developer caches, Build artifacts, Logs, Git worktrees,
   Temporary data. Rows with nothing to clean are dimmed, not hidden.
-* Bottom: **Last report** (only after a cleanup has run).
+* Bottom: **Last report** (only after a cleanup has run; the engine keeps
+  it across launches).
 
 **Toolbar** (all screens)
 
@@ -23,9 +24,10 @@ is shipped as a localisation.
   `Scanning 61% · 1.9M files` (with a Stop button),
   `Updated 2 min ago`, `Updated 2 min ago · partial`,
   `Never scanned`, `Background analysis off`.
-* **Refresh** (⌘R) and **Clean…** (⌘⌫, opens the preview for the current
-  default selection). In M5 **Clean…** and **Clean selected…** open a
-  placeholder sheet; the preview is M6's.
+* **Refresh** (⌘R, a full scan run as `Interactive`) and **Clean…** (⌘⌫,
+  opens the preview of the default selection: every preselected
+  candidate). **Clean selected…** previews the cleanup selection: what the
+  category tables check and what Folders added (⌘⌫ there).
 * The engine follows changes at once while the window is visible (its
   attention); otherwise the power profile decides.
 
@@ -58,9 +60,13 @@ default. Header shows "selected N of M · size" and **Clean selected…**.
 * Row context menu and shortcuts: Reveal in Finder (⌘↩), Show in Folders,
   Exclude — keep this (⌘E), Quick Look is not offered.
 * Space toggles the checkbox; ⌘A selects all; arrow keys move.
-* Git worktrees add status columns: branch, state (Clean, Uncommitted,
-  Untracked, Unpushed, Locked, In use, Managed by Codex/Claude). Only
-  removable worktrees have an enabled checkbox; the others show why not.
+* Git worktrees replace the Rule column with branch (blocked ones keep
+  theirs) and state (Clean, Uncommitted, Untracked, Unpushed, Locked, In
+  use, Managed by Codex/Claude), the state taking the flexible width,
+  every reason in its tooltip and the selected row's reasons in the
+  footer. Only removable worktrees have an enabled checkbox.
+* Checkboxes are drawn with SwiftUI shapes in the accent colour (they
+  look like the system's and the capture mode can draw their marks).
 * Build output inside a worktree is listed under Build artifacts like any
   other. Inside a worktree Codex or Claude manages it is never checked by
   default, carries a "managed worktree" note, and the preview asks for
@@ -89,20 +95,41 @@ estimates and that the report will separate found, removed and freed.
 Buttons: Cancel (Esc, default focus) and a destructive button named after
 the action. The destructive button is never the default button.
 
-When the selection mixes quick-eligible categories with others, the sheet
-shows them as separate groups and the other groups need their own
-confirmation checkbox before the destructive button enables. An item inside
-a managed worktree has a checkbox of its own; an item inside another
-selected item is shown once (the outer one), and blocked worktrees are
-listed apart with their reasons.
+Quick-eligible items form one group the main confirmation covers. Every
+other group (Move to Trash, Empty the Trash, git worktree remove) has a
+confirmation checkbox of its own, unchecked by default; an item inside a
+managed worktree has a checkbox of its own. The destructive button
+("Remove N Items", "Move N Items to Trash" when only the Trash group is
+covered) enables once the confirmation covers at least one item — what
+it covers is the core's decision (`covered`); groups left unchecked are
+sent as not confirmed and come back "Skipped: not confirmed". An item
+inside another selected item is set aside ("Inside ~/…"), and blocked
+worktrees are set aside with their reasons. Paths show the first 12 of a
+group, "Show all N" for the rest (a lazy list). Return and Esc cancel;
+⌘↩ or a click on the destructive button acts.
 
 **Progress and report**
 
-During cleanup: progress bar, current item, Cancel. Afterwards a report:
-three numbers side by side — **Found**, **Removed**, **Freed on disk**
-(measured) — then per-item outcomes (Removed, Partial, Skipped + reason,
-Failed + error, Already gone) and "moved to Trash, not freed until the
-Trash is emptied" where applicable.
+During cleanup: progress bar, "N of M", removed so far, the current
+item, Cancel (the cleanup stops before the next entry; the report says
+what was done). Afterwards a report: three numbers side by side —
+**Found**, **Removed**, **Freed on disk** (measured; one sentence why it
+may differ) — then "moved to the Trash, not freed until the Trash is
+emptied" where applicable, a "Problems only" filter and per-item
+outcomes (Removed, Partly removed with what stayed, Skipped + reason,
+Failed + error, Already gone, Moved to the Trash) with Reveal in Finder
+for what remains.
+
+## Global hotkeys
+
+Carbon `RegisterEventHotKey` (no Accessibility permission). **Clean**
+(default ⌃⌥⌘⌫) and **Show Metla** (unassigned). In "Show and confirm"
+mode the Clean hotkey brings Metla forward with the preview of the
+default selection (in a window of its own when the main window is
+closed). In "Clean immediately" mode it quick-cleans the checked quick
+categories and shows a small non-activating panel: found, removed,
+freed, problems, "Show report"; with no picture, nothing to clean or a
+cleanup running it only says so.
 
 ## Menu bar panel
 
@@ -110,31 +137,58 @@ Trash is emptied" where applicable.
 template image; shows activity while scanning.
 
 * Volume name, free space, a compact usage bar, "used X of Y" and
-  "can be cleaned ≈ Z".
-* Quick-eligible categories with sizes; one line for the rest ("only with
-  confirmation").
-* **Clean…** (primary, shows the hotkey), **Open Metla**, **Refresh now**.
+  "can be cleaned ≈ Z" (deleted for good), what would go to the Trash
+  apart.
+* Quick-eligible categories with what cleaning them frees; one line for
+  the rest ("only with confirmation").
+* **Clean…** or **Clean now** by the hotkey mode (primary, shows the
+  hotkey), **Open Metla**, **Refresh now**.
 * Status line: freshness, partial flag, current power profile.
-* Background analysis toggle, Settings…, Quit.
+* Background analysis checkbox, Settings…, Quit.
+* It reads the cached snapshot only. While it is open the engine has
+  the app's attention. The app stays in the menu bar when its window
+  closes, unless "Show in menu bar" is off.
 
 ## Settings
 
 Tabs: **General**, **Hotkeys**, **Exclusions**, **Access**.
 
 * General: background analysis on/off (default on); "Reduce activity on
-  battery" (default on); launch at login; worktree staleness age; recent
-  build-output age.
-* Hotkeys: recorders for "Clean" and "Show Metla"; a radio pair
-  "Show what was found and ask to confirm" (default) / "Clean the checked
-  categories immediately"; three checkboxes for the quick categories,
-  enabled only in the second mode; a note that logs, worktrees and temporary
-  data can never be added.
-* Exclusions: a list of kept paths with + / − and drag-and-drop from Finder.
-* Access: Full Disk Access state, what is skipped without it, a button that
-  opens the right System Settings pane, and a re-check button.
+  battery" (default on); launch at login (`SMAppService.mainApp`, its
+  error shown when the system refuses); worktree staleness age and
+  recent build-output age in days (− / +); show in menu bar.
+* Hotkeys: recorders for "Clean" and "Show Metla" (a combination without
+  ⌘, ⌥ or ⌃ is refused; one another app holds is shown next to the
+  recorder); a radio pair "Show what was found and ask to confirm"
+  (default) / "Clean the checked categories immediately" — choosing the
+  second asks first: "the checked categories are removed permanently,
+  without a list, every time the hotkey is pressed", confirmed with a
+  destructive button; three checkboxes for the quick categories, enabled
+  only in the second mode; a note that logs, worktrees and temporary data
+  can never be added.
+* Exclusions: kept paths with what each hides ("hides 2 items · 1 MB"),
+  Add…, Remove and drag-and-drop from Finder.
+* Access: Full Disk Access as probed (granted, not granted, cannot
+  tell), what is skipped without it, a button that opens the right
+  System Settings pane, Check Again, and a note that Metla may need a
+  restart after access is granted.
+* Toggles are checkboxes (`SymbolCheckbox`) rather than switches.
 
 ## First run
 
-A single sheet: what Metla does, that it only reads metadata, why Full Disk
-Access matters, buttons "Open System Settings" and "Scan without it". The
-first scan starts immediately and the Overview fills in progressively.
+A single sheet, once: what Metla does, that it only reads metadata, why
+Full Disk Access matters, buttons "Open System Settings" and "Scan without
+it". The first scan starts immediately either way and the Overview fills
+in progressively; without Full Disk Access its partial banner says what
+could not be read.
+
+## Power
+
+The app maps the Mac's power state to the engine's profile with one
+table (`PowerState.profile`): background analysis off → Off; a scan the
+user asked for → Interactive for that scan; Low Power Mode, a serious or
+critical thermal state, or battery with "Reduce activity on battery" →
+Saver; otherwise Background. It learns of changes from IOKit's power
+source notifications, Low Power Mode and thermal state notifications; it
+never polls. App Nap is left alone; only a scan the user asked for and a
+cleanup hold an activity.

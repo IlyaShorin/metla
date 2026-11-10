@@ -850,24 +850,51 @@ another user owns it stays `InspectionFailed` (a worktree) or
 * `NavigationSplitView` main window (M5): Overview, the six categories'
   tables, Folders; standard controls, light and dark, English and
   Russian (rule titles localised by rule id, the catalogue's English
-  title as fallback). The window's visibility is the engine's
-  attention. Last report, the cleanup flow, the menu-bar panel, Settings
-  and hotkeys come in M6.
-* `MenuBarExtra` panel: disk gauge, reclaimable estimate, scan state and
-  freshness, quick actions.
-* Settings scene: General (background analysis, battery behaviour, launch at
-  login), Hotkeys (recorders, confirmation mode, quick categories),
-  Exclusions, Permissions (Full Disk Access).
-* Global hotkeys use `RegisterEventHotKey`, which needs no Accessibility
-  permission.
-* Without Full Disk Access the app says so, skips protected locations
-  rather than triggering a prompt per folder, and marks the analysis
-  partial. It never asks for root.
+  title as fallback). The window's (and the menu-bar panel's)
+  visibility is the engine's attention.
+* **Cleanup (M6).** `CleanupModel` previews a selection
+  (`engine.preview`), groups it as the core confirms it (`group_of`),
+  builds the typed `Confirmations` from exactly what the user checked
+  (the destructive action is possible while `covered` names at least
+  one item), executes it, follows `cleanup_progress` (with the current
+  item) until the engine's observer says the cleanup ended
+  (`Changed::Cleanup`, counted by the client), and shows the report
+  with the engine's totals (`ReportTotals`). The report survives
+  restarts (the engine keeps it). `SystemTrash` is
+  `FileManager.trashItem`, called on the engine's thread. Afterwards
+  the views refresh from the engine and the cleanup selection keeps
+  only what is still offered.
+* **Hotkeys.** Carbon `RegisterEventHotKey` behind `HotkeyCenter` (no
+  Accessibility permission); the combination, its name, its keeping
+  and the mode switch (an explicit opt-in for "clean immediately") are
+  MetlaKit's (`KeyCombo`, `HotkeysModel`); the mode and the quick
+  categories are engine settings. "Clean immediately" calls
+  `quick_clean` with `QuickCategory` values only and shows a
+  non-activating panel.
+* **Menu bar, Settings, first run.** `MenuBarExtra` (window style)
+  from the cached snapshot (`MenuBarSummary`); the app stays in the
+  menu bar when its window closes unless "Show in menu bar" is off.
+  The Settings scene: General, Hotkeys, Exclusions (with what each
+  hides, `hidden_by`), Access. Full Disk Access is probed by listing a
+  few protected directories (granted, not granted, unknown), never
+  assumed and never worked around; the first-run sheet shows once.
+* **Power.** `PowerMonitor` (IOKit power-source notifications, Low
+  Power Mode, thermal state; no timers) feeds `PowerState.profile`, a
+  pure table, whose answer the app hands to `set_power_profile`; a scan
+  the user asked for runs as Interactive and holds an activity, as a
+  cleanup does.
+* **Scenarios.** `--scenario <name>` drives the real view models end
+  to end on a fixture and exits non-zero when the disk is not as the
+  flow confirmed (`scripts/run-scenarios.sh` runs all four on fresh
+  fixtures; the Swift tests run them too).
 * `--capture <dir>` renders each main screen, light and dark, to PNG files
-  from the app's own layers (sidebar, title, toolbar and content) and
-  quits; on macOS 26 what the window server composes itself (the Liquid
-  Glass panes and blur, checkbox marks) is left out, since a picture of
-  it needs screen recording.
+  from the app's own layers (sidebar, title, toolbar and content), then
+  the cleanup preview, progress, a real report, the menu-bar panel, the
+  Settings tabs, the first-run sheet and the hotkey's panel, and quits;
+  on macOS 26 what the window server composes itself (the Liquid Glass
+  panes and blur, the accent colour of bordered buttons) is left out,
+  since a picture of it needs screen recording. Checkboxes are drawn by
+  the app (`SymbolCheckbox`), so their marks are in the pictures.
 
 ## 12. Development safety
 

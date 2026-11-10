@@ -53,21 +53,51 @@ code is held to this instead (`scripts/quality-swift.sh`):
   diagnostics of the build, which must be zero). The generated bindings
   compile under the same settings;
 * **tests**: `swift test` (Swift Testing) for `MetlaKit`: the view models
-  against a real engine on a fixture made by `metla-cli fixture create`,
-  and the pure parts (status lines for every engine state, formatting,
-  names, both languages' strings and plural rules, launch settings, the
-  refresh pacer, the main-thread guard);
+  against a real engine on fixtures made by `metla-cli fixture create`
+  (each test that cleans has a fixture of its own): the cleanup flow
+  (confirmation gating, unchecked groups untouched on disk, items in a
+  managed worktree confirmed one by one, set-aside items, the report's
+  numbers equal to the engine's and kept across launches, re-running,
+  cancel, quick clean of the chosen quick categories only, a debug
+  engine on a root without the fixture marker refusing
+  `executeConfirmed` and `quickClean`), the four `--scenario` runs on
+  fresh fixtures, the hotkey model (keeping, names, the modifier rule,
+  a taken combination shown, the opt-in for "clean immediately"),
+  exclusions, general settings, the power table, the Full Disk Access
+  model with an injected probe, the menu-bar summary; and the pure parts
+  (status lines for every engine state, formatting, names, both
+  languages' strings and plural rules with the same keys, launch
+  settings, the refresh pacer, the main-thread guard);
 * **line coverage**: `llvm-cov` per `MetlaKit` file; each view-model and
-  text file (`Models/`, `Text/`) needs at least 85 % of its lines, the
+  text file and the scenarios (`Models/`, `Text/`, `Scenarios/`) needs
+  at least 85 % of its lines, the
   report lists the rest;
 * **concurrency by construction**: every engine call goes through the
   `EngineClient` actor, off the main thread, and `MainThreadGuard` stops
   a debug build that makes a blocking engine call on the main thread
   (tested).
 
-Not covered by any gate: `MetlaApp` (the SwiftUI views and AppKit glue)
-has no unit tests and no coverage figure; it is checked by building it
-under the strict settings, by running the app on a fixture
-(`scripts/run-app.sh`) and by its capture mode (`--capture <dir>`),
-whose images are looked at by a person. There is no mutation testing of
-Swift and no duplication or complexity measure for it.
+**Swift numbers at M6** (`scripts/quality-swift.sh` at f760fcd, on a
+machine running two mutation gates): 0 diagnostics in the strict build;
+70 tests in 13 suites passed (the scenario test counts its four runs as
+one); line coverage per gated file: Power, RefreshPacer, Format,
+StatusLine 100 %, OverviewData 98.4 %, Hotkeys 97.1 %, SettingsModels
+96.6 %, CategoryModel 96.3 %, Names 95.6 %, AppModel 94.2 %, ReportModel
+92.5 %, MenuBarSummary 92.0 %, CleanupModel 89.5 %, Scenarios 88.8 %,
+FoldersModel 87.9 %, Strings 87.1 %, PreviewModel 86.4 %; not gated:
+EngineClient 94.6 %, LaunchSettings 76.6 %, MainThreadGuard 66.7 %;
+MetlaKit in all 87.8 % of lines.
+
+Not covered by any gate: `MetlaApp` (the SwiftUI views and the AppKit
+glue: the Carbon hotkey adapter, the HUD panel, the IOKit power monitor,
+the `SMAppService` login item) has no unit tests and no coverage figure;
+it is checked by building it under the strict settings, by running the
+app on a fixture (`scripts/run-app.sh`; it prints what the system
+answered when the hotkeys were registered), by the scenarios
+(`scripts/run-scenarios.sh`, the debug app driving the cleanup flows on
+fresh fixtures) and by its capture mode (`--capture <dir>`), whose
+images are looked at by a person. What an agent cannot check on a
+development machine is listed with each milestone's report (a physical
+hotkey press, the login item after a reboot, Full Disk Access granted).
+There is no mutation testing of Swift and no duplication or complexity
+measure for it.
