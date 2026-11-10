@@ -22,10 +22,10 @@ use crate::live::{Place, fixture, open, spent};
 /// Waits until `done` holds or `limit` passes; how long it took.
 fn waited(limit: Duration, done: impl Fn() -> bool) -> Option<Duration> {
     let started = Instant::now();
+    let deadline = started + limit;
     while !done() {
-        if started.elapsed() > limit {
-            return None;
-        }
+        // Time left, or none once the deadline has passed.
+        deadline.checked_duration_since(Instant::now())?;
         thread::sleep(Duration::from_millis(20));
     }
     Some(started.elapsed())
