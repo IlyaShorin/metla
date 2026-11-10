@@ -42,6 +42,14 @@ Every function has CRAP below 10, no duplication scores 0.8 or higher, no
 mutation site is uncovered and no mutant survives. The tools live at
 <https://github.com/unclebob/crapper>, `/dryer`, `/mutator`, `/uml-viewer`.
 
+A mutant's timeout is about max(90 s, 3 × a warm run of its crate's
+tests) (`MUTATOR_TIMEOUT_SECONDS`, `MUTATOR_TIMEOUT_FACTOR`). The mutator
+counts a timed-out mutant as killed; `scripts/quality.sh` runs the tests
+through `scripts/mutant-test.sh`, which traces every run, and prints how
+many mutants of each file were killed by the timeout. A test that waits
+gives up on its own deadline, well below that timeout, rather than
+waiting for the mutator to stop it.
+
 These tools do not analyse Swift. Swift is held to: Swift 6 language mode
 with strict concurrency, warnings as errors, `swift test`, and line coverage
 of `MetlaKit` reported by `llvm-cov`.
