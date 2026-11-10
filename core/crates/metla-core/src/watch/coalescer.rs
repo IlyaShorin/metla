@@ -214,7 +214,9 @@ impl Coalescer {
     }
 
     /// Makes every waiting change due at its last event, so the next
-    /// `due` hands it out; a later event settles again.
+    /// `due` hands it out; a later event settles again, from the base
+    /// settle time: how far busy directories had backed off is
+    /// forgotten, so what comes in while someone looks shows soon.
     pub fn expedite(&mut self) {
         let waits = self
             .full
@@ -223,6 +225,7 @@ impl Coalescer {
         for wait in waits {
             wait.settle = Duration::ZERO;
         }
+        self.cooling.clear();
     }
 
     /// When the next task becomes due, if any is waiting.

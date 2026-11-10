@@ -371,6 +371,27 @@ fn after_expediting_a_change_settles_for_at_least_the_profiles_settle_time() {
     );
 }
 
+/// Someone starts looking: a directory that kept changing forgets how
+/// long it had backed off, so a change that comes later (fseventsd hands
+/// the end of a churn over late) shows after the base settle time, not
+/// after a backed-off one of up to a cap.
+#[test]
+fn expediting_forgets_how_far_a_busy_directory_had_backed_off() {
+    let busy = |expedite: bool| {
+        let mut c = coalescer();
+        changed(&mut c, "/r/a", 0.0);
+        changed(&mut c, "/r/a", 0.5);
+        assert_eq!(c.due(secs(2.5)), [shallow("/r/a")], "backed off to 2 s");
+        if expedite {
+            c.expedite();
+        }
+        changed(&mut c, "/r/a", 3.0);
+        c.next_deadline()
+    };
+    assert_eq!(busy(false), Some(secs(7.0)), "rescanned recently: 4 s");
+    assert_eq!(busy(true), Some(secs(4.0)), "looked at: the base 1 s");
+}
+
 #[test]
 fn a_profile_with_a_longer_settle_time_holds_what_waits_at_least_that_long() {
     let mut c = coalescer();
