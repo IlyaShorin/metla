@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use metla_core::clean::CleanProgress;
 use metla_core::domain::{
-    Category, CleanupPreview, DirId, Exclusion, PreviewId, ProgressSnapshot, QuickCategory,
+    Category, CleanupPreview, DirId, Exclusion, PreviewId, ProgressSnapshot, QuickCategory, Tally,
 };
 use metla_core::engine::{
     self, DirRef, EngineConfig, Freshness, PowerProfile, Profiles, TopFolder, Watching,
@@ -21,7 +21,9 @@ use metla_core::index::{Order, Page};
 
 use crate::callbacks::{EngineObserver, Observer, Trash, TrashHost};
 use crate::error::MetlaError;
-use crate::view::{CandidatePage, CleanupResult, Confirmations, FolderPage, Overview};
+use crate::view::{
+    CandidatePage, CleanupResult, Confirmations, EngineSettings, FolderPage, Overview,
+};
 
 /// The most entries a page holds, whatever the caller asks for.
 pub const MAX_PAGE: u32 = 1000;
@@ -163,6 +165,21 @@ impl Engine {
         Ok(kept
             .map(|e| e.path().to_string_lossy().into_owned())
             .collect())
+    }
+
+    /// The candidates keeping `path` hides, kept already or not.
+    pub fn hidden_by(&self, path: String) -> Result<Tally, MetlaError> {
+        Ok(self.inner.hidden_by(&exclusion(path)?)?)
+    }
+
+    /// The settings the engine keeps.
+    pub fn settings(&self) -> EngineSettings {
+        EngineSettings::from(self.inner.settings())
+    }
+
+    /// Takes and keeps new settings.
+    pub fn set_settings(&self, settings: EngineSettings) -> Result<(), MetlaError> {
+        Ok(self.inner.set_settings(settings.into())?)
     }
 
     /// Keeps `path`; false when it was kept already.

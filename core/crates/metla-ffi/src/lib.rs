@@ -23,9 +23,9 @@ pub use callbacks::{EngineObserver, Observer, Trash, TrashHost, TrashOutcome};
 pub use engine::{Engine, EngineOptions, MAX_PAGE, page};
 pub use error::MetlaError;
 pub use view::{
-    CandidatePage, CategoryTally, CleanupResult, Confirmations, CoverageSummary, FailedPath,
-    FolderDir, FolderItem, FolderPage, GapCount, GapPlace, KindBytes, Leftover, Overview,
-    RuleTitle, SkipCount, rule_titles,
+    CandidatePage, CategoryTally, CleanupResult, Confirmations, CoverageSummary, EngineSettings,
+    FailedPath, FolderDir, FolderItem, FolderPage, GapCount, GapPlace, KindBytes, Leftover,
+    Overview, RuleTitle, SkipCount, group_of, rule_titles,
 };
 
 uniffi::setup_scaffolding!();

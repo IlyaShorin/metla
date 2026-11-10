@@ -3,14 +3,17 @@
 use std::fs;
 use std::sync::{Arc, Mutex, Weak};
 
-use metla_core::domain::{Category, Disposal, Outcome, QuickCategory, Separate};
-use metla_core::engine::{Changed, Completeness, DirRef, EngineState, PowerProfile};
+use std::time::Duration;
+
+use metla_core::domain::{Category, Disposal, Group, Outcome, QuickCategory, RuleId, Separate};
+use metla_core::engine::{Changed, Completeness, DirRef, EngineState, HotkeyMode, PowerProfile};
 use metla_core::index::{Order, SortKey};
 use metla_ffi::{
-    CleanupResult, Confirmations, Engine, EngineObserver, FolderItem, MAX_PAGE, MetlaError,
+    CleanupResult, Confirmations, Engine, EngineObserver, EngineSettings, FolderItem, MAX_PAGE,
+    MetlaError, group_of,
 };
 
-use crate::support::{HOME, Place, Told, text, until};
+use crate::support::{HOME, Place, Refusing, Told, text, until};
 
 #[test]
 fn the_overview_comes_through_whole() {
@@ -138,6 +141,83 @@ fn exclusions_round_trip_and_are_checked_where_they_come_in() {
         }
     );
     assert!(engine.remove_exclusion(String::new()).is_err());
+}
+
+#[test]
+fn an_exclusion_says_what_it_hides() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    let caches = text(&place.path("~/Library/Caches"));
+    let all = engine.snapshot().unwrap().categories[0].tally;
+    assert_eq!(
+        engine.hidden_by(caches.clone()).unwrap(),
+        all,
+        "both caches"
+    );
+    engine.add_exclusion(caches.clone()).unwrap();
+    assert_eq!(engine.hidden_by(caches).unwrap(), all, "kept or not");
+    let one = text(&place.path("~/Library/Caches/com.example.app/blob"));
+    assert_eq!(
+        engine.hidden_by(one).unwrap().count,
+        1,
+        "the cache holding it"
+    );
+    let documents = text(&place.path("~/Documents"));
+    assert_eq!(engine.hidden_by(documents).unwrap().count, 0);
+    assert!(engine.hidden_by("relative".into()).is_err());
+}
+
+#[test]
+fn settings_round_trip_and_hold_only_quick_categories() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    let defaults = engine.settings();
+    assert_eq!(defaults.hotkey, HotkeyMode::Confirm);
+    assert!(defaults.quick.is_empty() && defaults.background);
+    let chosen = EngineSettings {
+        background: false,
+        reduce_on_battery: false,
+        recent_age: Duration::from_secs(3 * 86_400),
+        stale_after: Duration::from_secs(7 * 86_400),
+        hotkey: HotkeyMode::Immediate,
+        quick: vec![
+            QuickCategory::BuildArtifact,
+            QuickCategory::AppCache,
+            QuickCategory::AppCache,
+        ],
+    };
+    engine.set_settings(chosen.clone()).unwrap();
+    let kept = engine.settings();
+    assert_eq!(
+        kept.quick,
+        [QuickCategory::AppCache, QuickCategory::BuildArtifact],
+        "once each, in a fixed order"
+    );
+    assert_eq!(
+        kept,
+        EngineSettings {
+            quick: kept.quick.clone(),
+            ..chosen
+        }
+    );
+    drop(engine);
+    let again = Engine::open(place.options(), Arc::new(Refusing)).unwrap();
+    assert_eq!(again.settings(), kept, "kept by the engine");
+}
+
+#[test]
+fn every_rule_belongs_to_one_confirmation_group() {
+    let group = |id: &str| group_of(RuleId::parse(id).unwrap());
+    assert_eq!(group("app-cache.library"), Group::Quick);
+    assert_eq!(
+        group("log.user-library"),
+        Group::Separate(Separate::MoveToTrash)
+    );
+    assert_eq!(group("temp.trash"), Group::Separate(Separate::EmptyTrash));
+    assert_eq!(
+        group("worktree.linked"),
+        Group::Separate(Separate::RemoveWorktrees)
+    );
 }
 
 /// An observer that reads the engine from inside the notification.

@@ -362,6 +362,23 @@ impl Snapshot<'_> {
         Ok(owned)
     }
 
+    /// The candidates `exclusion` hides, whether it is in force or not:
+    /// those that would be offered without any exclusion and that it
+    /// hides (each counted as its category's list counts it).
+    pub fn hidden_by(&self, exclusion: &Exclusion) -> Result<Tally, IndexError> {
+        let offer = Offer {
+            exclusions: Vec::new(),
+            ..self.offer()?
+        };
+        let mut hidden = Tally::default();
+        for found in self.offered_by(None, offer)? {
+            if exclusion.hides(&found.path) {
+                hidden.add(found.row.tree.bytes);
+            }
+        }
+        Ok(hidden)
+    }
+
     /// What cleaning the preselected candidates would free, and what it
     /// would only move to the Trash. Worktrees are never preselected, so
     /// nothing is counted twice.
@@ -502,11 +519,19 @@ impl Snapshot<'_> {
     /// The offered candidates of `category` (all when `None`), largest
     /// first. Reads only candidate rows.
     fn visible(&self, category: Option<Category>) -> Result<Vec<Found>, IndexError> {
+        self.offered_by(category, self.offer()?)
+    }
+
+    /// The candidates `offer` lets through.
+    fn offered_by(
+        &self,
+        category: Option<Category>,
+        offer: Offer,
+    ) -> Result<Vec<Found>, IndexError> {
         let sql = format!(
             "SELECT {CANDIDATE_COLUMNS} FROM dirs INDEXED BY dirs_candidates
              WHERE rule_id IS NOT NULL ORDER BY tree_bytes DESC, id"
         );
-        let offer = self.offer()?;
         let rows = self.candidate_rows(&sql, [])?.into_iter();
         let mut lineage = self.lineage()?;
         let mut found = Vec::new();

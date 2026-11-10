@@ -9,13 +9,13 @@ use std::path::PathBuf;
 use metla_core::clean::CleanProgress;
 use metla_core::domain::{
     Bytes, Candidate, Category, CleanupPreview, CleanupReport, DirId, Disposal, Errno, FileKind,
-    GapKind, ItemReport, Manager, Outcome, PreviewId, PreviewItem, ProgressSnapshot, QuickCategory,
-    Reason, Reasons, Reclaimable, Rejected, Rejection, RuleId, Separate, Skip, SkipReason, Tally,
-    TreeTotals, UnixTime, Warning, WorktreeStatus,
+    GapKind, Group, ItemReport, Manager, Outcome, PreviewId, PreviewItem, ProgressSnapshot,
+    QuickCategory, Reason, Reasons, Reclaimable, Rejected, Rejection, RuleId, Separate, Skip,
+    SkipReason, Tally, TreeTotals, UnixTime, Warning, WorktreeStatus,
 };
 use metla_core::engine::{
-    Changed, Completeness, DirRef, EngineState, Failure, Freshness, Listed, PowerProfile,
-    Removability, TopFolder, VolumeSpace,
+    Changed, Completeness, DirRef, EngineState, Failure, Freshness, HotkeyMode, Listed,
+    PowerProfile, Removability, TopFolder, VolumeSpace,
 };
 use metla_core::index::{Order, SortKey};
 use uniffi::deps::anyhow::anyhow;
@@ -308,6 +308,18 @@ pub enum Separate {
     MoveToTrash,
     EmptyTrash,
     RemoveWorktrees,
+}
+
+#[uniffi::remote(Enum)]
+pub enum Group {
+    Quick,
+    Separate(Separate),
+}
+
+#[uniffi::remote(Enum)]
+pub enum HotkeyMode {
+    Confirm,
+    Immediate,
 }
 
 #[uniffi::remote(Enum)]

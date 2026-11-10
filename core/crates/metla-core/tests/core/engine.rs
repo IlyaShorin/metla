@@ -320,6 +320,28 @@ fn exclusions_hide_candidates_at_once_and_are_kept() {
     assert!(offered(&engine, &place).contains("home/Library/Caches/com.example.app"));
 }
 
+/// What a kept path hides, before and after it is kept: the candidates
+/// at it, beneath it, or holding it, and nothing else.
+#[test]
+fn an_exclusion_tells_what_it_hides_kept_or_not() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    settled(&engine);
+    let kept = |relative: &str| Exclusion::new(&place.path(relative)).unwrap();
+    let caches = engine.category_totals().unwrap()[&Category::AppCache];
+    assert_eq!(caches.count, 1);
+    let library = kept("~/Library");
+    assert_eq!(engine.hidden_by(&library).unwrap().count, 2, "cache and logs");
+    let cache = kept("~/Library/Caches");
+    assert_eq!(engine.hidden_by(&cache).unwrap(), caches);
+    engine.add_exclusion(&cache).unwrap();
+    assert_eq!(engine.hidden_by(&cache).unwrap(), caches, "once kept");
+    let inside = kept("~/Library/Caches/com.example.app/blob");
+    assert_eq!(engine.hidden_by(&inside).unwrap(), caches, "the one holding it");
+    let documents = kept("~/Documents");
+    assert_eq!(engine.hidden_by(&documents).unwrap(), Tally::default());
+}
+
 #[test]
 fn the_power_profiles_are_the_documented_table() {
     let table = Profiles::standard(12);

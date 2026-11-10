@@ -558,6 +558,11 @@ impl Engine {
         self.read(|snap| snap.exclusions())
     }
 
+    /// The candidates `exclusion` hides (or would hide).
+    pub fn hidden_by(&self, exclusion: &Exclusion) -> Result<Tally, EngineError> {
+        self.read(|snap| snap.hidden_by(exclusion))
+    }
+
     /// Keeps `path`; false when it was kept already.
     pub fn add_exclusion(&self, exclusion: &Exclusion) -> Result<bool, EngineError> {
         let added = self.editor.exclude(exclusion)?;

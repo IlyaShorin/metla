@@ -4,15 +4,17 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use metla_core::clean::CleanError;
 use metla_core::domain::{
     Bytes, Category, CleanupReport, Confirmation, Coverage, DirId, DirRecord, DirState, Disposal,
-    Errno, FileKind, GapKind, KindTotals, Leftovers, Reclaimable, RuleId, Separate, Skip, Tally,
-    TreeTotals,
+    Errno, FileKind, GapKind, Group, KindTotals, Leftovers, QuickCategory, Reclaimable, RuleId,
+    Separate, Skip, Tally, TreeTotals,
 };
 use metla_core::engine::{
-    self, CandidatePage as Page, Folder, FolderEntry, Freshness, Listed, PowerProfile, VolumeSpace,
+    self, CandidatePage as Page, Folder, FolderEntry, Freshness, HotkeyMode, Listed, PowerProfile,
+    Settings, VolumeSpace,
 };
 use metla_core::rules::CATALOGUE;
 
@@ -325,4 +327,55 @@ pub fn rule_titles() -> Vec<RuleTitle> {
         title: rule.title.to_owned(),
     });
     titles.collect()
+}
+
+/// The settings the engine keeps, as they cross: the quick categories as
+/// a list (once each, in a fixed order on the way out).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct EngineSettings {
+    /// Watch the disk and keep the picture fresh.
+    pub background: bool,
+    /// Use the Saver profile on battery (the app decides).
+    pub reduce_on_battery: bool,
+    /// Build output active within this age is not preselected.
+    pub recent_age: Duration,
+    /// A worktree changed within this age is in use.
+    pub stale_after: Duration,
+    pub hotkey: HotkeyMode,
+    /// What the hotkey cleans in `Immediate` mode: there is no value for
+    /// logs, worktrees or temporary data.
+    pub quick: Vec<QuickCategory>,
+}
+
+impl From<Settings> for EngineSettings {
+    fn from(settings: Settings) -> EngineSettings {
+        EngineSettings {
+            background: settings.background,
+            reduce_on_battery: settings.reduce_on_battery,
+            recent_age: settings.recent_age,
+            stale_after: settings.stale_after,
+            hotkey: settings.hotkey,
+            quick: settings.quick.into_iter().collect(),
+        }
+    }
+}
+
+impl From<EngineSettings> for Settings {
+    fn from(settings: EngineSettings) -> Settings {
+        Settings {
+            background: settings.background,
+            reduce_on_battery: settings.reduce_on_battery,
+            recent_age: settings.recent_age,
+            stale_after: settings.stale_after,
+            hotkey: settings.hotkey,
+            quick: settings.quick.into_iter().collect(),
+        }
+    }
+}
+
+/// How a preview item with the rule `rule` is confirmed: with the
+/// preview (`Quick`) or in a group of its own.
+#[uniffi::export]
+pub fn group_of(rule: RuleId) -> Group {
+    Group::of(&rule)
 }
