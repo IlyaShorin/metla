@@ -27,6 +27,11 @@ fn standard() -> Profiles {
     Profiles::standard(4)
 }
 
+/// How long a fast test waits for an event: the stream's latency is 20
+/// ms, but fseventsd delivers late while the volume is busy (builds of
+/// other test runs write to the same disk).
+const DELIVERY: Duration = Duration::from_secs(60);
+
 #[test]
 fn the_engine_follows_a_real_stream_and_resumes_after_the_stored_event() {
     let place = Place::new(HOME);
@@ -34,7 +39,7 @@ fn the_engine_follows_a_real_stream_and_resumes_after_the_stored_event() {
     let engine = Engine::open(quick()).unwrap();
     settled(&engine);
     place.fx.build(&["~/Library/Caches/org.seen.live/x=1"]);
-    until(&engine, |e| {
+    within(&engine, DELIVERY, |e| {
         offered(e, &place).contains("home/Library/Caches/org.seen.live")
     });
     assert!(engine.snapshot().unwrap().freshness.watching);
@@ -43,7 +48,7 @@ fn the_engine_follows_a_real_stream_and_resumes_after_the_stored_event() {
         .fx
         .build(&["~/Library/Caches/org.made.while.down/x=1"]);
     let again = Engine::open(quick()).unwrap();
-    until(&again, |e| {
+    within(&again, DELIVERY, |e| {
         offered(e, &place).contains("home/Library/Caches/org.made.while.down")
     });
     settled(&again);
