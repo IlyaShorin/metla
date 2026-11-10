@@ -17,7 +17,11 @@ synthetic trees and indexes there.
 
 * `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo test` (the fast suites), and once the slow tests that wait for
-  real FSEvents latency (`--ignored`);
+  real FSEvents deliveries (`--ignored`);
+* **stability**: the fast suite five times in a row must pass five
+  times (`STABLE_RUNS`); a failure fails the gate with the test's name.
+  The mutator counts any failing run as a killed mutant, so a test that
+  fails on its own would kill mutants it has nothing to do with;
 * **crapper**: CRAP of every function from its cyclomatic complexity and
   its line coverage (`cargo llvm-cov`); every function below 10;
 * **dryer**: structural similarity of every pair of functions; no pair at

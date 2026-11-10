@@ -29,14 +29,21 @@ body says why, what changed and how it was proved (test names, tool output).
 
 ```
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-cargo test -p metla-core --test core -- --ignored   # slow: real FSEvents latency
+cargo test -- --ignored   # slow: they wait for real FSEvents deliveries
 scripts/quality.sh        # all of the above once, then crapper, dryer, mutator
 ```
 
-Tests that wait for real FSEvents latency are `#[ignore]`d so the suite
-the mutator runs for every mutant stays fast; `scripts/quality.sh` runs
-them once. The fast suite drives the stream with a flush and the engine
-with millisecond settle times instead.
+Tests that wait for fseventsd to deliver an event are `#[ignore]`d:
+under load it delivers seconds late, and the suite the mutator runs for
+every mutant must pass every time, or its failures "kill" mutants they
+have nothing to do with. `scripts/quality.sh` runs them once, and runs
+the fast suite five times in a row before the mutator; one failure
+fails the gate. The fast suite feeds the engine through
+`Engine::changed` with millisecond settle times, decodes FSEvents
+batches with `watch::events_of`, and starts and stops real streams only
+where nothing is written. Threads the tests wait for run at the
+priority of the profile in force (the test profiles do not throttle),
+not at background priority.
 
 Every function has CRAP below 10, no duplication scores 0.8 or higher, no
 mutation site is uncovered and no mutant survives. The tools live at

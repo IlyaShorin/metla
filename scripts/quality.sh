@@ -2,7 +2,9 @@
 # Quality gates for the Rust workspace (core/: metla-core, metla-cli,
 # metla-ffi):
 #   cargo fmt --check, cargo clippy -D warnings, cargo test,
-#   the slow tests with real FSEvents latency (the ignored group, once),
+#   the slow tests that wait for real FSEvents deliveries (the ignored
+#   group, once), the fast suite five times in a row (it must not fail on
+#   its own: the mutator counts every failure as a kill),
 #   crapper (every function CRAP < 10), dryer (no pair scoring >= 0.8),
 #   mutator (no surviving mutant, no uncovered site).
 # Exits non-zero when any gate fails, and when a tool analysed nothing.
@@ -11,6 +13,8 @@
 #   UB_TOOLS                 tool checkout root (default ~/.local/share/ub-tools)
 #   CRAPPER, DRYER, MUTATOR  override a single tool's executable
 #   MUTATE_ALL=1             rerun every mutant, not only changed functions
+#   STABLE_RUNS              how many times in a row the fast suite must pass
+#                            before the mutator runs (default 5)
 #   MUTATOR_WORKERS          parallel mutants per file (default 2: every
 #                            worker builds its own copy of the crates)
 #   MUTATOR_TIMEOUT_SECONDS  the shortest mutant timeout (default 90)
@@ -47,6 +51,7 @@ workers="${MUTATOR_WORKERS:-2}"
 timeout_floor="${MUTATOR_TIMEOUT_SECONDS:-90}"
 
 crap_limit=10
+stable_runs="${STABLE_RUNS:-5}"
 dry_limit=0.8
 log_dir="$repo/target/quality"
 mkdir -p "$log_dir"
@@ -76,10 +81,25 @@ section "cargo test"
 (cd core && cargo test 2>&1) | tee "$log_dir/test.txt" | grep -E "^test result|FAILED|panicked"
 [[ ${PIPESTATUS[0]} -eq 0 ]] || fail "cargo test"
 
-section "slow tests: real FSEvents streams (ignored group, run once)"
-(cd core && cargo test -p metla-core --test core -- --ignored --nocapture 2>&1) | tee "$log_dir/slow.txt" \
+section "slow tests: real FSEvents deliveries (ignored group, run once)"
+(cd core && cargo test -- --ignored --nocapture 2>&1) | tee "$log_dir/slow.txt" \
     | grep -E "^test result|FAILED|panicked|^fsevents:"
 [[ ${PIPESTATUS[0]} -eq 0 ]] || fail "slow tests"
+
+# The mutator counts a failing test run as a killed mutant, so a test that
+# fails on its own now and then would "kill" mutants it has nothing to do
+# with. The suite it runs must pass every time.
+section "stability: the fast suite $stable_runs times in a row"
+for run in $(seq 1 "$stable_runs"); do
+    (cd core && cargo test 2>&1) >"$log_dir/stable-$run.txt"
+    code=$?
+    passed=$(grep -E "^test result" "$log_dir/stable-$run.txt" | awk '{n += $4} END {print n + 0}')
+    echo "run $run: exit $code, $passed tests passed"
+    if [[ $code -ne 0 ]]; then
+        names=$(grep -E "^test .* FAILED$" "$log_dir/stable-$run.txt" | sed -E 's/^test (.*) \.\.\. FAILED$/\1/' | paste -sd, -)
+        fail "stability run $run: ${names:-cargo test exited $code}"
+    fi
+done
 
 section "crapper (CRAP < $crap_limit)"
 "$crapper" core >"$log_dir/crap.txt" 2>&1 || fail "crapper run"
