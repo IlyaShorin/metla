@@ -175,3 +175,16 @@ pub struct Counters {
     /// deadline. An idle engine does not wake up.
     pub wakeups: u64,
 }
+
+impl Counters {
+    /// What the engine did between `earlier` and these counters.
+    pub fn since(&self, earlier: &Counters) -> Counters {
+        Counters {
+            full_scans: self.full_scans.saturating_sub(earlier.full_scans),
+            tasks: self.tasks.saturating_sub(earlier.tasks),
+            batches: self.batches.saturating_sub(earlier.batches),
+            events: self.events.saturating_sub(earlier.events),
+            wakeups: self.wakeups.saturating_sub(earlier.wakeups),
+        }
+    }
+}

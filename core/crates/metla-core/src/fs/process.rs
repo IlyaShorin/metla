@@ -30,6 +30,24 @@ pub struct Usage {
     pub peak_rss: Bytes,
 }
 
+impl Usage {
+    /// CPU time, user and system.
+    pub fn cpu(&self) -> Duration {
+        self.user + self.system
+    }
+
+    /// What was used between `earlier` and now; the peak stays this
+    /// one's.
+    pub fn since(&self, earlier: &Usage) -> Usage {
+        Usage {
+            user: self.user.saturating_sub(earlier.user),
+            system: self.system.saturating_sub(earlier.system),
+            switches: self.switches.saturating_sub(earlier.switches),
+            peak_rss: self.peak_rss,
+        }
+    }
+}
+
 fn rusage() -> libc::rusage {
     let mut usage = MaybeUninit::<libc::rusage>::zeroed();
     // SAFETY: `usage` is writable rusage storage; RUSAGE_SELF cannot fail.

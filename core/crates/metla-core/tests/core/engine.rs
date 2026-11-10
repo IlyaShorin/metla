@@ -408,6 +408,34 @@ fn settings_are_kept_and_switching_background_analysis_off_stops_watching() {
 }
 
 #[test]
+fn counters_since_earlier_ones_are_what_was_done_in_between() {
+    let earlier = metla_core::engine::Counters {
+        full_scans: 1,
+        tasks: 7,
+        batches: 3,
+        events: 40,
+        wakeups: 9,
+    };
+    let later = metla_core::engine::Counters {
+        full_scans: 2,
+        tasks: 17,
+        batches: 8,
+        events: 140,
+        wakeups: 30,
+    };
+    let done = later.since(&earlier);
+    let fields = [
+        done.full_scans,
+        done.tasks,
+        done.batches,
+        done.events,
+        done.wakeups,
+    ];
+    assert_eq!(fields, [1, 10, 5, 100, 21]);
+    assert_eq!(earlier.since(&later), Default::default(), "never negative");
+}
+
+#[test]
 fn a_folder_lists_its_subdirectories_and_files_largest_first_then_by_name() {
     let place = Place::new(&["top/small/x=1", "top/big/y=2"]);
     write_file(&place.path("top/big/z"), 50_000);

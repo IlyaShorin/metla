@@ -146,9 +146,9 @@ pub fn freshness_line(now: UnixTime, counters: &Counters, freshness: &Freshness)
 pub fn spent(before: &Usage, after: &Usage) -> String {
     format!(
         "CPU {} user + {} system, {} context switches, peak RSS {}",
-        seconds(after.user - before.user),
-        seconds(after.system - before.system),
-        count(after.switches - before.switches),
+        seconds(after.since(before).user),
+        seconds(after.since(before).system),
+        count(after.since(before).switches),
         bytes(after.peak_rss)
     )
 }

@@ -527,6 +527,39 @@ fn usage_reads_the_cpu_time_the_system_reports() {
     assert!(used.user >= seconds.saturating_sub(std::time::Duration::from_millis(1)));
 }
 
+#[test]
+fn usage_since_an_earlier_sample_is_the_difference_and_the_later_peak() {
+    use metla_core::domain::Bytes;
+    use metla_core::fs::Usage;
+    use std::time::Duration;
+    let earlier = Usage {
+        user: Duration::from_millis(500),
+        system: Duration::from_millis(200),
+        switches: 10,
+        peak_rss: Bytes(1_000),
+    };
+    let later = Usage {
+        user: Duration::from_millis(1_700),
+        system: Duration::from_millis(600),
+        switches: 1_510,
+        peak_rss: Bytes(42_000),
+    };
+    let used = later.since(&earlier);
+    let expected = Usage {
+        user: Duration::from_millis(1_200),
+        system: Duration::from_millis(400),
+        switches: 1_500,
+        peak_rss: Bytes(42_000),
+    };
+    assert_eq!(used, expected);
+    assert_eq!(used.cpu(), Duration::from_millis(1_600));
+    assert_eq!(
+        earlier.since(&later).cpu(),
+        Duration::ZERO,
+        "never negative"
+    );
+}
+
 fn raw_usage() -> libc::rusage {
     let mut raw = std::mem::MaybeUninit::<libc::rusage>::zeroed();
     unsafe {

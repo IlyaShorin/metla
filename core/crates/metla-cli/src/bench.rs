@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use metla_core::domain::{DirRecord, UnixTime};
-use metla_core::engine::{DirRef, Engine, EngineState};
-use metla_core::fs::{thread_cpu, usage};
+use metla_core::domain::{DirId, DirRecord};
+use metla_core::engine::{DirRef, Engine};
+use metla_core::fs::{now, thread_cpu, usage};
 use metla_core::index::{IndexReader, IndexWriter, Page};
 use metla_core::rules::RuleSet;
 use metla_core::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
@@ -33,36 +33,37 @@ fn waited(limit: Duration, done: impl Fn() -> bool) -> Option<Duration> {
 
 /// The engine has nothing left to do and its picture is complete.
 fn idle(engine: &Engine) -> bool {
-    let freshness = engine.freshness();
-    freshness.is_ok_and(|f| f.state == EngineState::Idle && f.pending == 0 && !f.needs_full_scan)
+    engine.freshness().is_ok_and(|f| f.is_current())
 }
 
-/// What a churn wrote.
+/// What a churn did: its bursts, the files it wrote, and its CPU time.
+#[derive(Default)]
 struct Churned {
+    bursts: u64,
     files: u64,
     cpu: Duration,
 }
 
-/// Creates and deletes files in bursts below `dir` until `stop`.
+/// Writes files in bursts below `dir` until `stop`: each burst empties one
+/// of 16 directories and writes `per_burst` files into it. Runs on a
+/// thread of its own, whose CPU time is therefore the churn's.
 fn churn(dir: PathBuf, per_burst: usize, stop: Arc<AtomicBool>) -> Churned {
-    let start = thread_cpu();
-    let mut files = 0;
-    let mut burst = 0;
+    let mut churned = Churned::default();
     while !stop.load(Ordering::Acquire) {
-        let here = dir.join(format!("b{}", burst % 16));
+        let here = dir.join(format!("b{}", churned.bursts % 16));
         let _ = fs::remove_dir_all(&here);
         let _ = fs::create_dir_all(&here);
         for i in 0..per_burst {
-            let _ = fs::write(here.join(format!("f{i}")), b"churn");
+            let written = fs::write(here.join(format!("f{i}")), b"churn");
+            churned.files += u64::from(written.is_ok());
         }
-        files += per_burst as u64;
-        burst += 1;
+        churned.bursts += 1;
         thread::sleep(Duration::from_millis(50));
     }
     let _ = fs::remove_dir_all(&dir);
     Churned {
-        files,
-        cpu: thread_cpu() - start,
+        cpu: thread_cpu(),
+        ..churned
     }
 }
 
@@ -72,7 +73,8 @@ fn rows(index: &Path) -> Result<Vec<(PathBuf, DirRecord)>, String> {
     let mut reader = IndexReader::open(index).map_err(|e| e.to_string())?;
     let mut rows = reader.read(|snap| snap.rows()).map_err(|e| e.to_string())?;
     for (_, row) in &mut rows {
-        row.id = metla_core::domain::DirId(0);
+        // Any one id: the paths tell the rows apart.
+        row.id = DirId(i64::MIN);
         row.parent = None;
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
@@ -93,8 +95,11 @@ fn options(place: &Place) -> Result<ScanOptions, String> {
 fn scan_afresh(place: &Place, fresh: &Path) -> Result<(), String> {
     let options = options(place)?;
     let mut writer = IndexWriter::open(fresh).map_err(|e| e.to_string())?;
-    let session = writer.start_scan(UnixTime(0)).map_err(|e| e.to_string())?;
-    let summary = run(&options, &ScanControl::new(0), &|r| session.send(r));
+    let session = writer.start_scan(now()).map_err(|e| e.to_string())?;
+    // No live list of the largest entries: nobody watches this scan.
+    let summary = run(&options, &ScanControl::new(usize::MIN), &|r| {
+        session.send(r)
+    });
     session
         .finish(&summary.map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
@@ -134,30 +139,30 @@ pub fn bench_churn(place: &Place, length: Duration, per_burst: usize) -> Result<
     let after = (engine.counters(), usage());
     let right = exactly_right(place)?;
     let to_right = ended.elapsed();
-    let engine_cpu = (after.1.user + after.1.system) - (before.1.user + before.1.system);
-    let (tasks, batches) = (
-        after.0.tasks - before.0.tasks,
-        after.0.batches - before.0.batches,
-    );
+    let did = after.0.since(&before.0);
+    let engine_cpu = after.1.since(&before.1).cpu();
+    let picture = if right {
+        "exactly right"
+    } else {
+        "NOT the same as a full scan"
+    };
     Ok(format!(
-        "churn: {} files created and deleted in {}, churn CPU {}\n\
+        "churn: {} files created and deleted in {} bursts in {}, churn CPU {}\n\
          engine: {} batches, {} rescans, {} full scans, {} events; process {}\n\
          engine CPU without the churn thread: {}\n\
          after the churn: idle after {}; picture {} (checked against a full scan {} after the churn ended)\n",
         count(churned.files * 2),
+        churned.bursts,
         seconds(length),
         seconds(churned.cpu),
-        batches,
-        tasks,
-        after.0.full_scans - before.0.full_scans,
-        after.0.events - before.0.events,
+        did.batches,
+        did.tasks,
+        did.full_scans,
+        did.events,
         spent(&before.1, &after.1),
         seconds(engine_cpu.saturating_sub(churned.cpu)),
         seconds(quiet),
-        match right {
-            true => "exactly right",
-            false => "NOT the same as a full scan",
-        },
+        picture,
         seconds(to_right),
     ))
 }
@@ -193,14 +198,16 @@ fn scanned(place: &Place) -> Result<Engine, String> {
 /// Returns once the engine is idle again.
 fn shown_after_write(engine: &Engine, root: &Path, file: &Path) -> Result<String, String> {
     let root = DirRef::Path(root.to_path_buf());
-    let whole = Page {
-        offset: 0,
-        limit: 0,
+    // No entries: only the directory's own totals are read.
+    let none = Page {
+        offset: usize::MIN,
+        limit: usize::MIN,
     };
-    let total = || engine.children(&root, whole).ok().map(|f| f.dir.tree.bytes);
+    let total = || engine.children(&root, none).ok().map(|f| f.dir.tree.bytes);
     let before = total();
     fs::write(file, vec![9u8; 1 << 20]).map_err(|e| e.to_string())?;
     let shown = waited(Duration::from_secs(900), || total() != before);
     waited(Duration::from_secs(900), || idle(engine)).ok_or("never idle")?;
-    Ok(shown.map_or("not within 15 min".to_owned(), seconds))
+    let precise = |shown: Duration| format!("{:.3} s", shown.as_secs_f64());
+    Ok(shown.map_or("not within 15 min".to_owned(), precise))
 }

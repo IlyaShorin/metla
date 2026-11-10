@@ -286,6 +286,15 @@ fn bench_churn_follows_the_churn_and_ends_exactly_right() {
     let (code, out, err) = bed.run("bench churn --seconds 1 --files 20");
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert!(out.contains("picture exactly right"), "{out}");
+    let words: Vec<&str> = out.split_whitespace().collect();
+    let files: u64 = words[1].replace(',', "").parse().unwrap();
+    let bursts: u64 = words[7].parse().unwrap();
+    assert!(bursts > 0, "{out}");
+    assert_eq!(
+        files,
+        2 * 20 * bursts,
+        "every file written, then removed: {out}"
+    );
     assert!(
         !bed.root.join("churn").exists(),
         "the churn cleans up after itself"
@@ -299,6 +308,15 @@ fn bench_refresh_times_three_small_changes() {
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert!(out.starts_with("refresh with Background: "), "{out}");
     assert_eq!(out.matches(" s").count(), 3, "{out}");
+    let shown: Vec<f64> = out
+        .split_whitespace()
+        .filter_map(|word| word.parse().ok())
+        .collect();
+    assert_eq!(shown.len(), 3, "{out}");
+    assert!(
+        shown.iter().all(|s| *s >= 0.020),
+        "nothing shows before the stream's latency: {out}"
+    );
 }
 
 #[test]
