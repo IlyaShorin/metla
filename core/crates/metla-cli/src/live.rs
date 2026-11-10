@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use metla_core::clean::{FIXTURE_MARKER, TrashHost};
 use metla_core::domain::UnixTime;
 use metla_core::engine::{
-    Changed, Completeness, Counters, Engine, EngineConfig, EngineObserver, EngineState, Freshness,
-    PowerProfile, Profiles, Watching,
+    Changed, Completeness, Counters, Engine, EngineConfig, EngineObserver, EngineState, Failure,
+    Freshness, PowerProfile, Profiles, Watching,
 };
 use metla_core::fs::{Usage, now, usage};
 use metla_core::git::Git;
@@ -97,6 +97,7 @@ pub fn open(place: &Place) -> Result<(Engine, Receiver<Changed>), String> {
         watching,
         profiles: profiles(place.settle, place.latency),
         profile: place.profile,
+        index_limit: None,
     };
     let engine = Engine::open(config).map_err(|e| e.to_string())?;
     let (sender, receiver) = mpsc::channel();
@@ -114,7 +115,16 @@ pub fn state_text(state: &EngineState) -> String {
         EngineState::Updating { pending } => format!("updating, {pending} pending"),
         EngineState::Cleaning => "cleaning".into(),
         EngineState::Paused(profile) => format!("paused ({profile:?})"),
+        EngineState::Failed(failure) => format!("failed: {}", failure_text(*failure)),
         EngineState::Off => "off".into(),
+    }
+}
+
+fn failure_text(failure: Failure) -> &'static str {
+    match failure {
+        Failure::NoSpace => "not enough disk space",
+        Failure::Index => "the index",
+        Failure::Scan => "the scan",
     }
 }
 

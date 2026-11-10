@@ -24,8 +24,8 @@ use std::time::Instant;
 
 use crate::clean::{CleanError, CleanProgress, CleanSettings, Cleaner, Production, TrashHost};
 use crate::domain::{
-    Category, CleanupPreview, CleanupReport, Confirmation, DirId, DirRecord, EntryKind, Exclusion,
-    PreviewId, ProgressSnapshot, QuickCategory, Recency, Tally,
+    Bytes, Category, CleanupPreview, CleanupReport, Confirmation, DirId, DirRecord, EntryKind,
+    Exclusion, PreviewId, ProgressSnapshot, QuickCategory, Recency, Tally,
 };
 use crate::fs::{DirHandle, list_dir, now, volume};
 use crate::git::{Git, WorktreeSettings};
@@ -39,8 +39,8 @@ pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
 pub use scheduler::{EVENTS_NOTE, Watching};
 pub use settings::{HotkeyMode, Settings};
 pub use view::{
-    Changed, Completeness, Counters, DirRef, EngineObserver, EngineState, Folder, FolderEntry,
-    Freshness, Listed, Overview, Removability, VolumeSpace,
+    Changed, Completeness, Counters, DirRef, EngineObserver, EngineState, Failure, Folder,
+    FolderEntry, Freshness, Listed, Overview, Removability, VolumeSpace,
 };
 
 use scheduler::{Command, Scheduler, resumable};
@@ -70,6 +70,9 @@ pub struct EngineConfig {
     pub profiles: Profiles,
     /// The profile at the start.
     pub profile: PowerProfile,
+    /// The most the index file may grow to; past it a scan fails as on
+    /// a full disk (`Failure::NoSpace`). `None`: as much as the disk has.
+    pub index_limit: Option<Bytes>,
 }
 
 #[derive(Debug)]
@@ -122,15 +125,15 @@ pub struct Engine {
 
 /// Opens the index, replacing one of another schema version: the index
 /// holds nothing that a scan cannot make again.
-fn open_index(index: &Path) -> Result<IndexWriter, EngineError> {
-    match IndexWriter::open(index) {
+fn open_index(index: &Path, limit: Option<Bytes>) -> Result<IndexWriter, EngineError> {
+    match IndexWriter::open_limited(index, limit) {
         Err(IndexError::UnknownSchema(Some(_))) => {
             for suffix in ["", "-wal", "-shm"] {
                 let mut file = index.as_os_str().to_owned();
                 file.push(suffix);
                 let _ = std::fs::remove_file(PathBuf::from(file));
             }
-            Ok(IndexWriter::open(index)?)
+            Ok(IndexWriter::open_limited(index, limit)?)
         }
         other => Ok(other?),
     }
@@ -274,7 +277,7 @@ impl Engine {
     /// any full scan that is needed start on the engine's thread.
     pub fn open(config: EngineConfig) -> Result<Engine, EngineError> {
         let (data_dir, index) = data_files(&config.data_dir)?;
-        let writer = open_index(&index)?;
+        let writer = open_index(&index, config.index_limit)?;
         let mut reader = IndexReader::open(&index)?;
         let settings = stored_settings(&mut reader)?;
         let root = setup(&config.root, ScanRoot::new(&config.root))?;
@@ -433,9 +436,13 @@ impl Engine {
         Ok(folder(row, path, children, page))
     }
 
-    /// Starts a full scan with the `Interactive` profile's threads.
+    /// Starts a full scan with the `Interactive` profile's threads; it
+    /// lifts a hold and forgets the last failure.
     pub fn start_scan(&self) -> Result<(), EngineError> {
-        lock(&self.shared.status).held = false;
+        self.shared.update(|s| {
+            s.held = false;
+            s.failure = None;
+        });
         self.send(Command::Scan)
     }
 
@@ -640,7 +647,7 @@ fn folder(row: DirRecord, path: PathBuf, children: Vec<DirRecord>, page: Page) -
     }
 }
 
-fn size(entry: &FolderEntry) -> crate::domain::Bytes {
+fn size(entry: &FolderEntry) -> Bytes {
     match entry {
         FolderEntry::Dir(row) => row.tree.bytes,
         FolderEntry::File { bytes, .. } => *bytes,

@@ -16,7 +16,8 @@ use super::schema::{DIRS_INDEXES, dirs_table, open_for_writing};
 use super::update::apply;
 use super::{IndexError, PictureId};
 use crate::domain::{
-    Coverage, DirId, DirRecord, Exclusion, KindTotals, Rescanned, ScanSummary, UnixTime, Verdict,
+    Bytes, Coverage, DirId, DirRecord, Exclusion, KindTotals, Rescanned, ScanSummary, UnixTime,
+    Verdict,
 };
 
 /// Batches waiting for the writer; senders block when it falls behind.
@@ -67,7 +68,16 @@ pub struct IndexEditor {
 impl IndexWriter {
     /// Opens (or creates) the index and starts the writer thread.
     pub fn open(index: &Path) -> Result<IndexWriter, IndexError> {
+        IndexWriter::open_limited(index, None)
+    }
+
+    /// [`IndexWriter::open`], with the index never growing past `limit`:
+    /// a write that would is `IndexError::NoSpace`, as on a full disk.
+    pub fn open_limited(index: &Path, limit: Option<Bytes>) -> Result<IndexWriter, IndexError> {
         let conn = open_for_writing(index)?;
+        if let Some(limit) = limit {
+            limit_size(&conn, limit)?;
+        }
         let (commands, queue) = mpsc::sync_channel(QUEUE_DEPTH);
         let thread = thread::Builder::new()
             .name("metla-index-writer".into())
@@ -251,11 +261,17 @@ impl Server {
         }
     }
 
+    /// Swaps the scan's picture in; a scan whose rows could not all be
+    /// written, or that cannot be swapped in, is abandoned and fails.
     fn finish(&mut self, summary: &ScanSummary) -> Result<(), IndexError> {
-        match self.failure.take() {
+        let swapped = match self.failure.take() {
             Some(error) => Err(error),
             None => swap(&self.conn, summary),
+        };
+        if swapped.is_err() {
+            let _ = abandon(&self.conn);
         }
+        swapped
     }
 }
 
@@ -281,6 +297,14 @@ fn perform(conn: &Connection, edit: Edit) {
 /// Where a note lives in `meta`: apart from the index's own keys.
 pub(super) fn note_key(key: &str) -> String {
     format!("note:{key}")
+}
+
+/// Keeps the file at most `limit` bytes long.
+fn limit_size(conn: &Connection, limit: Bytes) -> Result<(), IndexError> {
+    let page: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0))?;
+    let pages = int(limit.0) / page;
+    conn.query_row(&format!("PRAGMA max_page_count = {pages}"), [], |_| Ok(()))?;
+    Ok(())
 }
 
 /// Sends a result back; a requester that stopped waiting needs none.
@@ -372,6 +396,36 @@ fn swap(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexError> {
     write_kinds(&tx, &summary.kinds)?;
     write_picture(&tx, summary)?;
     tx.commit()?;
+    give_back(conn);
+    Ok(())
+}
+
+/// Pages handed back to the disk per step: each step is a transaction of
+/// its own, so the WAL stays small and readers are not held up long.
+const GIVE_BACK_STEP: u64 = 4096;
+
+/// Gives the index's free pages back to the disk, a step at a time
+/// (`auto_vacuum = INCREMENTAL`), and checkpoints the WAL so the file
+/// shrinks. Done after a picture is swapped in or a scan abandoned; a
+/// failure leaves the pages free for the next scan, which reuses them.
+fn give_back(conn: &Connection) {
+    let free = conn.query_row("PRAGMA freelist_count", [], |r| r.get::<_, i64>(0));
+    let steps = free
+        .unwrap_or_default()
+        .unsigned_abs()
+        .div_ceil(GIVE_BACK_STEP);
+    for _ in 0..steps {
+        let _ = vacuum_step(conn);
+    }
+    let _ = conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+}
+
+/// One step of the incremental vacuum: the pragma frees one page each
+/// time it is stepped, so it is stepped to its end.
+fn vacuum_step(conn: &Connection) -> rusqlite::Result<()> {
+    let mut statement = conn.prepare(&format!("PRAGMA incremental_vacuum({GIVE_BACK_STEP})"))?;
+    let mut rows = statement.query([])?;
+    while rows.next()?.is_some() {}
     Ok(())
 }
 
@@ -388,6 +442,7 @@ fn abandon(conn: &Connection) -> Result<(), IndexError> {
              SELECT 'scan_started', value FROM meta WHERE key = 'picture_started';",
     )?;
     tx.commit()?;
+    give_back(conn);
     Ok(())
 }
 

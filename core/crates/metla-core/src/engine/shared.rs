@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::profile::{PowerProfile, Profile, Profiles};
 use super::settings::Settings;
-use super::view::{Changed, Counters, EngineObserver, EngineState};
+use super::view::{Changed, Counters, EngineObserver, EngineState, Failure};
 use super::worktrees::Statuses;
 use crate::clean::{CleanControl, CleanError, Cleaner, TrashHost};
 use crate::domain::CleanupReport;
@@ -42,6 +42,16 @@ pub struct Status {
     /// Someone looks at the picture: changes are followed as
     /// `Interactive` follows them.
     pub attention: bool,
+    /// Why the last full scan or update failed; no full scan starts on
+    /// its own until the user asks for one.
+    pub failure: Option<Failure>,
+}
+
+impl Status {
+    /// Whether the engine may start the full scan it needs on its own.
+    pub fn scan_due(&self) -> bool {
+        self.needs_full_scan && !self.held && self.failure.is_none()
+    }
 }
 
 pub struct Shared {
@@ -127,14 +137,15 @@ impl Shared {
     fn between_scans(&self, status: Status) -> EngineState {
         let effective = self.effective();
         let deferred = status.needs_full_scan && !self.power().full_scans;
-        let due = status.pending > 0 || status.needs_full_scan && !status.held;
-        match (effective, deferred, due) {
-            (PowerProfile::Off, _, _) => EngineState::Off,
-            (profile, true, _) => EngineState::Paused(profile),
-            (_, false, true) => EngineState::Updating {
+        let due = status.pending > 0 || status.scan_due();
+        match (effective, deferred, due, status.failure) {
+            (PowerProfile::Off, ..) => EngineState::Off,
+            (profile, true, ..) => EngineState::Paused(profile),
+            (_, false, true, _) => EngineState::Updating {
                 pending: status.pending,
             },
-            (_, false, false) => EngineState::Idle,
+            (_, false, false, Some(failure)) => EngineState::Failed(failure),
+            (_, false, false, None) => EngineState::Idle,
         }
     }
 

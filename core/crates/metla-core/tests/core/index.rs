@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -269,8 +270,71 @@ fn a_failed_write_is_reported_when_the_scan_finishes() {
         scan.finish(&summary(true)),
         Err(IndexError::Sqlite(_))
     ));
-    let record = reader(&index).read(|snap| snap.scan()).unwrap().unwrap();
-    assert!(!record.is_complete());
+    let record = reader(&index).read(|snap| snap.scan()).unwrap();
+    assert_eq!(record, None, "abandoned: as if it never began");
+}
+
+/// The index's pages and free pages, as SQLite counts them (the WAL
+/// included).
+fn pages(index: &Path) -> (i64, i64) {
+    let conn = rusqlite::Connection::open(index).unwrap();
+    let count = |pragma: &str| conn.query_row(pragma, [], |r| r.get::<_, i64>(0)).unwrap();
+    (count("PRAGMA page_count"), count("PRAGMA freelist_count"))
+}
+
+#[test]
+fn a_new_picture_gives_the_old_ones_pages_back() {
+    let fx = Fixture::new();
+    let index = fx.path("index.sqlite");
+    write(&index, wide_picture(3000, 3), true);
+    let (one, free) = pages(&index);
+    assert_eq!(free, 0);
+    write(&index, wide_picture(3000, 3), true);
+    write(&index, wide_picture(3000, 3), true);
+    let (three, free) = pages(&index);
+    assert_eq!(free, 0, "nothing left on the free list");
+    assert!(three <= one + one / 10, "{one} pages, then {three}");
+}
+
+#[test]
+fn an_abandoned_scan_gives_its_pages_back() {
+    let fx = Fixture::new();
+    let index = fx.path("index.sqlite");
+    write(&index, wide_picture(10, 3), true);
+    let (before, _) = pages(&index);
+    let mut writer = IndexWriter::open(&index).unwrap();
+    let scan = writer.start_scan(STARTED).unwrap();
+    scan.send(wide_picture(3000, 3));
+    scan.abandon().unwrap();
+    drop(writer);
+    let (after, free) = pages(&index);
+    assert_eq!(free, 0);
+    assert!(after <= before + 2, "{before} pages, then {after}");
+}
+
+#[test]
+fn a_scan_that_runs_out_of_space_fails_and_keeps_the_picture() {
+    let fx = Fixture::new();
+    let index = fx.path("index.sqlite");
+    write(&index, picture(), true);
+    let size = fs::metadata(&index).unwrap().len();
+    let limit = Bytes(size + 64 * 1024);
+    let mut writer = IndexWriter::open_limited(&index, Some(limit)).unwrap();
+    let scan = writer.start_scan(STARTED).unwrap();
+    scan.send(wide_picture(5000, 3));
+    assert!(matches!(
+        scan.finish(&summary(true)),
+        Err(IndexError::NoSpace)
+    ));
+    let (record, root) = reader(&index)
+        .read(|snap| Ok((snap.scan()?.unwrap(), snap.root()?.unwrap())))
+        .unwrap();
+    assert!(record.is_current(), "the old picture, as if no scan began");
+    assert_eq!(root.tree, tree(410, 5, 8));
+    assert_eq!(pages(&index).1, 0, "the staging rows are gone");
+    let again = writer.start_scan(STARTED).unwrap();
+    again.send(picture());
+    again.finish(&summary(true)).unwrap();
 }
 
 fn foreign_database(path: &Path, sql: &str) {
@@ -523,12 +587,14 @@ fn index_errors_explain_themselves() {
         IndexError::Corrupt("gap code 9".into()).to_string(),
         IndexError::Sqlite(rusqlite::Error::InvalidQuery).to_string(),
         IndexError::WriterGone.to_string(),
+        IndexError::NoSpace.to_string(),
     ];
     assert_eq!(messages[0], "unknown index schema version 7");
     assert_eq!(messages[1], "not a Metla index");
     assert_eq!(messages[2], "corrupt index: gap code 9");
     assert!(messages[3].starts_with("index: "));
     assert_eq!(messages[4], "index writer stopped");
+    assert_eq!(messages[5], "not enough disk space for the index");
 }
 
 #[test]

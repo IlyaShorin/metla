@@ -11,12 +11,12 @@ use std::time::{Duration, Instant};
 
 use metla_core::clean::{CleanError, FIXTURE_MARKER, TrashHost};
 use metla_core::domain::{
-    Category, Confirmation, DirId, Exclusion, Outcome, QuickCategory, Separate,
+    Bytes, Category, Confirmation, DirId, Exclusion, Outcome, QuickCategory, Separate,
 };
 use metla_core::engine::{
     Changed, Completeness, DirRef, Engine, EngineConfig, EngineError, EngineObserver, EngineState,
-    FolderEntry, HotkeyMode, Listed, PowerProfile, Profile, Profiles, Removability, Settings,
-    Watching,
+    Failure, FolderEntry, HotkeyMode, Listed, PowerProfile, Profile, Profiles, Removability,
+    Settings, Watching,
 };
 use metla_core::index::Page;
 use metla_core::watch::Timing;
@@ -113,6 +113,7 @@ impl Place {
             watching: Watching::Manual,
             profiles: profiles(),
             profile,
+            index_limit: None,
         }
     }
 
@@ -728,7 +729,68 @@ fn switching_background_analysis_off_cancels_the_first_background_scan() {
     assert_ne!(freshness.picture, Completeness::Complete);
 }
 
-/// Profiles whose settle time is `settle`, with `pause` between batches
+/// The engine's index file.
+fn index_of(place: &Place) -> PathBuf {
+    place.aux.path("data").join(metla_core::engine::INDEX_FILE)
+}
+
+#[test]
+fn a_scan_that_runs_out_of_disk_space_fails_and_the_picture_stays() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    settled(&engine);
+    let before = engine.snapshot().unwrap();
+    drop(engine);
+    wide(&place);
+    let size = fs::metadata(index_of(&place)).unwrap().len();
+    let limited = EngineConfig {
+        index_limit: Some(Bytes(size + 32 * 1024)),
+        ..place.config(PowerProfile::Background)
+    };
+    let engine = Engine::open(limited).unwrap();
+    engine.start_scan().unwrap();
+    let failed = EngineState::Failed(Failure::NoSpace);
+    until(&engine, |e| e.freshness().unwrap().state == failed);
+    let after = engine.snapshot().unwrap();
+    assert_eq!(after.totals, before.totals, "the old picture");
+    assert_eq!(after.freshness.picture, Completeness::Complete);
+    engine.changed(vec![place.path("~/Documents")]).unwrap();
+    until(&engine, |e| e.counters().tasks == 1);
+    assert_eq!(
+        engine.freshness().unwrap().state,
+        failed,
+        "until the user asks"
+    );
+    drop(engine);
+    let engine = place.open();
+    engine.start_scan().unwrap();
+    until(&engine, |e| e.counters().full_scans == 1);
+    settled(&engine);
+    assert!(engine.snapshot().unwrap().totals.unwrap().dirs > before.totals.unwrap().dirs);
+}
+
+#[test]
+fn a_first_scan_without_disk_space_fails_once_and_waits_for_the_user() {
+    let place = Place::new(HOME);
+    wide(&place);
+    let limited = EngineConfig {
+        index_limit: Some(Bytes(160 * 1024)),
+        ..place.config(PowerProfile::Background)
+    };
+    let engine = Engine::open(limited).unwrap();
+    let failed = EngineState::Failed(Failure::NoSpace);
+    until(&engine, |e| e.freshness().unwrap().state == failed);
+    let freshness = engine.freshness().unwrap();
+    assert_eq!(freshness.picture, Completeness::Missing);
+    assert!(freshness.needs_full_scan);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(engine.counters().full_scans, 1, "no retry on its own");
+    engine.start_scan().unwrap();
+    until(&engine, |e| e.counters().full_scans == 2);
+    until(&engine, |e| e.freshness().unwrap().state == failed);
+}
+
+/// Profiles whose settle time is `settle`, with `pause` between batches/// Profiles whose settle time is `settle`, with `pause` between batches
 /// of one task.
 fn patient(place: &Place, settle: u64, pause: u64) -> EngineConfig {
     let mut config = place.config(PowerProfile::Background);

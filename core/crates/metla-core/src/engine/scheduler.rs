@@ -11,9 +11,9 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use super::profile::Profile;
-use super::refresh::{Refreshed, refresh};
+use super::refresh::{RefreshError, Refreshed, refresh};
 use super::shared::{RunningScan, Shared, lock};
-use super::view::Changed;
+use super::view::{Changed, Failure};
 use crate::clean::{CleanControl, CleanError, Context};
 use crate::domain::{
     Candidate, Category, CleanupReport, Confirmation, DirId, PreviewId, QuickCategory, Recency,
@@ -281,7 +281,7 @@ impl Scheduler {
     /// profile allows it.
     fn full_scan_if_due(&mut self, profile: &Profile) {
         let status = *lock(&self.shared.status);
-        if status.needs_full_scan && !status.held && profile.full_scans {
+        if status.scan_due() && profile.full_scans {
             self.full_scan(false);
         }
     }
@@ -304,7 +304,12 @@ impl Scheduler {
                 written.candidates.extend(candidates);
                 true
             }
-            _ => false,
+            Ok(_) => false,
+            Err(error) => {
+                let failure = refresh_failure(&error);
+                self.shared.update(|s| s.failure = Some(failure));
+                false
+            }
         }
     }
 
@@ -383,8 +388,9 @@ impl Scheduler {
         self.shared.notify(Changed::Activity);
         let options = self.options(&profile);
         let had_picture = self.picture().ok().flatten().is_some();
-        let finished = scan_into(&mut self.writer, &options, &control, had_picture);
-        let finished = finished.unwrap_or_default();
+        let scanned = scan_into(&mut self.writer, &options, &control, had_picture);
+        self.shared.update(|s| s.failure = scanned.err());
+        let finished = scanned.unwrap_or_default();
         if finished {
             self.verify(None);
             self.worktrees(None);
@@ -498,19 +504,40 @@ impl Written {
 }
 
 /// Scans into the index; true when the scan's picture was stored. A
-/// scan cancelled while `keep_old` is given up, keeping the picture.
+/// scan cancelled while `keep_old` is given up, keeping the picture; a
+/// scan that fails is abandoned and says why.
 fn scan_into(
     writer: &mut IndexWriter,
     options: &ScanOptions,
     control: &ScanControl,
     keep_old: bool,
-) -> Result<bool, IndexError> {
-    let session = writer.start_scan(now())?;
+) -> Result<bool, Failure> {
+    let session = writer.start_scan(now()).map_err(index_failure)?;
     let summary = run(options, control, &|rows| session.send(rows));
     let give_up = keep_old && control.is_cancelled();
     match summary {
-        Ok(summary) if !give_up => session.finish(&summary).map(|()| true),
-        _ => session.abandon().map(|()| false),
+        Ok(summary) if !give_up => session.finish(&summary).map_err(index_failure)?,
+        Ok(_) => session.abandon().map_err(index_failure)?,
+        Err(_) => {
+            let _ = session.abandon();
+            return Err(Failure::Scan);
+        }
+    }
+    Ok(!give_up)
+}
+
+fn index_failure(error: IndexError) -> Failure {
+    match error {
+        IndexError::NoSpace => Failure::NoSpace,
+        _ => Failure::Index,
+    }
+}
+
+fn refresh_failure(error: &RefreshError) -> Failure {
+    match error {
+        RefreshError::Index(IndexError::NoSpace) => Failure::NoSpace,
+        RefreshError::Index(_) => Failure::Index,
+        RefreshError::Scan(_) => Failure::Scan,
     }
 }
 

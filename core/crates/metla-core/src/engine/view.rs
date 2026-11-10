@@ -49,8 +49,23 @@ pub enum EngineState {
     Cleaning,
     /// A full scan is needed and the profile does not allow it now.
     Paused(PowerProfile),
+    /// The last full scan or update failed for this reason; the picture
+    /// stays as it was, and no full scan starts until the user asks.
+    Failed(Failure),
     /// Background analysis is off: nothing is watched.
     Off,
+}
+
+/// Why the picture could not be brought up to date.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// The disk had no room for the index ("not enough disk space to
+    /// refresh").
+    NoSpace,
+    /// The index could not be written or read.
+    Index,
+    /// The root could not be scanned.
+    Scan,
 }
 
 /// How much of the disk the picture saw.

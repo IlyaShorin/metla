@@ -89,11 +89,16 @@ pub enum IndexError {
     Sqlite(rusqlite::Error),
     /// The writer thread stopped before the scan finished.
     WriterGone,
+    /// The disk (or the index's limit) has no room for what was written.
+    NoSpace,
 }
 
 impl From<rusqlite::Error> for IndexError {
     fn from(error: rusqlite::Error) -> IndexError {
-        IndexError::Sqlite(error)
+        match error.sqlite_error_code() {
+            Some(rusqlite::ErrorCode::DiskFull) => IndexError::NoSpace,
+            _ => IndexError::Sqlite(error),
+        }
     }
 }
 
@@ -105,6 +110,7 @@ impl fmt::Display for IndexError {
             IndexError::Corrupt(what) => write!(f, "corrupt index: {what}"),
             IndexError::Sqlite(error) => write!(f, "index: {error}"),
             IndexError::WriterGone => write!(f, "index writer stopped"),
+            IndexError::NoSpace => write!(f, "not enough disk space for the index"),
         }
     }
 }

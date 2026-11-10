@@ -7,6 +7,8 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use super::IndexError;
 
+/// Version 5 (M5): the file is made with incremental auto-vacuum, so the
+/// pages a replaced picture leaves free are given back to the disk.
 /// Version 4 (M4): what a directory needs to be rescanned on its own —
 /// its modification time, its newest file, what it hands down (in
 /// `flags` and `markers`) and its own bytes by kind — and an index of the
@@ -14,7 +16,7 @@ use super::IndexError;
 /// output, the directories cleaned since the scan (`stale`) and the
 /// picture's home directory; version 2 (M2) directory identity, rule ids,
 /// the candidate index, exclusions and bytes by file kind.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 const WAL_SIZE_LIMIT: i64 = 32 << 20;
 
@@ -83,6 +85,8 @@ pub fn open_for_writing(path: &Path) -> Result<Connection, IndexError> {
 
 fn configure_writer(conn: &Connection) -> rusqlite::Result<()> {
     conn.busy_timeout(BUSY_TIMEOUT)?;
+    // Takes effect only in a file that has no table yet: a new index.
+    conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     // Automatic checkpoints never wait for readers; after one, the WAL is

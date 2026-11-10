@@ -297,10 +297,25 @@ when a preview is made and again before removal.
   `picture_seq = scan_seq` and the picture has no gaps. A scan that was
   cancelled finishes as a partial picture; a scan that was interrupted (the
   writer dropped, the process killed) never sets `picture_seq`, so the old
-  picture stays readable and the index reads as incomplete.
+  picture stays readable and the index reads as incomplete. A scan whose
+  rows could not all be written, or that could not be swapped in, is
+  abandoned by the writer before it answers: the staging table goes and
+  the index reads as if the scan never began.
 * WAL with `synchronous = NORMAL`; automatic checkpoints only (they never
   wait for readers) and `journal_size_limit` to cut the WAL back after
   them.
+* **Space.** Schema version 5 (M5) makes the file with
+  `auto_vacuum = INCREMENTAL`. While a scan runs the file holds the old
+  picture and the staging table; after the swap, and after an abandoned
+  scan, the writer gives the free pages back to the disk
+  (`incremental_vacuum` in steps of 4,096 pages, each its own
+  transaction, then a passive checkpoint), so at rest the file holds one
+  picture. The pages of the new picture written past the old one are
+  moved into the old one's place, so a scan writes up to a picture's
+  size a second time (measured in PERFORMANCE.md). Running out of space
+  (`SQLITE_FULL`, on a full disk or past `IndexWriter::open_limited`'s
+  limit, which tests use with `max_page_count`) is
+  `IndexError::NoSpace`.
 * **Candidate queries** read only candidate rows (`INDEXED BY
   dirs_candidates`), largest first, inside one read transaction: tallies per
   rule and per category (every category present), one page of a category,
@@ -539,10 +554,17 @@ picture is (it reads no candidate), for a status line that follows
 every batch. `Freshness` is explicit: the last full scan, the last update, pending
 changes, `EngineState` (`Idle`, `Scanning { progress, interactive }`,
 `Updating { pending }`, `Cleaning`, `Paused(profile)` when a needed full
-scan waits for the profile, `Off`), the picture's completeness
-(`Missing`, `Partial`, `Complete`), whether changes are followed, and
-whether a full scan is needed; `is_current()` holds only when all of
-them say so.
+scan waits for the profile, `Failed(reason)`, `Off`), the picture's
+completeness (`Missing`, `Partial`, `Complete`), whether changes are
+followed, and whether a full scan is needed; `is_current()` holds only
+when all of them say so.
+
+A full scan or an update that fails keeps the picture as it was and
+records why (`Failure::NoSpace`: "not enough disk space to refresh";
+`Index`; `Scan`); the state is `Failed(reason)` once nothing else is
+due, and no full scan starts on its own until the user starts one
+(which forgets the failure), so a full disk never makes the engine scan
+again and again. `EngineConfig::index_limit` caps the index file.
 
 Worktree statuses for lists are computed after a scan and after changes
 below a worktree on a background-priority thread, two Git calls at a

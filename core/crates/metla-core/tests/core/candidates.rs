@@ -439,7 +439,11 @@ fn rule_ids_identity_and_kinds_are_stored_in_a_stable_format() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
+    let vacuum: i64 = conn
+        .query_row("PRAGMA auto_vacuum", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(vacuum, 2, "incremental: free pages go back to the disk");
     let verdict: i64 = conn
         .query_row("SELECT verdict FROM dirs WHERE id = 4", [], |r| r.get(0))
         .unwrap();

@@ -11,7 +11,9 @@ use metla_cli::{
     state_text,
 };
 use metla_core::domain::{Bytes, ProgressSnapshot, UnixTime};
-use metla_core::engine::{Completeness, Counters, EngineState, Freshness, PowerProfile, Profiles};
+use metla_core::engine::{
+    Completeness, Counters, EngineState, Failure, Freshness, PowerProfile, Profiles,
+};
 use metla_core::fs::Usage;
 
 fn args(line: &str) -> Vec<OsString> {
@@ -119,6 +121,12 @@ fn the_state_reads_in_a_few_words() {
         (EngineState::Updating { pending: 3 }, "updating, 3 pending"),
         (EngineState::Cleaning, "cleaning"),
         (EngineState::Paused(PowerProfile::Saver), "paused (Saver)"),
+        (
+            EngineState::Failed(Failure::NoSpace),
+            "failed: not enough disk space",
+        ),
+        (EngineState::Failed(Failure::Index), "failed: the index"),
+        (EngineState::Failed(Failure::Scan), "failed: the scan"),
         (EngineState::Off, "off"),
     ];
     for (state, text) in cases {
