@@ -22,6 +22,7 @@ use std::path::Path;
 pub use args::{
     BURST, Bench, CANDIDATE_LIMIT, CHURN, Command, Edit, PATIENCE, TOP_LIMIT, USAGE, View, parse,
 };
+pub use bench::{asked_scan_done, churn_quiet};
 pub use cleaned::{Cleaned, clean_text, outcome_text};
 pub use commands::{ScanHow, default_threads};
 pub use format::{ago, bytes, count, per_second, signed_bytes};

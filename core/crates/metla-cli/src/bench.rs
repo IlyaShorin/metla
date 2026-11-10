@@ -209,9 +209,25 @@ fn scanned(place: &Place) -> Result<Engine, String> {
     waited(place.patience, || idle(&engine)).ok_or("the engine's scan did not end")?;
     let scans = engine.counters().full_scans;
     engine.start_scan().map_err(|e| e.to_string())?;
-    let ours = || engine.counters().full_scans > scans && idle(&engine);
+    let ours = || asked_scan_done(scans, engine.counters().full_scans, idle(&engine));
     waited(place.patience, ours).ok_or("the first scan did not end")?;
     Ok(engine)
+}
+
+/// Whether the full scan a bench asked for, when `before` scans had
+/// run, is over: counted (`now`) and nothing left to do. Idle alone is
+/// not enough: between the engine's own first scan and the one asked
+/// for, the engine is idle.
+pub fn asked_scan_done(before: u64, now: u64, idle: bool) -> bool {
+    now > before && idle
+}
+
+/// Whether a churn is over for the engine: the directory made after it
+/// is in the picture (every earlier event was handed over) and nothing
+/// is left to do. Idle alone is not enough: fseventsd may hold the
+/// churn's last events.
+pub fn churn_quiet(sentinel_seen: bool, idle: bool) -> bool {
+    sentinel_seen && idle
 }
 
 /// How long after a churn the engine is quiet, looked at from the end
@@ -226,10 +242,9 @@ fn quiet_after_churn(
     look: bool,
 ) -> Result<Duration, String> {
     fs::create_dir_all(sentinel).map_err(|e| e.to_string())?;
-    if look {
-        engine.set_attention(true).map_err(|e| e.to_string())?;
-    }
-    let quiet = || in_picture(engine, sentinel) && idle(engine);
+    // Not looking is the engine's state from the start.
+    engine.set_attention(look).map_err(|e| e.to_string())?;
+    let quiet = || churn_quiet(in_picture(engine, sentinel), idle(engine));
     waited(place.patience, quiet).ok_or_else(|| "never idle".to_owned())
 }
 

@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use metla_cli::{
-    BURST, Bench, CHURN, Command, PATIENCE, Place, freshness_line, parse, profiles, spent,
-    state_text,
+    BURST, Bench, CHURN, Command, PATIENCE, Place, asked_scan_done, churn_quiet, freshness_line,
+    parse, profiles, spent, state_text,
 };
 use metla_core::domain::{Bytes, ProgressSnapshot, UnixTime};
 use metla_core::engine::{
@@ -58,6 +58,21 @@ fn watch_takes_where_how_and_for_how_long() {
         })
     );
     assert_eq!(PATIENCE, Duration::from_secs(600));
+}
+
+/// When the benches may start timing: after the full scan they asked
+/// for (an engine without a picture runs one of its own first, idle in
+/// between), and after a churn only once its last events have come.
+#[test]
+fn the_benches_wait_for_their_own_scan_and_for_the_churns_last_events() {
+    assert!(asked_scan_done(1, 2, true), "ours counted, nothing to do");
+    assert!(!asked_scan_done(1, 1, true), "idle between two scans");
+    assert!(!asked_scan_done(1, 2, false), "counted, still busy");
+    assert!(!asked_scan_done(1, 0, true));
+    assert!(churn_quiet(true, true));
+    assert!(!churn_quiet(false, true), "idle, but events still to come");
+    assert!(!churn_quiet(true, false));
+    assert!(!churn_quiet(false, false));
 }
 
 #[test]
