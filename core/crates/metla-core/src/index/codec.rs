@@ -262,6 +262,22 @@ pub const CANDIDATE_COLUMNS: &str = "id, parent_id, name, own_bytes, own_files, 
      tree_bytes, tree_files, tree_dirs, tree_mtime, mtime, changed, flags, device, inode, \
      rule_id, markers, kinds, verdict";
 
+/// Reads the columns of one result row, keeping the first failure, so a
+/// row of many columns is read without a branch per column.
+struct Columns<'r, 's> {
+    row: &'r rusqlite::Row<'s>,
+    failed: Option<rusqlite::Error>,
+}
+
+impl Columns<'_, '_> {
+    fn get<T: rusqlite::types::FromSql + Default>(&mut self, at: usize) -> T {
+        self.row.get(at).unwrap_or_else(|error| {
+            self.failed.get_or_insert(error);
+            T::default()
+        })
+    }
+}
+
 /// A row as stored, before it is interpreted.
 pub struct Row {
     id: i64,
@@ -287,26 +303,28 @@ pub struct Row {
 impl Row {
     /// Reads a row selected with [`COLUMNS`].
     pub fn from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
-        Ok(Row {
-            id: row.get(0)?,
-            parent: row.get(1)?,
-            name: row.get(2)?,
-            own_bytes: row.get(3)?,
-            own_files: row.get(4)?,
-            own_mtime: row.get(5)?,
-            tree_bytes: row.get(6)?,
-            tree_files: row.get(7)?,
-            tree_dirs: row.get(8)?,
-            tree_mtime: row.get(9)?,
-            mtime: row.get(10)?,
-            changed: row.get(11)?,
-            flags: row.get(12)?,
-            device: row.get(13)?,
-            inode: row.get(14)?,
-            rule_id: row.get(15)?,
-            markers: row.get(16)?,
-            kinds: row.get(17)?,
-        })
+        let mut c = Columns { row, failed: None };
+        let read = Row {
+            id: c.get(0),
+            parent: c.get(1),
+            name: c.get(2),
+            own_bytes: c.get(3),
+            own_files: c.get(4),
+            own_mtime: c.get(5),
+            tree_bytes: c.get(6),
+            tree_files: c.get(7),
+            tree_dirs: c.get(8),
+            tree_mtime: c.get(9),
+            mtime: c.get(10),
+            changed: c.get(11),
+            flags: c.get(12),
+            device: c.get(13),
+            inode: c.get(14),
+            rule_id: c.get(15),
+            markers: c.get(16),
+            kinds: c.get(17),
+        };
+        c.failed.map_or(Ok(read), Err)
     }
 
     /// Reads a row selected with [`CANDIDATE_COLUMNS`] and its verdict.

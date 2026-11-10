@@ -25,17 +25,27 @@ const QUEUE_DEPTH: usize = 16;
 type Reply<T> = mpsc::Sender<Result<T, IndexError>>;
 
 enum Command {
+    Scan(Session),
+    Edit(Edit),
+    Stop,
+}
+
+/// The steps of one scan session, which only the [`IndexWriter`] takes.
+enum Session {
     Start(UnixTime, Reply<()>),
     Rows(Vec<DirRecord>),
     Finish(Box<ScanSummary>, Reply<()>),
     Abandon(Reply<()>),
+}
+
+/// The edits any [`IndexEditor`] may ask for.
+enum Edit {
     Apply(PictureId, Box<Rescanned>, UnixTime, Reply<bool>),
     Exclude(Exclusion, Reply<bool>),
     Include(Exclusion, Reply<bool>),
     Verdicts(PictureId, Vec<(DirId, Verdict)>, Reply<bool>),
     Cleaned(PictureId, Vec<DirId>, Reply<bool>),
     Note(String, Vec<u8>, Reply<()>),
-    Stop,
 }
 
 /// The only writer of an index. Dropping it stops its thread after the
@@ -73,7 +83,7 @@ impl IndexWriter {
     /// table; the previous picture stays readable, and the index reads as
     /// incomplete until the scan finishes.
     pub fn start_scan(&mut self, started: UnixTime) -> Result<ScanWriter<'_>, IndexError> {
-        self.ask(|reply| Command::Start(started, reply))?;
+        self.ask(|reply| Command::Scan(Session::Start(started, reply)))?;
         Ok(ScanWriter { writer: self })
     }
 
@@ -103,18 +113,18 @@ impl IndexEditor {
         change: Rescanned,
         now: UnixTime,
     ) -> Result<bool, IndexError> {
-        self.ask(|reply| Command::Apply(picture, Box::new(change), now, reply))
+        self.request(|reply| Edit::Apply(picture, Box::new(change), now, reply))
     }
 
     /// Keeps `exclusion` and everything beneath it out of the candidates.
     /// False when it was already excluded.
     pub fn exclude(&self, exclusion: &Exclusion) -> Result<bool, IndexError> {
-        self.ask(|reply| Command::Exclude(exclusion.clone(), reply))
+        self.request(|reply| Edit::Exclude(exclusion.clone(), reply))
     }
 
     /// Drops an exclusion. False when there was none.
     pub fn include(&self, exclusion: &Exclusion) -> Result<bool, IndexError> {
-        self.ask(|reply| Command::Include(exclusion.clone(), reply))
+        self.request(|reply| Edit::Include(exclusion.clone(), reply))
     }
 
     /// Stores Git's verdicts on project output of the picture `picture`.
@@ -124,7 +134,7 @@ impl IndexEditor {
         picture: PictureId,
         verdicts: Vec<(DirId, Verdict)>,
     ) -> Result<bool, IndexError> {
-        self.ask(|reply| Command::Verdicts(picture, verdicts, reply))
+        self.request(|reply| Edit::Verdicts(picture, verdicts, reply))
     }
 
     /// Records that the directories `cleaned` of the picture `picture` were
@@ -136,13 +146,17 @@ impl IndexEditor {
         picture: PictureId,
         cleaned: Vec<DirId>,
     ) -> Result<bool, IndexError> {
-        self.ask(|reply| Command::Cleaned(picture, cleaned, reply))
+        self.request(|reply| Edit::Cleaned(picture, cleaned, reply))
     }
 
     /// Keeps `value` under `key` in a space of its own, apart from the
     /// index's metadata; read back with `Snapshot::note`.
     pub fn set_note(&self, key: &str, value: &[u8]) -> Result<(), IndexError> {
-        self.ask(|reply| Command::Note(key.to_owned(), value.to_vec(), reply))
+        self.request(|reply| Edit::Note(key.to_owned(), value.to_vec(), reply))
+    }
+
+    fn request<T>(&self, edit: impl FnOnce(Reply<T>) -> Edit) -> Result<T, IndexError> {
+        self.ask(|reply| Command::Edit(edit(reply)))
     }
 
     fn ask<T>(&self, command: impl FnOnce(Reply<T>) -> Command) -> Result<T, IndexError> {
@@ -177,19 +191,21 @@ impl ScanWriter<'_> {
     /// Queues directory rows; blocks while the queue is full.
     pub fn send(&self, rows: Vec<DirRecord>) {
         // A failed write is reported by `finish`.
-        let _ = self.writer.send(Command::Rows(rows));
+        let _ = self.writer.send(Command::Scan(Session::Rows(rows)));
     }
 
     /// Makes the scan's rows the index's picture, in one transaction.
     pub fn finish(self, summary: &ScanSummary) -> Result<(), IndexError> {
         let summary = Box::new(summary.clone());
-        self.writer.ask(|reply| Command::Finish(summary, reply))
+        self.writer
+            .ask(|reply| Command::Scan(Session::Finish(summary, reply)))
     }
 
     /// Drops the scan's rows as if it had never started: the picture stays
     /// and reads as current again.
     pub fn abandon(self) -> Result<(), IndexError> {
-        self.writer.ask(Command::Abandon)
+        self.writer
+            .ask(|reply| Command::Scan(Session::Abandon(reply)))
     }
 }
 
@@ -206,41 +222,21 @@ fn serve(conn: Connection, queue: Receiver<Command>) {
         failure: None,
     };
     for command in queue {
-        if let Command::Stop = command {
-            return;
+        match command {
+            Command::Scan(step) => server.step(step),
+            Command::Edit(edit) => perform(&server.conn, edit),
+            Command::Stop => return,
         }
-        server.handle(command);
     }
 }
 
 impl Server {
-    fn handle(&mut self, command: Command) {
-        match command {
-            Command::Start(started, reply) => answer(reply, self.start(started)),
-            Command::Rows(rows) => self.insert(&rows),
-            Command::Finish(summary, reply) => answer(reply, self.finish(&summary)),
-            Command::Abandon(reply) => answer(reply, abandon(&self.conn)),
-            Command::Apply(picture, change, now, reply) => {
-                answer(reply, apply(&self.conn, picture, &change, now))
-            }
-            Command::Exclude(exclusion, reply) => {
-                answer(reply, edit(&self.conn, EXCLUDE, &exclusion))
-            }
-            Command::Include(exclusion, reply) => {
-                answer(reply, edit(&self.conn, INCLUDE, &exclusion))
-            }
-            Command::Verdicts(picture, verdicts, reply) => {
-                let rows = verdicts.iter().map(|(id, v)| (id.0, verdict_code(*v)));
-                answer(reply, mark(&self.conn, picture, SET_VERDICT, rows))
-            }
-            Command::Cleaned(picture, cleaned, reply) => {
-                let rows = cleaned.iter().map(|id| [id.0]);
-                answer(reply, mark(&self.conn, picture, CLEANED, rows))
-            }
-            Command::Note(key, value, reply) => {
-                answer(reply, set_meta(&self.conn, &note_key(&key), value))
-            }
-            Command::Stop => {}
+    fn step(&mut self, step: Session) {
+        match step {
+            Session::Start(started, reply) => answer(reply, self.start(started)),
+            Session::Rows(rows) => self.insert(&rows),
+            Session::Finish(summary, reply) => answer(reply, self.finish(&summary)),
+            Session::Abandon(reply) => answer(reply, abandon(&self.conn)),
         }
     }
 
@@ -260,6 +256,25 @@ impl Server {
             Some(error) => Err(error),
             None => swap(&self.conn, summary),
         }
+    }
+}
+
+fn perform(conn: &Connection, edit: Edit) {
+    match edit {
+        Edit::Apply(picture, change, now, reply) => {
+            answer(reply, apply(conn, picture, &change, now))
+        }
+        Edit::Exclude(exclusion, reply) => answer(reply, exclusion_edit(conn, EXCLUDE, &exclusion)),
+        Edit::Include(exclusion, reply) => answer(reply, exclusion_edit(conn, INCLUDE, &exclusion)),
+        Edit::Verdicts(picture, verdicts, reply) => {
+            let rows = verdicts.iter().map(|(id, v)| (id.0, verdict_code(*v)));
+            answer(reply, mark(conn, picture, SET_VERDICT, rows))
+        }
+        Edit::Cleaned(picture, cleaned, reply) => {
+            let rows = cleaned.iter().map(|id| [id.0]);
+            answer(reply, mark(conn, picture, CLEANED, rows))
+        }
+        Edit::Note(key, value, reply) => answer(reply, set_meta(conn, &note_key(&key), value)),
     }
 }
 
@@ -439,7 +454,7 @@ const EXCLUDE: &str = "INSERT OR IGNORE INTO exclusions (path) VALUES (?1)";
 const INCLUDE: &str = "DELETE FROM exclusions WHERE path = ?1";
 
 /// Runs an exclusion edit; true when it changed the list.
-fn edit(conn: &Connection, sql: &str, exclusion: &Exclusion) -> Result<bool, IndexError> {
+fn exclusion_edit(conn: &Connection, sql: &str, exclusion: &Exclusion) -> Result<bool, IndexError> {
     let changed = conn.execute(sql, [path_bytes(exclusion.path())])?;
     Ok(changed == 1)
 }

@@ -477,6 +477,27 @@ fn an_unknown_rule_id_or_an_invalid_exclusion_is_reported_as_corrupt() {
 }
 
 #[test]
+fn a_column_of_the_wrong_type_fails_the_read_with_its_first_column() {
+    let (_fx, index) = indexed();
+    sql(
+        &index,
+        "UPDATE dirs SET tree_files = 'many', inode = 'unknown' WHERE id = 4",
+    );
+    let error = reader(&index)
+        .read(|snap| snap.record(DirId(4)))
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            IndexError::Sqlite(rusqlite::Error::InvalidColumnType(7, _, _))
+        ),
+        "{error:?}"
+    );
+    let fine = reader(&index).read(|snap| snap.record(DirId(1))).unwrap();
+    assert!(fine.is_some());
+}
+
+#[test]
 fn an_index_of_an_earlier_schema_version_is_rejected() {
     for old in [1, 2] {
         let fx = Fixture::new();

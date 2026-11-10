@@ -4,6 +4,8 @@
 //! recomputed from what the table holds: the tree totals of each
 //! directory above the rescanned one, the bytes by kind, and the coverage.
 
+use std::path::Path;
+
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::codec::{count, int, kind, kinds_of, path_from, unread};
@@ -26,43 +28,60 @@ pub fn apply(
     if current_picture(&tx)? != Some(picture) {
         return Ok(false);
     }
-    let mut kinds = stored_kinds(&tx)?;
+    let kinds = replace(&tx, change)?;
+    recount(&tx, change, &kinds, now)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// Deletes what went and writes what was read; the bytes by kind after.
+fn replace(conn: &Connection, change: &Rescanned) -> Result<KindTotals, IndexError> {
+    let mut kinds = stored_kinds(conn)?;
     for id in &change.removed {
-        for (gone, own) in subtree(&tx, *id)? {
-            kinds.remove(&own);
-            forget(&tx, gone)?;
-        }
+        remove_subtree(conn, *id, &mut kinds)?;
     }
     for row in &change.rows {
-        if let Some(own) = own_kinds(&tx, row.id)? {
+        if let Some(own) = own_kinds(conn, row.id)? {
             kinds.remove(&own);
-            forget(&tx, row.id)?;
+            forget(conn, row.id)?;
         }
         if let DirState::Read(own) = &row.state {
             kinds.merge(&own.kinds);
         }
     }
-    write_rows(&tx, "INSERT INTO dirs", &change.rows)?;
+    write_rows(conn, "INSERT INTO dirs", &change.rows)?;
+    Ok(kinds)
+}
+
+fn remove_subtree(conn: &Connection, id: DirId, kinds: &mut KindTotals) -> Result<(), IndexError> {
+    for (gone, own) in subtree(conn, id)? {
+        kinds.remove(&own);
+        forget(conn, gone)?;
+    }
+    Ok(())
+}
+
+/// Everything derived: the totals above the rescanned directory, the
+/// bytes by kind, the coverage, the next id and the update time.
+fn recount(
+    conn: &Connection,
+    change: &Rescanned,
+    kinds: &KindTotals,
+    now: UnixTime,
+) -> Result<(), IndexError> {
     let origin = change.rows.iter().find(|r| r.id == change.origin);
     let mut above = origin.and_then(|r| r.parent);
     while let Some(id) = above {
-        above = refresh(&tx, id)?;
+        above = refresh(conn, id)?;
     }
-    write_kinds(&tx, &kinds)?;
-    write_coverage(&tx, &coverage(&tx)?)?;
-    let next = change
-        .rows
-        .iter()
-        .map(|r| r.id.0 + 1)
-        .max()
-        .unwrap_or_default();
-    tx.execute(
+    write_kinds(conn, kinds)?;
+    write_coverage(conn, &coverage(conn)?)?;
+    let next = change.rows.iter().map(|r| r.id.0 + 1).max();
+    conn.execute(
         "UPDATE meta SET value = max(value, ?1) WHERE key = 'next_id'",
-        [next],
+        [next.unwrap_or_default()],
     )?;
-    set_meta(&tx, "picture_updated", now.0)?;
-    tx.commit()?;
-    Ok(true)
+    set_meta(conn, "picture_updated", now.0)
 }
 
 fn stored_kinds(conn: &Connection) -> Result<KindTotals, IndexError> {
@@ -117,6 +136,24 @@ fn forget(conn: &Connection, id: DirId) -> Result<(), IndexError> {
 /// Recomputes the tree totals of the directory `id` from its own totals
 /// and its children's tree totals; returns its parent.
 fn refresh(conn: &Connection, id: DirId) -> Result<Option<DirId>, IndexError> {
+    let (parent, mut tree) = own_tree(conn, id)?;
+    tree.add_tree(&children_tree(conn, id)?);
+    conn.execute(
+        "UPDATE dirs SET tree_bytes = ?2, tree_files = ?3, tree_dirs = ?4, tree_mtime = ?5
+         WHERE id = ?1",
+        params![
+            id.0,
+            int(tree.bytes.0),
+            int(tree.files),
+            int(tree.dirs),
+            tree.newest.map(|t| t.0)
+        ],
+    )?;
+    Ok(parent)
+}
+
+/// The directory `id` with its own files, and its parent.
+fn own_tree(conn: &Connection, id: DirId) -> Result<(Option<DirId>, TreeTotals), IndexError> {
     let (parent, bytes, files, newest, mtime): (Option<i64>, i64, i64, Option<i64>, i64) = conn
         .query_row(
             "SELECT parent_id, coalesce(own_bytes, 0), coalesce(own_files, 0), own_mtime, mtime
@@ -131,51 +168,41 @@ fn refresh(conn: &Connection, id: DirId) -> Result<Option<DirId>, IndexError> {
         newest: newest.map(UnixTime),
         kinds: KindTotals::default(),
     });
-    let children: (i64, i64, i64, Option<i64>) = conn.query_row(
+    Ok((parent.map(DirId), tree))
+}
+
+/// The tree totals of every child of `id` together.
+fn children_tree(conn: &Connection, id: DirId) -> Result<TreeTotals, IndexError> {
+    let sums: (i64, i64, i64, Option<i64>) = conn.query_row(
         "SELECT coalesce(sum(tree_bytes), 0), coalesce(sum(tree_files), 0),
                 coalesce(sum(tree_dirs), 0), max(tree_mtime)
          FROM dirs WHERE parent_id = ?1",
         [id.0],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
     )?;
-    tree.add_tree(&TreeTotals {
-        bytes: Bytes(count(children.0)),
-        files: count(children.1),
-        dirs: count(children.2),
-        newest: children.3.map(UnixTime),
-    });
-    conn.execute(
-        "UPDATE dirs SET tree_bytes = ?2, tree_files = ?3, tree_dirs = ?4, tree_mtime = ?5
-         WHERE id = ?1",
-        params![
-            id.0,
-            int(tree.bytes.0),
-            int(tree.files),
-            int(tree.dirs),
-            tree.newest.map(|t| t.0)
-        ],
-    )?;
-    Ok(parent.map(DirId))
+    Ok(TreeTotals {
+        bytes: Bytes(count(sums.0)),
+        files: count(sums.1),
+        dirs: count(sums.2),
+        newest: sums.3.map(UnixTime),
+    })
+}
+
+/// A value of the index's own metadata.
+fn meta<T: rusqlite::types::FromSql>(
+    conn: &Connection,
+    key: &str,
+) -> Result<Option<T>, IndexError> {
+    let value = conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0));
+    Ok(value.optional()?)
 }
 
 /// The coverage the table's unread rows make up, as a scan of the same
 /// tree would count it.
 fn coverage(conn: &Connection) -> Result<Coverage, IndexError> {
-    let limit: Option<i64> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'gap_limit'", [], |r| {
-            r.get(0)
-        })
-        .optional()?;
-    let root: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'picture_root'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()?;
-    let root = path_from(root.unwrap_or_default());
-    let limit = usize::try_from(limit.unwrap_or_default()).unwrap_or_default();
-    let mut coverage = Coverage::new(limit);
+    let root = path_from(meta::<Vec<u8>>(conn, "picture_root")?.unwrap_or_default());
+    let limit = meta::<i64>(conn, "gap_limit")?.unwrap_or_default();
+    let mut coverage = Coverage::new(usize::try_from(limit).unwrap_or_default());
     let mut lineage = Lineage::new(conn, root.clone())?;
     let mut statement = conn.prepare(
         "SELECT id, flags FROM dirs INDEXED BY dirs_unread WHERE flags & 255 != 0 ORDER BY id",
@@ -183,16 +210,35 @@ fn coverage(conn: &Connection) -> Result<Coverage, IndexError> {
     let rows = statement.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
     for row in rows {
         let (id, flags) = row?;
-        match unread(flags)? {
-            DirState::Skipped(skip) => coverage.record_skip(skip),
-            DirState::Gap(gap) => {
-                let path = lineage.path(DirId(id))?.unwrap_or_default();
-                let below = (path.components().count()).saturating_sub(root.components().count());
-                let depth = u32::try_from(below).unwrap_or(u32::MAX);
-                coverage.record_gap(GapAt { depth, path, gap });
-            }
-            DirState::Read(_) => {}
-        }
+        count_unread(
+            &mut coverage,
+            &mut lineage,
+            &root,
+            DirId(id),
+            unread(flags)?,
+        )?;
     }
     Ok(coverage)
+}
+
+/// Counts one unread directory: a skip by kind, a gap with its depth and
+/// path.
+fn count_unread(
+    coverage: &mut Coverage,
+    lineage: &mut Lineage<'_>,
+    root: &Path,
+    id: DirId,
+    state: DirState,
+) -> Result<(), IndexError> {
+    match state {
+        DirState::Skipped(skip) => coverage.record_skip(skip),
+        DirState::Gap(gap) => {
+            let path = lineage.path(id)?.unwrap_or_default();
+            let below = (path.components().count()).saturating_sub(root.components().count());
+            let depth = u32::try_from(below).unwrap_or(u32::MAX);
+            coverage.record_gap(GapAt { depth, path, gap });
+        }
+        DirState::Read(_) => {}
+    }
+    Ok(())
 }
