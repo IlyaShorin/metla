@@ -191,6 +191,7 @@ fn the_overview_lists_every_category_and_kind_in_a_fixed_order() {
                 trashed: logs,
             },
         )]),
+        owned: BTreeMap::from([(Category::Log, Bytes(400))]),
         kinds,
         coverage: Some(coverage),
         freshness: freshness(),
@@ -208,6 +209,8 @@ fn the_overview_lists_every_category_and_kind_in_a_fixed_order() {
         "what its preselected ones do"
     );
     assert_eq!(shown.categories[0].reclaimable, Reclaimable::default());
+    assert_eq!(log.owned, Bytes(400), "what it holds on the disk bar");
+    assert_eq!(shown.categories[0].owned, Bytes(0));
     assert_eq!(shown.categories[4].disposal, Disposal::GitWorktreeRemove);
     let kinds: Vec<_> = shown.kinds.iter().map(|k| (k.kind, k.bytes.0)).collect();
     assert_eq!(kinds.len(), 7);

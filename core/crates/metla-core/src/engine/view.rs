@@ -129,6 +129,11 @@ pub struct Overview {
     /// category (every category present; they add up to the total).
     pub reclaimable: Reclaimable,
     pub reclaimable_by_category: BTreeMap<Category, Reclaimable>,
+    /// What each category holds on the disk bar (every category
+    /// present): a candidate inside another is counted with the outer
+    /// one, so these add up to no more than the root's total, while
+    /// `categories` lists every candidate of each.
+    pub owned: BTreeMap<Category, Bytes>,
     pub kinds: KindTotals,
     pub coverage: Option<Coverage>,
     pub freshness: Freshness,

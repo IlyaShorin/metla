@@ -12,7 +12,7 @@ mod totals;
 mod verdict;
 mod worktree;
 
-pub use candidate::{Candidate, Exclusion, Recency, Reclaimable, Tally};
+pub use candidate::{Candidate, Exclusion, Recency, Reclaimable, Tally, holders};
 pub use cleanup::{
     CleanupPreview, CleanupReport, Confirmation, Group, ItemReport, Leftovers, Outcome, PreviewId,
     PreviewItem, Rejected, Rejection, Separate, SkipReason, Warning,

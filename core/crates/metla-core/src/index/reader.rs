@@ -17,7 +17,7 @@ use super::writer::note_key;
 use super::{IndexError, Picture, ScanRecord};
 use crate::domain::{
     Bytes, Candidate, Category, Coverage, DirId, DirRecord, Exclusion, GapAt, GapKind, KindTotals,
-    Manager, Recency, Reclaimable, RuleId, Skip, Tally, UnixTime, Verdict,
+    Manager, Recency, Reclaimable, RuleId, Skip, Tally, UnixTime, Verdict, holders,
 };
 
 /// Stored gap counts and skip counts.
@@ -345,6 +345,21 @@ impl Snapshot<'_> {
             tallies.entry(rule.category()).or_default().merge(&tally);
         }
         Ok(tallies)
+    }
+
+    /// The bytes each category holds on a disk bar (every category
+    /// present): a candidate inside another candidate (build output in a
+    /// worktree) is counted with the one that holds it, so the
+    /// categories add up to no more than the picture's total.
+    pub fn owned_by_category(&self) -> Result<BTreeMap<Category, Bytes>, IndexError> {
+        let mut owned: BTreeMap<Category, Bytes> =
+            Category::ALL.map(|c| (c, Bytes::default())).into();
+        let mut found = self.visible(None)?;
+        let held = holders(&mut found, |f| &f.path);
+        for (found, _) in found.iter().zip(held).filter(|(_, h)| h.is_none()) {
+            *owned.entry(found.rule.category()).or_default() += found.row.tree.bytes;
+        }
+        Ok(owned)
     }
 
     /// What cleaning the preselected candidates would free, and what it

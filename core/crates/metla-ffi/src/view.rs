@@ -44,6 +44,10 @@ pub struct CategoryTally {
     pub tally: Tally,
     /// The preselected ones; the categories' add up to the Overview's.
     pub reclaimable: Reclaimable,
+    /// What the category holds on the disk bar: a candidate inside
+    /// another (build output in a worktree) counts with the outer one,
+    /// so the categories add up to no more than the analysed size.
+    pub owned: Bytes,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
@@ -99,6 +103,7 @@ impl From<engine::Overview> for Overview {
                         .get(&category)
                         .copied()
                         .unwrap_or_default(),
+                    owned: overview.owned.get(&category).copied().unwrap_or_default(),
                 })
                 .into(),
             reclaimable: overview.reclaimable,

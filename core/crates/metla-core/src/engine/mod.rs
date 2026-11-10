@@ -335,11 +335,11 @@ impl Engine {
     pub fn snapshot(&self) -> Result<Overview, EngineError> {
         let recency = self.recency();
         let root = self.shared.root.clone();
-        let (scan, totals, categories, per) = self.read(|snap| {
+        let (scan, totals, (categories, owned), per) = self.read(|snap| {
             Ok((
                 snap.scan()?,
                 snap.root()?.map(|row| row.tree),
-                snap.category_tallies()?,
+                (snap.category_tallies()?, snap.owned_by_category()?),
                 snap.reclaimable_by_category(&recency)?,
             ))
         })?;
@@ -360,6 +360,7 @@ impl Engine {
             categories,
             reclaimable,
             reclaimable_by_category: per,
+            owned,
             freshness,
             profile: self.shared.effective(),
         })

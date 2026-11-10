@@ -129,3 +129,23 @@ impl Exclusion {
         path.starts_with(&self.0) || self.0.starts_with(path)
     }
 }
+
+/// Sorts `items` by path and says, for each, which item holds it (its
+/// index, `None` when no other item does). Sorted by path, component by
+/// component, a directory's descendants follow it directly, so only the
+/// last item no other holds can hold the next one. The one place nesting
+/// between candidates is decided: a preview sets the held ones aside, the
+/// disk bar counts their bytes with the one that holds them.
+pub fn holders<T>(items: &mut [T], path: impl Fn(&T) -> &Path) -> Vec<Option<usize>> {
+    items.sort_by(|a, b| path(a).cmp(path(b)));
+    let mut outer: Option<usize> = None;
+    let mut held = Vec::with_capacity(items.len());
+    for (at, item) in items.iter().enumerate() {
+        let holder = outer.filter(|&o| path(item).starts_with(path(&items[o])));
+        if holder.is_none() {
+            outer = Some(at);
+        }
+        held.push(holder);
+    }
+    held
+}

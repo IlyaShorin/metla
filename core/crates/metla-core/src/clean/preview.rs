@@ -5,8 +5,8 @@
 use std::collections::BTreeSet;
 
 use crate::domain::{
-    Candidate, Category, CleanupPreview, Disposal, PreviewId, PreviewItem, Recency, Rejected,
-    Rejection, Warning, WorktreeStatus,
+    Candidate, Category, CleanupPreview, DirId, Disposal, PreviewId, PreviewItem, Recency,
+    Rejected, Rejection, Warning, WorktreeStatus, holders,
 };
 
 /// The preview `id` of `candidates`; `inspect` gives a worktree's status.
@@ -53,18 +53,14 @@ fn blocked(
 }
 
 /// The candidates no other candidate holds, largest first, and the
-/// others with the one that holds them. Sorted by path (component by
-/// component), a directory's descendants follow it directly, so only the
-/// last candidate kept can hold the next one.
+/// others with the one that holds them.
 fn outermost(mut candidates: Vec<Candidate>) -> (Vec<Candidate>, Vec<Rejected>) {
-    candidates.sort_by(|a, b| a.path.cmp(&b.path));
+    let held = holders(&mut candidates, |c| &c.path);
+    let ids: Vec<DirId> = candidates.iter().map(|c| c.id).collect();
     let mut kept: Vec<Candidate> = Vec::new();
     let mut nested = Vec::new();
-    for candidate in candidates {
-        let outer = kept
-            .last()
-            .filter(|outer| candidate.path.starts_with(&outer.path));
-        match outer.map(|outer| outer.id) {
+    for (candidate, holder) in candidates.into_iter().zip(held) {
+        match holder.map(|at| ids[at]) {
             Some(inside) => nested.push(Rejected {
                 why: Rejection::Nested { inside },
                 candidate,

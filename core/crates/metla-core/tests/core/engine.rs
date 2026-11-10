@@ -754,6 +754,52 @@ fn the_engine_asks_git_about_project_output_after_a_scan_and_after_an_update() {
     });
 }
 
+/// Build output inside a worktree is a candidate of its own, so the
+/// categories' tallies count its bytes twice; on the disk bar the
+/// outermost candidate owns them, and the bar adds up to the folder.
+#[test]
+fn on_the_disk_bar_the_outermost_candidate_owns_the_bytes() {
+    let place = Place::new(&["code/lib/Cargo.toml", "code/lib/target/x=outside"]);
+    let git_ = isolated(&place.aux);
+    let repo = pushed_repository(&place.fx, &git_);
+    git(
+        &git_,
+        &place.path("code/lib"),
+        &["init", "-q", "-b", "main"],
+    );
+    fs::write(place.path("code/lib/.gitignore"), "target/\n").unwrap();
+    pushed_worktree(&git_, &repo, &place.path("wt"), "feature");
+    place
+        .fx
+        .build(&["wt/Cargo.toml", "wt/target/debug/out=inside"]);
+    let engine = place.open();
+    settled(&engine);
+    until(&engine, |e| offered(e, &place).contains("wt/target"));
+    let overview = engine.snapshot().unwrap();
+    let tree = |relative: &str| {
+        let listed = engine.candidates(None, ALL).unwrap();
+        let path = place.path(relative);
+        listed
+            .iter()
+            .find(|l| l.candidate.path == path)
+            .unwrap()
+            .candidate
+            .bytes
+    };
+    let owned = &overview.owned;
+    assert_eq!(owned[&Category::GitWorktree], tree("wt"));
+    assert_eq!(owned[&Category::BuildArtifact], tree("code/lib/target"));
+    assert_eq!(
+        overview.categories[&Category::BuildArtifact].bytes,
+        tree("code/lib/target") + tree("wt/target"),
+        "the category's list counts both"
+    );
+    let bar: Bytes = owned.values().copied().sum();
+    assert_eq!(bar, tree("wt") + tree("code/lib/target"));
+    assert!(bar <= overview.totals.unwrap().bytes);
+    assert_eq!(owned.len(), Category::ALL.len(), "every category");
+}
+
 #[test]
 fn what_can_be_freed_is_told_per_category_and_adds_up() {
     let place = Place::new(&[

@@ -335,7 +335,12 @@ when a preview is made and again before removal.
   cleaning them does: `freed` (deleted permanently or removed by Git:
   "can be freed") and `trashed` (moved to the Trash: shown apart, "not
   freed until the Trash is emptied"); `Snapshot::unverified` lists the
-  project output Git has not been asked about.
+  project output Git has not been asked about. A candidate may lie
+  inside another (build output in a linked worktree), so the tallies
+  per category count its bytes twice; `Snapshot::owned_by_category`
+  gives the disk bar disjoint sizes instead: the outermost candidate
+  owns the bytes (`domain::holders`, the one place nesting is decided,
+  which a preview also uses to set nested items aside).
 * **After a cleanup** the caller records every item whose outcome may
   have changed the disk (anything but `Skipped`) with `mark_cleaned`; the
   index stops offering those directories and everything below them until
