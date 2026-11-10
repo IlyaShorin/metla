@@ -48,6 +48,16 @@ impl ScanScope {
         self
     }
 
+    /// The paths the scope excludes because they are reached elsewhere or
+    /// are not real directories.
+    pub fn excluded(&self) -> impl Iterator<Item = &Path> {
+        let paths = self
+            .paths
+            .iter()
+            .filter(|(_, skip)| **skip == Skip::Excluded);
+        paths.map(|(path, _)| path.as_path())
+    }
+
     /// Why the directory at `path` is not descended, if it is not.
     pub fn decide(&self, path: &Path, meta: &EntryMeta) -> Option<Skip> {
         if meta.dataless {

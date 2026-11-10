@@ -1,8 +1,11 @@
 //! Watching the root for changes: a pure coalescer that turns file-system
-//! events into rescan tasks, and the FSEvents stream that feeds it.
+//! events into rescan tasks, and the FSEvents stream that feeds it
+//! (`sys`, the only part with foreign calls).
 
 mod coalescer;
 mod flags;
+mod sys;
 
 pub use coalescer::{Coalescer, Event, Timing};
 pub use flags::Flags;
+pub use sys::{Stream, current_event_id, volume_uuid};

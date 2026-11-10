@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use crate::domain::{DirFacts, DirId, DirRecord, EntryKind, EntryMeta, Rescanned, ScanSummary};
-use crate::fs::{DirHandle, entry_at, now, raise_open_file_limit};
+use crate::fs::{DirHandle, background_thread, entry_at, now, raise_open_file_limit};
 use crate::rules::RuleSet;
 
 pub use control::{LIVE_DEPTH, ScanControl};
@@ -77,6 +77,7 @@ pub struct ScanOptions {
     root: ScanRoot,
     scope: ScanScope,
     threads: usize,
+    throttled: bool,
     rules: Option<Arc<RuleSet>>,
     gap_limit: usize,
     observer: Option<Arc<dyn DirObserver>>,
@@ -89,6 +90,7 @@ impl ScanOptions {
             root,
             scope,
             threads: 1,
+            throttled: false,
             rules: None,
             gap_limit: GAP_LIMIT,
             observer: None,
@@ -97,6 +99,12 @@ impl ScanOptions {
 
     pub fn threads(mut self, threads: usize) -> ScanOptions {
         self.threads = threads.max(1);
+        self
+    }
+
+    /// Run the scan threads at background priority, with throttled I/O.
+    pub fn throttled(mut self, throttled: bool) -> ScanOptions {
+        self.throttled = throttled;
         self
     }
 
@@ -118,6 +126,10 @@ impl ScanOptions {
 
     pub fn root(&self) -> &ScanRoot {
         &self.root
+    }
+
+    pub fn scope(&self) -> &ScanScope {
+        &self.scope
     }
 
     /// What the root inherits from the unread directories above it.
@@ -149,7 +161,7 @@ pub fn run(
     sink: &(dyn Fn(Vec<DirRecord>) + Sync),
 ) -> Result<ScanSummary, ScanError> {
     raise_open_file_limit();
-    let pool = pool(options.threads)?;
+    let pool = pool(options)?;
     let started = now();
     let clock = Instant::now();
     let root = options.root();
@@ -188,10 +200,16 @@ pub fn run(
     })
 }
 
-fn pool(threads: usize) -> Result<rayon::ThreadPool, ScanError> {
+fn pool(options: &ScanOptions) -> Result<rayon::ThreadPool, ScanError> {
+    let throttled = options.throttled;
     rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
+        .num_threads(options.threads)
         .thread_name(|n| format!("metla-scan-{n}"))
+        .start_handler(move |_| {
+            if throttled {
+                background_thread();
+            }
+        })
         .build()
         .map_err(|e| ScanError {
             reason: e.to_string(),
@@ -227,7 +245,7 @@ pub fn rescan(
     let Some((above, meta)) = locate(options.root().path(), &target.path) else {
         return Ok(None);
     };
-    let pool = pool(options.threads)?;
+    let pool = pool(options)?;
     let rows = Mutex::new(Vec::new());
     let sink = |batch: Vec<DirRecord>| {
         rows.lock()

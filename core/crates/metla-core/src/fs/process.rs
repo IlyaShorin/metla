@@ -51,3 +51,12 @@ pub fn raise_open_file_limit() -> u64 {
     let raised = check(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) });
     raised.map_or(soft, |_| wanted)
 }
+
+/// Moves the calling thread to background priority: its CPU time and its
+/// disk I/O yield to everything else (`PRIO_DARWIN_BG`). True when the
+/// system accepted it.
+pub fn background_thread() -> bool {
+    // SAFETY: changes only the calling thread's own priority.
+    let set = unsafe { libc::setpriority(libc::PRIO_DARWIN_THREAD, 0, libc::PRIO_DARWIN_BG) };
+    check(set).is_ok()
+}

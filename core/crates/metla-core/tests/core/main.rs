@@ -9,6 +9,7 @@ mod cleaning;
 mod cleanworktrees;
 mod coalescer;
 mod domain;
+mod engine;
 mod fs;
 mod gitrun;
 mod incremental;

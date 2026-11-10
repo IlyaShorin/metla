@@ -181,6 +181,11 @@ impl Cleaner {
         })
     }
 
+    /// Judges the previews and executions that follow with `settings`.
+    pub fn set_settings(&mut self, settings: CleanSettings) {
+        self.settings = settings;
+    }
+
     /// The preview of `candidates`: worktrees that cannot be removed now
     /// and items inside other items are set aside with the reason. It
     /// replaces the previous preview, which can no longer be executed.
