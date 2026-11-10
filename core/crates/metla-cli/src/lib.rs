@@ -1,11 +1,14 @@
 //! Developer CLI for metla-core: `scan`, `top`, `ls`, `candidates`,
-//! `summary` and `exclude`.
+//! `summary`, `exclude`, and `fixture create` and `clean`, which removes
+//! only inside a root marked `.metla-fixture`.
 //!
 //! The index path is always given explicitly; the CLI never touches the
 //! app's own index.
 
 mod args;
+mod cleaned;
 mod commands;
+mod fixture;
 mod format;
 mod overview;
 mod report;
@@ -14,6 +17,7 @@ use std::ffi::OsString;
 use std::io::Write;
 
 pub use args::{CANDIDATE_LIMIT, Command, Edit, TOP_LIMIT, USAGE, parse};
+pub use cleaned::{Cleaned, clean_text, outcome_text};
 pub use commands::{ScanRules, default_threads};
 pub use format::{ago, bytes, count, per_second, signed_bytes};
 pub use overview::{
@@ -88,5 +92,12 @@ fn execute(command: Command) -> Result<String, String> {
         Command::Exclude { index, edit } => {
             commands::exclude(&index, &edit).map(|edited| edited_text(&edited))
         }
+        Command::Fixture { dir } => commands::fixture(&dir),
+        Command::Clean {
+            index,
+            root,
+            category,
+            yes,
+        } => commands::clean(&index, &root, category, yes).map(|done| clean_text(&done)),
     }
 }

@@ -123,6 +123,56 @@ fn exclude_adds_removes_and_lists() {
 }
 
 #[test]
+fn fixture_create_takes_a_directory() {
+    assert_eq!(
+        parse(&args("fixture create /tmp/f")),
+        Ok(Command::Fixture {
+            dir: PathBuf::from("/tmp/f")
+        })
+    );
+    let error = |text| parse(&args(text)).unwrap_err();
+    assert_eq!(error("fixture"), "fixture needs create and a directory");
+    assert_eq!(
+        error("fixture create"),
+        "fixture needs create and a directory"
+    );
+    assert_eq!(
+        error("fixture make /f"),
+        "fixture needs create and a directory"
+    );
+    assert_eq!(error("fixture create /f /g"), "unexpected argument /g");
+}
+
+#[test]
+fn clean_takes_index_root_category_and_yes() {
+    assert_eq!(
+        parse(&args("clean --index /i --root /f")),
+        Ok(Command::Clean {
+            index: PathBuf::from("/i"),
+            root: PathBuf::from("/f"),
+            category: None,
+            yes: false,
+        })
+    );
+    assert_eq!(
+        parse(&args("clean --yes --root /f --category log --index /i")),
+        Ok(Command::Clean {
+            index: PathBuf::from("/i"),
+            root: PathBuf::from("/f"),
+            category: Some(Category::Log),
+            yes: true,
+        })
+    );
+    let error = |text| parse(&args(text)).unwrap_err();
+    assert_eq!(error("clean --index /i"), "--root is required");
+    assert_eq!(error("clean --root /f"), "--index is required");
+    assert_eq!(
+        error("scan --root /r --index /i --yes"),
+        "unexpected argument --yes"
+    );
+}
+
+#[test]
 fn mistakes_are_reported() {
     let error = |text| parse(&args(text)).unwrap_err();
     assert_eq!(error(""), "missing command");

@@ -5,16 +5,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use metla_core::clean::{CleanControl, CleanSettings, Cleaner, Context, TrashHost};
 use metla_core::domain::{
-    Bytes, Candidate, Category, DirId, DirState, EntryKind, Exclusion, Recency,
+    Bytes, Candidate, Category, CleanupPreview, CleanupReport, Confirmation, DirId, DirState,
+    EntryKind, Exclusion, Recency, Separate,
 };
 use metla_core::fs::{DirHandle, list_dir, now, peak_rss, volume};
-use metla_core::git::{Git, verify_outputs};
-use metla_core::index::{IndexError, IndexReader, IndexWriter, Page, Snapshot};
+use metla_core::git::{Git, WorktreeSettings, verify_outputs};
+use metla_core::index::{IndexError, IndexReader, IndexWriter, Page, PictureId, Snapshot};
 use metla_core::rules::RuleSet;
 use metla_core::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
 
 use crate::args::Edit;
+use crate::cleaned::Cleaned;
 use crate::overview::{Edited, Freshness, Overview, Shown};
 use crate::report::{Checked, Listed, ScanReport, VolumeUse};
 
@@ -265,4 +268,144 @@ fn change(index: &Path, path: &Path, change: Change) -> Result<(Exclusion, bool)
     let writer = IndexWriter::open(index).map_err(|e| e.to_string())?;
     let changed = change(&writer, &exclusion).map_err(|e| e.to_string())?;
     Ok((exclusion, changed))
+}
+
+/// The candidates `clean` works on, read from one picture.
+struct Selection {
+    picture: PictureId,
+    home: PathBuf,
+    candidates: Vec<Candidate>,
+    exclusions: Vec<Exclusion>,
+}
+
+/// Every candidate of `category`, or the default selection (the
+/// preselected candidates of every category), of the picture of `root`.
+fn select(index: &Path, root: &Path, category: Option<Category>) -> Result<Selection, String> {
+    let recency = Recency::new(now(), Recency::DEFAULT_AGE);
+    let page = Page {
+        offset: 0,
+        limit: usize::MAX,
+    };
+    let (picture, candidates, exclusions) = read(index, |snap| {
+        let picture = snap.scan()?.and_then(|scan| scan.picture);
+        Ok((
+            picture,
+            snap.candidates(category, page, &recency)?,
+            snap.exclusions()?,
+        ))
+    })?;
+    let picture = picture.ok_or("the index holds no picture: scan first")?;
+    if picture.root != root {
+        return Err(format!(
+            "the index holds a picture of {}",
+            picture.root.display()
+        ));
+    }
+    let home = picture
+        .home
+        .clone()
+        .ok_or("the picture was scanned without rules")?;
+    let chosen = candidates
+        .into_iter()
+        .filter(|c| category.is_some() || c.preselected);
+    Ok(Selection {
+        picture: picture.id(),
+        home,
+        candidates: chosen.collect(),
+        exclusions,
+    })
+}
+
+/// The fixture's own Trash: `.Trash` in its home directory.
+struct FixtureTrash {
+    dir: PathBuf,
+}
+
+impl TrashHost for FixtureTrash {
+    fn trash(&self, path: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let mut candidates = (1..).map(|n| match n {
+            1 => self.dir.join(&*name),
+            n => self.dir.join(format!("{name} {n}")),
+        });
+        let target = candidates.find(|t| !t.exists()).unwrap_or_default();
+        std::fs::rename(path, target).map_err(|e| e.to_string())
+    }
+}
+
+/// Previews the cleanup of `root`, a fixture, and with `yes` executes it
+/// with every group confirmed; what was cleaned is no longer offered.
+pub fn clean(
+    index: &Path,
+    root: &Path,
+    category: Option<Category>,
+    yes: bool,
+) -> Result<Cleaned, String> {
+    let root = canonical(root);
+    let selection = select(index, &root, category)?;
+    if !selection.home.starts_with(&root) {
+        return Err("the home directory must lie inside the fixture".into());
+    }
+    let rules = Arc::new(rule_set(Some(&selection.home))?);
+    let settings = CleanSettings {
+        worktrees: WorktreeSettings {
+            home: selection.home.clone(),
+            stale_after: WorktreeSettings::DEFAULT_STALE_AFTER,
+        },
+        recent_age: Recency::DEFAULT_AGE,
+    };
+    let mut cleaner =
+        Cleaner::new(&root, None, rules, Git::system(), settings).map_err(|e| e.to_string())?;
+    let preview = cleaner.preview(selection.candidates.clone(), now());
+    let report = match yes {
+        true => Some(execute(index, &mut cleaner, &preview, &selection)?),
+        false => None,
+    };
+    Ok(Cleaned {
+        root,
+        preview,
+        report,
+    })
+}
+
+/// Executes `preview` with every group confirmed and records in the index
+/// what may have changed.
+fn execute(
+    index: &Path,
+    cleaner: &mut Cleaner,
+    preview: &CleanupPreview,
+    selection: &Selection,
+) -> Result<CleanupReport, String> {
+    let confirmation = Confirmation {
+        groups: [
+            Separate::MoveToTrash,
+            Separate::EmptyTrash,
+            Separate::RemoveWorktrees,
+        ]
+        .into(),
+        items: Default::default(),
+    };
+    let context = Context {
+        now: now(),
+        exclusions: &selection.exclusions,
+    };
+    let trash = FixtureTrash {
+        dir: selection.home.join(".Trash"),
+    };
+    let control = CleanControl::new();
+    let report = cleaner
+        .execute(preview.id, &confirmation, &context, &control, &trash)
+        .map_err(|e| e.to_string())?;
+    let changed = report.items.iter().filter(|i| i.outcome.changed());
+    let writer = IndexWriter::open(index).map_err(|e| e.to_string())?;
+    writer
+        .mark_cleaned(selection.picture, changed.map(|i| i.candidate).collect())
+        .map_err(|e| e.to_string())?;
+    Ok(report)
+}
+
+/// Builds a fixture in `dir`.
+pub fn fixture(dir: &Path) -> Result<String, String> {
+    crate::fixture::create(dir, &Git::system())
 }

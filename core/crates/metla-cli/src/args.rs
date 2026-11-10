@@ -19,7 +19,10 @@ pub const USAGE: &str = "usage:
   metla-cli candidates --index <file> [--category <c>] [--limit N] [--json]
   metla-cli summary    --index <file> [--json]
   metla-cli exclude    add|remove|list --index <file> [<path>]
-categories: app-cache, dev-cache, build, log, worktree, temp";
+  metla-cli fixture    create <dir>
+  metla-cli clean      --index <file> --root <fixture> [--category <c>] [--yes]
+categories: app-cache, dev-cache, build, log, worktree, temp
+clean works only on a root marked .metla-fixture; without --yes it only previews";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -55,6 +58,18 @@ pub enum Command {
         index: PathBuf,
         edit: Edit,
     },
+    /// Builds a synthetic fixture in a new or empty directory.
+    Fixture {
+        dir: PathBuf,
+    },
+    /// Previews, and with `yes` executes, a cleanup of a fixture.
+    Clean {
+        index: PathBuf,
+        root: PathBuf,
+        /// `None`: the default selection (preselected candidates).
+        category: Option<Category>,
+        yes: bool,
+    },
 }
 
 /// What `exclude` does.
@@ -74,7 +89,7 @@ const VALUE_FLAGS: [&str; 7] = [
     "--home",
     "--category",
 ];
-const SWITCHES: [&str; 2] = ["--json", "--no-rules"];
+const SWITCHES: [&str; 3] = ["--json", "--no-rules", "--yes"];
 
 /// Flags with values, switches and positional arguments.
 #[derive(Default)]
@@ -150,13 +165,15 @@ pub fn parse(args: &[OsString]) -> Result<Command, String> {
 
 type Parser = fn(&mut Parsed) -> Result<Command, String>;
 
-const COMMANDS: [(&str, Parser); 6] = [
+const COMMANDS: [(&str, Parser); 8] = [
     ("scan", scan),
     ("top", top),
     ("ls", ls),
     ("candidates", candidates),
     ("summary", summary),
     ("exclude", exclude),
+    ("fixture", fixture),
+    ("clean", clean),
 ];
 
 fn command(name: &OsStr, parsed: &mut Parsed) -> Result<Command, String> {
@@ -242,4 +259,24 @@ fn edited_path(parsed: &mut Parsed) -> Result<PathBuf, String> {
         .next()
         .map(PathBuf::from)
         .ok_or_else(|| "exclude add and remove need a path".to_owned())
+}
+
+fn fixture(parsed: &mut Parsed) -> Result<Command, String> {
+    let action = parsed.next();
+    let dir = parsed.next();
+    match (action.as_ref().and_then(|a| a.to_str()), dir) {
+        (Some("create"), Some(dir)) => Ok(Command::Fixture {
+            dir: PathBuf::from(dir),
+        }),
+        _ => Err("fixture needs create and a directory".into()),
+    }
+}
+
+fn clean(parsed: &mut Parsed) -> Result<Command, String> {
+    Ok(Command::Clean {
+        index: parsed.path("--index")?,
+        root: parsed.path("--root")?,
+        category: parsed.category()?,
+        yes: parsed.switch("--yes"),
+    })
 }
