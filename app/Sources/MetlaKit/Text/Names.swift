@@ -71,6 +71,60 @@ public struct Names: Sendable {
         }
     }
 
+    /// How a preview group's items are removed: the badge on the group.
+    public func method(_ group: Group) -> String {
+        switch group {
+        case .quick: strings.text("preview.method.permanently")
+        case .separate(.moveToTrash): strings.text("preview.method.trash")
+        case .separate(.emptyTrash): strings.text("preview.method.emptyTrash")
+        case .separate(.removeWorktrees): strings.text("preview.method.worktree")
+        }
+    }
+
+    /// Why a preview item deserves a second look.
+    public func warning(_ warning: Warning) -> String {
+        switch warning {
+        case .recentlyActive: strings.text("preview.warning.recent")
+        case .insideManagedWorktree(let manager): manager == .codex
+            ? strings.text("preview.warning.codex") : strings.text("preview.warning.claude")
+        }
+    }
+
+    /// Why an item was skipped, touching nothing.
+    public func skip(_ reason: SkipReason) -> String {
+        switch reason {
+        case .notConfirmed: strings.text("skip.notConfirmed")
+        case .cancelled: strings.text("skip.cancelled")
+        case .excluded: strings.text("skip.excluded")
+        case .outsideRoot: strings.text("skip.outsideRoot")
+        case .symlink: strings.text("skip.symlink")
+        case .notADirectory: strings.text("skip.notADirectory")
+        case .replaced: strings.text("skip.replaced")
+        case .mountPoint: strings.text("skip.mountPoint")
+        case .ancestorChanged: strings.text("skip.ancestorChanged")
+        case .ruleMismatch: strings.text("skip.ruleMismatch")
+        case .notIgnored: strings.text("skip.notIgnored")
+        case .hasTrackedFiles: strings.text("skip.hasTrackedFiles")
+        case .unverifiable: strings.text("skip.unverifiable")
+        case .blocked(let reasons): reasons.map(self.reason).joined(separator: ", ")
+        case .unreadable(let errno): strings.format("skip.unreadable", Int(errno))
+        }
+    }
+
+    /// What happened to one item, in a few words.
+    public func outcome(_ outcome: Outcome) -> String {
+        switch outcome {
+        case .removed: strings.text("outcome.removed")
+        case .alreadyGone: strings.text("outcome.gone")
+        case .movedToTrash: strings.text("outcome.trash")
+        case .failed(let why): strings.format("outcome.failed", why)
+        case .skipped(let reason): strings.format("outcome.skipped", skip(reason))
+        case .partial(let left): left.cancelled && left.failures == 0
+            ? strings.text("outcome.partialCancelled")
+            : strings.format("outcome.partial", Int(left.failures))
+        }
+    }
+
     static func key(_ category: Category) -> String {
         switch category {
         case .appCache: "appCache"

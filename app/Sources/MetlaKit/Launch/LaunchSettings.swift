@@ -10,7 +10,9 @@ import MetlaCoreFFI
 ///   `~/Library/Application Support/Metla`);
 /// * `METLA_PRINT_LAUNCH_TIMING=1`: print the time to the first window;
 /// * `METLA_LANGUAGE`: `en` or `ru` instead of the system's choice;
-/// * `--capture <dir>`: render the main screens to PNG files and quit.
+/// * `--capture <dir>`: render the screens to PNG files and quit;
+/// * `--scenario <name>`: drive a cleanup flow end to end on the fixture
+///   and quit, non-zero when the disk is not as expected.
 public struct LaunchSettings: Equatable, Sendable {
     public var root: String
     public var home: String
@@ -20,6 +22,8 @@ public struct LaunchSettings: Equatable, Sendable {
     public var isFixture: Bool
     public var printLaunchTiming: Bool
     public var capture: String?
+    /// The scenario to run, if any.
+    public var scenario: String? = nil
     /// Follow changes on disk (an FSEvents stream); a capture does not.
     public var follow: Bool
     /// The app's language, when not the system's choice.
@@ -40,6 +44,7 @@ public struct LaunchSettings: Equatable, Sendable {
         let support = (home as NSString).appendingPathComponent("Library/Application Support/Metla")
         let marker = (root as NSString).appendingPathComponent(fixtureMarker)
         let capture = value(after: "--capture", in: arguments)
+        let scenario = value(after: "--scenario", in: arguments)
         return LaunchSettings(
             root: root,
             home: environment["METLA_HOME"] ?? home,
@@ -48,7 +53,8 @@ public struct LaunchSettings: Equatable, Sendable {
             isFixture: exists(marker),
             printLaunchTiming: environment["METLA_PRINT_LAUNCH_TIMING"] == "1",
             capture: capture,
-            follow: capture == nil,
+            scenario: scenario,
+            follow: capture == nil && scenario == nil,
             language: environment["METLA_LANGUAGE"]
         )
     }

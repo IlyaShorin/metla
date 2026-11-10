@@ -29,6 +29,12 @@ struct SidebarView: View {
                     .accessibilityLabel("\(row.name), \(Format.bytes(row.bytes, model.strings))")
                 }
             }
+            if model.lastReport != nil {
+                Section {
+                    Label(model.strings.text("sidebar.lastReport"), systemImage: "doc.text")
+                        .tag(Screen.report)
+                }
+            }
         }
         .listStyle(.sidebar)
     }

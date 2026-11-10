@@ -4,19 +4,24 @@ import SwiftUI
 
 @main
 struct MetlaApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model: AppModel
+    @State private var bridge: Bridge
     private let settings: LaunchSettings
 
     init() {
         let settings = LaunchSettings.current()
         self.settings = settings
-        _model = State(initialValue: AppModel(settings: settings, strings: Strings(language: settings.language)))
+        let model = AppModel(settings: settings, strings: Strings(language: settings.language))
+        _model = State(initialValue: model)
+        _bridge = State(initialValue: Bridge(model: model))
     }
 
     var body: some Scene {
         Window("Metla", id: "main") {
             MainWindow(model: model)
-                .task { await launch() }
+                .background(WindowOpener(bridge: bridge))
+                .task { await bridge.launch() }
         }
         .defaultSize(width: 1120, height: 720)
         .commands {
@@ -27,17 +32,59 @@ struct MetlaApp: App {
                 .keyboardShortcut("r", modifiers: .command)
             }
         }
-    }
-
-    /// Opens the engine; in capture mode renders the screens and quits.
-    private func launch() async {
-        LaunchTiming.firstWindow(print: settings.printLaunchTiming)
-        await model.start()
-        LaunchTiming.firstPicture(print: settings.printLaunchTiming)
-        if let directory = settings.capture {
-            let written = await Capture.run(model, into: directory)
-            print("capture: \(written) images in \(directory)")
-            NSApp.terminate(nil)
+        Window(model.strings.text("report.title"), id: "cleanup") {
+            if let cleanup = model.cleanup {
+                CleanupSheet(cleanup: cleanup, strings: model.strings) { bridge.closeCleanupWindow() }
+                    .background(WindowOpener(bridge: bridge))
+            }
         }
+        .windowResizability(.contentSize)
+        MenuBarExtra(isInserted: $bridge.showsInMenuBar) {
+            MenuBarPanel(model: model, actions: bridge.panelActions)
+                .onAppear { Task { await model.attention(true) } }
+                .onDisappear { Task { await model.attention(false) } }
+        } label: {
+            MenuBarIcon(scanning: model.scanning)
+                .background(WindowOpener(bridge: bridge))
+                .task { await bridge.launch() }
+        }
+        .menuBarExtraStyle(.window)
+        Settings {
+            SettingsView(model: model)
+        }
+    }
+}
+
+/// Keeps the app in the menu bar when its last window closes, unless
+/// "Show in menu bar" is off.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !GeneralModel.showsInMenuBar(StandardPreferences())
+    }
+}
+
+/// Hands SwiftUI's window actions to the bridge, from whatever view is up.
+struct WindowOpener: View {
+    let bridge: Bridge
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Color.clear
+            .onAppear {
+                bridge.openWindow = openWindow
+                bridge.openSettings = openSettings
+            }
+    }
+}
+
+/// The broom in the menu bar: a template image, with motion marks while a
+/// scan runs.
+struct MenuBarIcon: View {
+    let scanning: Bool
+
+    var body: some View {
+        Image(nsImage: Broom.image(moving: scanning))
+            .accessibilityLabel("Metla")
     }
 }

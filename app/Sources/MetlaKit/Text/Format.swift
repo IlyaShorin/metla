@@ -18,7 +18,8 @@ public enum Format {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = strings.locale
         formatter.unitsStyle = .short
-        return formatter.localizedString(for: min(date, now), relativeTo: now)
+        // At least a second ago: "in 0 seconds" reads as the future.
+        return formatter.localizedString(for: min(date, now.addingTimeInterval(-1)), relativeTo: now)
     }
 
     /// A Unix time in seconds as a date.

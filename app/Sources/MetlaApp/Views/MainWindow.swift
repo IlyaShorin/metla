@@ -20,8 +20,13 @@ struct MainWindow: View {
         .navigationSubtitle(subtitle)
         .toolbar { toolbar }
         .frame(minWidth: 900, minHeight: 560)
-        .sheet(isPresented: $model.showsCleanSheet) {
-            CleanPlaceholder(strings: model.strings) { model.showsCleanSheet = false }
+        .sheet(isPresented: sheetShown) {
+            if let cleanup = model.cleanup {
+                CleanupSheet(cleanup: cleanup, strings: model.strings)
+            }
+        }
+        .sheet(isPresented: firstRun) {
+            FirstRunSheet(access: model.access, strings: model.strings)
         }
         .onChange(of: active) { _, state in
             Task { await model.attention(state != .inactive) }
@@ -43,8 +48,25 @@ struct MainWindow: View {
                 if let table = model.category(category) {
                     CategoryView(model: model, table: table)
                 }
+            case .report:
+                LastReportView(model: model)
             }
         }
+    }
+
+    /// The cleanup sheet is up while the flow is not closed, unless the
+    /// standalone window shows it.
+    private var sheetShown: Binding<Bool> {
+        Binding(
+            get: { model.cleanup.map { $0.stage != .closed } ?? false && !model.cleanupInWindow },
+            set: { shown in if !shown { model.cleanup?.close() } })
+    }
+
+    /// The first-run sheet, once.
+    private var firstRun: Binding<Bool> {
+        Binding(
+            get: { model.access.showsFirstRun && model.settings.capture == nil && model.settings.scenario == nil },
+            set: { shown in if !shown { model.access.finishFirstRun() } })
     }
 
     private var title: String {
@@ -52,6 +74,7 @@ struct MainWindow: View {
         case .overview: model.strings.text("sidebar.overview")
         case .folders: model.strings.text("sidebar.folders")
         case .category(let category): model.names.category(category)
+        case .report: model.strings.text("sidebar.lastReport")
         }
     }
 
@@ -82,7 +105,7 @@ struct MainWindow: View {
             }
             .help(model.strings.text("toolbar.refresh"))
             Button(model.strings.text("toolbar.clean")) {
-                model.showsCleanSheet = true
+                Task { await model.cleanDefault() }
             }
             .keyboardShortcut(.delete, modifiers: .command)
             .buttonStyle(.borderedProminent)
@@ -116,27 +139,5 @@ struct StatusView: View {
         case .problem: .red
         case .off: .gray
         }
-    }
-}
-
-/// "Clean selected…" and "Clean…" open this until the cleanup flow comes.
-struct CleanPlaceholder: View {
-    let strings: Strings
-    let close: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(strings.text("clean.title")).font(.headline)
-            Text(strings.text("clean.placeholder"))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer()
-                Button(strings.text("clean.close"), action: close)
-                    .keyboardShortcut(.cancelAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 420)
     }
 }

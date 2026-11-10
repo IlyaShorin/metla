@@ -7,6 +7,27 @@ public enum Screen: Hashable, Sendable {
     case overview
     case folders
     case category(Category)
+    /// The last cleanup's report.
+    case report
+}
+
+/// What a hotkey press asks the app to do.
+public enum HotkeyResponse: Equatable, Sendable {
+    /// Bring the app forward and show the cleanup preview (its own window
+    /// when the main window is closed).
+    case showPreview
+    /// Bring the main window forward.
+    case showApp
+    /// Show the small panel with this message; the app stays behind.
+    case hud(HUDMessage)
+}
+
+/// What the hotkey's panel says.
+public struct HUDMessage: Equatable, Sendable {
+    public let title: String
+    public let lines: [String]
+    /// "Show report" belongs to it.
+    public let report: Bool
 }
 
 /// A category in the sidebar: its estimated size, dimmed when empty.
@@ -37,9 +58,26 @@ public final class AppModel {
     public private(set) var now = Date()
     public private(set) var refreshes = 0
     public var screen: Screen = .overview
-    public var showsCleanSheet = false
     public private(set) var categories: [Category: CategoryModel] = [:]
     public private(set) var folders: FoldersModel?
+    public private(set) var cleanup: CleanupModel?
+    public private(set) var general: GeneralModel?
+    public private(set) var exclusions: ExclusionsModel?
+    public let access: AccessModel
+    public private(set) var hotkeys: HotkeysModel?
+    /// Candidates added from Folders (⌘⌫) to the cleanup selection.
+    public private(set) var added: Set<DirId> = []
+    /// The last cleanup's report, kept by the engine across launches:
+    /// "Last report" in the sidebar.
+    public private(set) var lastReport: ReportData?
+    /// The power state last told, and whether a scan the user asked for
+    /// runs (it runs as Interactive).
+    public private(set) var power = PowerState()
+    public private(set) var userScan = false
+    public let preferences: any Preferences
+    /// The cleanup flow shows in its own window (the main window was
+    /// closed when the hotkey asked for it), not as a sheet.
+    public var cleanupInWindow = false
 
     private var pacer = RefreshPacer()
     private var listener: Task<Void, Never>?
@@ -48,25 +86,48 @@ public final class AppModel {
     public static let pollInterval: Duration = .milliseconds(500)
     public static let shownFolders: UInt32 = 6
 
-    public init(settings: LaunchSettings, strings: Strings = .current) {
+    public init(
+        settings: LaunchSettings, strings: Strings = .current,
+        preferences: any Preferences = StandardPreferences(), probe: any AccessProbe = LibraryProbe()
+    ) {
         self.settings = settings
         self.strings = strings
+        self.preferences = preferences
         names = Names(strings, titles: ruleTitles())
+        access = AccessModel(probe: probe, preferences: preferences)
     }
 
     /// Opens the engine off the main thread, shows the saved picture, and
-    /// follows the engine from then on.
-    public func start(mainThread: MainThreadGuard = .standard) async {
+    /// follows the engine from then on. `trash` moves to the Trash (the
+    /// system's), `login` starts the app at login.
+    public func start(
+        mainThread: MainThreadGuard = .standard, trash: any TrashHost = SystemTrash(),
+        login: (any LoginItem)? = nil
+    ) async {
         do {
-            let client = try await EngineClient.open(settings.options, mainThread: mainThread)
+            let client = try await EngineClient.open(settings.options, trash: trash, mainThread: mainThread)
             self.client = client
             folders = FoldersModel(root: settings.root, client: client, names: names)
+            cleanup = CleanupModel(client: client, names: names, home: settings.home)
+            exclusions = ExclusionsModel(client: client, strings: strings, home: settings.home)
+            if let login {
+                general = GeneralModel(client: client, login: login, preferences: preferences)
+            }
+            await readLastReport(client)
             volume = await Self.volume(of: settings.root)
             await refresh(Self.everything)
             listen(to: client)
         } catch {
             failure = String(describing: error)
         }
+    }
+
+    /// Binds the global hotkeys through `registrar` and registers them.
+    public func attachHotkeys(_ registrar: any HotkeyRegistrar) async {
+        let model = HotkeysModel(preferences: preferences, registrar: registrar, client: client, strings: strings)
+        hotkeys = model
+        await model.load()
+        model.registerAll()
     }
 
     /// Stops following the engine; the client goes with the model.
@@ -116,6 +177,17 @@ public final class AppModel {
             }
             if !topics.isDisjoint(with: [.picture, .exclusions, .worktrees]) {
                 await refreshScreen(picture: topics.contains(.picture))
+            }
+            if topics.contains(.cleanup) {
+                await readLastReport(client)
+                await pruneAdded(client)
+            }
+            if topics.contains(.settings) {
+                await hotkeys?.load()
+            }
+            if userScan, !scanning {
+                userScan = false
+                await applyPower()
             }
             failure = nil
         } catch {
@@ -205,7 +277,7 @@ public final class AppModel {
             await self.category(category)?.reload()
         case .folders:
             await folders?.reload()
-        case .overview:
+        case .report, .overview:
             break
         }
     }
@@ -216,10 +288,131 @@ public final class AppModel {
         await folders?.reveal(path)
     }
 
-    /// Refresh (⌘R): a full scan the user asked for.
+    /// Refresh (⌘R): a full scan the user asked for, run as Interactive.
     public func rescan() async {
+        userScan = true
+        await applyPower()
         try? await client?.startScan()
         await refresh([.activity])
+    }
+
+    /// The Mac's power state changed (or is told at the start).
+    public func powerChanged(_ state: PowerState) async {
+        power = state
+        await applyPower()
+    }
+
+    private func applyPower() async {
+        guard let client else {
+            return
+        }
+        let kept = await client.settings()
+        let profile = power.profile(
+            background: kept.background, reduceOnBattery: kept.reduceOnBattery, userScan: userScan)
+        try? await client.setPowerProfile(profile)
+    }
+
+    /// Every candidate the engine offers now, with whether it is
+    /// preselected, read a page at a time.
+    func offered(_ client: EngineClient) async -> [Candidate] {
+        var all: [Candidate] = []
+        let order = Order(key: .size, descending: true)
+        while let page = try? await client.candidates(nil, order: order, offset: UInt64(all.count), limit: 1000),
+              !page.listed.isEmpty {
+            all += page.listed.map(\.candidate)
+            if all.count >= page.total {
+                break
+            }
+        }
+        return all
+    }
+
+    /// The selection "Clean…" previews: every preselected candidate.
+    public func defaultSelection() async -> [DirId] {
+        guard let client else {
+            return []
+        }
+        return await offered(client).filter(\.preselected).map(\.id)
+    }
+
+    /// "Clean selected…": what the tables check and Folders added.
+    public var selection: CleanupSelection {
+        let checked = categories.values.flatMap(\.checked)
+        return CleanupSelection(Set(checked).union(added))
+    }
+
+    /// Folders' ⌘⌫: a candidate joins the cleanup selection.
+    public func addToCleanup(_ id: DirId) {
+        added.insert(id)
+    }
+
+    private func pruneAdded(_ client: EngineClient) async {
+        guard !added.isEmpty else {
+            return
+        }
+        let offered = Set(await offered(client).map(\.id))
+        added.formIntersection(offered)
+    }
+
+    /// Clean… (⌘⌫): the preview of the default selection.
+    public func cleanDefault() async {
+        await cleanup?.open(await defaultSelection())
+    }
+
+    /// Clean selected…: the preview of the selection.
+    public func cleanSelected() async {
+        await cleanup?.open(selection.sorted)
+    }
+
+    /// The Clean hotkey: by the mode, show the preview, or clean the
+    /// chosen quick categories at once and say what happened.
+    public func cleanHotkey() async -> HotkeyResponse {
+        guard let hotkeys, hotkeys.mode == .immediate else {
+            return .showPreview
+        }
+        return .hud(await quickCleanNow(Array(hotkeys.quick)))
+    }
+
+    /// The hotkey's quick clean of `categories`; a press while a cleanup
+    /// runs, with no picture, or with nothing to clean only says so.
+    public func quickCleanNow(_ categories: [QuickCategory]) async -> HUDMessage {
+        guard let cleanup, !cleanup.running else {
+            return HUDMessage(title: strings.text("hud.busy"), lines: [], report: false)
+        }
+        guard overview?.totals != nil else {
+            return HUDMessage(title: strings.text("hud.noPicture"), lines: [], report: false)
+        }
+        let chosen = categories.filter { quick in
+            (overview?.categories.first { $0.category == quick.category }?.reclaimable.freed.bytes ?? 0) > 0
+        }
+        guard !chosen.isEmpty else {
+            return HUDMessage(title: strings.text("hud.nothing"), lines: [], report: false)
+        }
+        await cleanup.quickClean(QuickCategory.all.filter(chosen.contains))
+        await refresh([.picture, .cleanup])
+        return Self.hud(cleanup.report, strings)
+    }
+
+    /// What the hotkey's panel says after a quick clean with `report`.
+    public static func hud(_ report: ReportData?, _ strings: Strings) -> HUDMessage {
+        guard let report, report.notRun == nil else {
+            return HUDMessage(title: strings.text("hud.notRun"), lines: [report?.notRun ?? ""], report: false)
+        }
+        var lines = [
+            strings.format("hud.found", Format.bytes(report.found, strings)),
+            strings.format("hud.removed", Format.bytes(report.removed, strings)),
+            strings.format("hud.freed", Format.bytes(UInt64(max(0, report.freed)), strings)),
+        ]
+        if report.problems > 0 {
+            lines.append(strings.format("hud.problems", report.problems))
+        }
+        return HUDMessage(title: strings.text("hud.cleaned"), lines: lines, report: true)
+    }
+
+    private func readLastReport(_ client: EngineClient) async {
+        lastReport = await client.lastReport().map {
+            ReportData.make($0, names: names, home: settings.home)
+        }
     }
 
     /// Stop: cancels the running scan.

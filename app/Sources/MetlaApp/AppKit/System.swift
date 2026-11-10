@@ -1,14 +1,12 @@
 import AppKit
+import MetlaKit
 
 /// System Settings panes the app points to.
 enum SystemSettings {
     /// Privacy & Security › Full Disk Access.
     @MainActor
     static func openFullDiskAccess() {
-        let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-        if let url = URL(string: pane) {
-            NSWorkspace.shared.open(url)
-        }
+        NSWorkspace.shared.open(AccessModel.settingsURL)
     }
 }
 

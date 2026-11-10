@@ -41,6 +41,14 @@ struct FoldersView: View {
                     .keyboardShortcut(.return, modifiers: .command)
                 Button(strings.text("menu.exclude")) { exclude(ids) }
                     .keyboardShortcut("e", modifiers: .command)
+                Button(strings.text("menu.addToCleanup")) { addToCleanup(ids) }
+                    .keyboardShortcut(.delete, modifiers: .command)
+                    .disabled(candidates(ids).isEmpty)
+            }
+            .onKeyPress(keys: [.delete]) { press in
+                guard press.modifiers.contains(.command) else { return .ignored }
+                addToCleanup(Set([folders.selection].compactMap { $0 }))
+                return .handled
             }
             .onKeyPress(.return) {
                 reveal(Set([folders.selection].compactMap { $0 }))
@@ -115,6 +123,21 @@ struct FolderRows: TableRowContent {
                     folders.collapse(node)
                 }
             })
+    }
+}
+
+extension FoldersView {
+    /// The candidates among the nodes `ids`: directories a rule matched.
+    func candidates(_ ids: Set<FolderNode.ID>) -> [DirId] {
+        ids.compactMap { folders.node($0) }.compactMap { node in
+            guard node.badge.isRule, case .directory(let id) = node.kind else { return nil }
+            return id
+        }
+    }
+
+    /// ⌘⌫: the selected candidates join the cleanup selection.
+    func addToCleanup(_ ids: Set<FolderNode.ID>) {
+        candidates(ids).forEach(model.addToCleanup)
     }
 }
 

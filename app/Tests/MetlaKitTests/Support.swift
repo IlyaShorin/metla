@@ -63,15 +63,57 @@ func until(_ seconds: Double = 30, _ done: @MainActor () async -> Bool) async th
 
 struct Timeout: Error {}
 
-/// An app model on `settings`, its first scan done and its worktrees known.
+/// An app model on `settings`, its first scan done; it moves to the
+/// Trash with `trash` (by default one that refuses: the shared fixture is
+/// only read).
 @MainActor
-func started(_ settings: LaunchSettings = Fixture.settings()) async throws -> AppModel {
-    let model = AppModel(settings: settings, strings: Strings(language: "en", region: "US"))
-    await model.start(mainThread: MainThreadGuard { call in Issue.record("main thread: \(call)") })
+func started(
+    _ settings: LaunchSettings = Fixture.settings(), trash: any TrashHost = RefusingTrash(),
+    preferences: any Preferences = MemoryPreferences(), probe: any AccessProbe = FixedProbe([])
+) async throws -> AppModel {
+    let model = AppModel(
+        settings: settings, strings: Strings(language: "en", region: "US"), preferences: preferences, probe: probe)
+    await model.start(
+        mainThread: MainThreadGuard { call in Issue.record("main thread: \(call)") }, trash: trash,
+        login: FakeLogin())
     try await until {
         await model.refresh([.picture])
         guard case .idle? = model.freshness?.state else { return false }
         return model.overview?.freshness.fullScan != nil
     }
     return model
+}
+
+/// A Trash that moves nothing.
+final class RefusingTrash: TrashHost, Sendable {
+    func trash(path: String) -> TrashOutcome {
+        .refused(reason: "no Trash in this test")
+    }
+}
+
+/// A probe with fixed answers.
+struct FixedProbe: AccessProbe {
+    let given: [ProbeAnswer]
+
+    init(_ given: [ProbeAnswer]) {
+        self.given = given
+    }
+
+    func answers() async -> [ProbeAnswer] {
+        given
+    }
+}
+
+/// A login item that remembers, or refuses.
+@MainActor
+final class FakeLogin: LoginItem {
+    var enabled = false
+    var refuses = false
+
+    func set(_ enabled: Bool) throws {
+        if refuses {
+            throw CocoaError(.featureUnsupported)
+        }
+        self.enabled = enabled
+    }
 }

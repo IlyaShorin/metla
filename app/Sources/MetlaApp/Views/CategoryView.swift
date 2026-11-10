@@ -66,7 +66,7 @@ struct CategoryView: View {
             Text(strings.format("category.selected", selection.count, table.total, Format.bytes(selection.bytes, strings)))
                 .foregroundStyle(.secondary)
             Spacer()
-            Button(strings.text("category.clean")) { model.showsCleanSheet = true }
+            Button(strings.text("category.clean")) { Task { await model.cleanSelected() } }
                 .buttonStyle(.borderedProminent)
                 .disabled(selection.count == 0)
         }

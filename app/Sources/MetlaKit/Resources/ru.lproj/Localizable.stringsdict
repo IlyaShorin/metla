@@ -2,6 +2,86 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>exclusions.hides</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>скрывает %1$d объекта · %2$@</string>
+			<key>many</key>
+			<string>скрывает %1$d объектов · %2$@</string>
+			<key>one</key>
+			<string>скрывает %1$d объект · %2$@</string>
+			<key>other</key>
+			<string>скрывает %1$d объекта · %2$@</string>
+		</dict>
+	</dict>
+	<key>general.days</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@days@</string>
+		<key>days</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>%d дня</string>
+			<key>many</key>
+			<string>%d дней</string>
+			<key>one</key>
+			<string>%d день</string>
+			<key>other</key>
+			<string>%d дня</string>
+		</dict>
+	</dict>
+	<key>hud.problems</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@problems@</string>
+		<key>problems</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>%d проблемы</string>
+			<key>many</key>
+			<string>%d проблем</string>
+			<key>one</key>
+			<string>%d проблема</string>
+			<key>other</key>
+			<string>%d проблемы</string>
+		</dict>
+	</dict>
+	<key>outcome.partial</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@entries@</string>
+		<key>entries</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>Удалено частично: осталось %d элемента</string>
+			<key>many</key>
+			<string>Удалено частично: осталось %d элементов</string>
+			<key>one</key>
+			<string>Удалено частично: остался %d элемент</string>
+			<key>other</key>
+			<string>Удалено частично: осталось %d элемента</string>
+		</dict>
+	</dict>
 	<key>overview.partialDenied</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -40,6 +120,86 @@
 			<string>Ещё %d папку не удалось прочитать.</string>
 			<key>other</key>
 			<string>Ещё %d папки не удалось прочитать.</string>
+		</dict>
+	</dict>
+	<key>preview.action</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>Удалить %d объекта</string>
+			<key>many</key>
+			<string>Удалить %d объектов</string>
+			<key>one</key>
+			<string>Удалить %d объект</string>
+			<key>other</key>
+			<string>Удалить %d объекта</string>
+		</dict>
+	</dict>
+	<key>preview.actionTrash</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>Переместить %d объекта в Корзину</string>
+			<key>many</key>
+			<string>Переместить %d объектов в Корзину</string>
+			<key>one</key>
+			<string>Переместить %d объект в Корзину</string>
+			<key>other</key>
+			<string>Переместить %d объекта в Корзину</string>
+		</dict>
+	</dict>
+	<key>preview.count</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>%d объекта</string>
+			<key>many</key>
+			<string>%d объектов</string>
+			<key>one</key>
+			<string>%d объект</string>
+			<key>other</key>
+			<string>%d объекта</string>
+		</dict>
+	</dict>
+	<key>preview.title</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>Удалить %1$d объекта — около %2$@?</string>
+			<key>many</key>
+			<string>Удалить %1$d объектов — около %2$@?</string>
+			<key>one</key>
+			<string>Удалить %1$d объект — около %2$@?</string>
+			<key>other</key>
+			<string>Удалить %1$d объекта — около %2$@?</string>
 		</dict>
 	</dict>
 	<key>status.files</key>

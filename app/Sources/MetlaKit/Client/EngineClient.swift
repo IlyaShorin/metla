@@ -20,14 +20,16 @@ public actor EngineClient {
         self.changes = changes
     }
 
-    /// Opens the engine off the main thread.
+    /// Opens the engine off the main thread; `trash` moves things to the
+    /// Trash (the system's, unless a test or a scenario gives another).
     @concurrent
     public static func open(
         _ options: EngineOptions,
+        trash: any TrashHost = SystemTrash(),
         mainThread: MainThreadGuard = .standard
     ) async throws -> EngineClient {
         let engine = try perform("open", mainThread) {
-            try Engine.open(options: options, trash: RefusingTrash())
+            try Engine.open(options: options, trash: trash)
         }
         let (changes, continuation) = AsyncStream.makeStream(
             of: Void.self, bufferingPolicy: .bufferingNewest(1))
@@ -54,6 +56,12 @@ public actor EngineClient {
     /// already handled.
     public nonisolated func drain() -> Set<Changed> {
         relay.drain()
+    }
+
+    /// How many cleanups have ended (a report, or why none ran) since the
+    /// engine opened: a cleanup asked for has ended once this grows.
+    public nonisolated var cleanupsEnded: Int {
+        relay.cleanupsEnded
     }
 
     public func snapshot() throws -> Overview {
@@ -107,6 +115,54 @@ public actor EngineClient {
     public func removeExclusion(_ path: String) throws -> Bool {
         try run("removeExclusion") { try $0.removeExclusion(path: path) }
     }
+
+    /// The candidates keeping `path` hides.
+    public func hiddenBy(_ path: String) throws -> Tally {
+        try run("hiddenBy") { try $0.hiddenBy(path: path) }
+    }
+
+    public func settings() -> EngineSettings {
+        run("settings") { $0.settings() }
+    }
+
+    public func setSettings(_ settings: EngineSettings) throws {
+        try run("setSettings") { try $0.setSettings(settings: settings) }
+    }
+
+    public func setPowerProfile(_ profile: PowerProfile) throws {
+        try run("setPowerProfile") { try $0.setPowerProfile(profile: profile) }
+    }
+
+    /// The preview of cleaning `selection`; it runs Git for worktrees.
+    public func preview(_ selection: [DirId]) throws -> CleanupPreview {
+        try run("preview") { try $0.preview(selection: selection) }
+    }
+
+    public func executeConfirmed(_ preview: PreviewId, _ confirmed: Confirmations) throws {
+        try run("executeConfirmed") { try $0.executeConfirmed(preview: preview, confirmed: confirmed) }
+    }
+
+    public func quickClean(_ categories: [QuickCategory]) throws {
+        try run("quickClean") { try $0.quickClean(categories: categories) }
+    }
+
+    public func cleanupProgress() -> CleanProgress? {
+        run("cleanupProgress") { $0.cleanupProgress() }
+    }
+
+    public func cancelCleanup() {
+        run("cancelCleanup") { $0.cancelCleanup() }
+    }
+
+    /// Cancels the running cleanup from any thread at once: it only sets
+    /// the engine's flag.
+    public nonisolated func cancelNow() {
+        engine.cancelCleanup()
+    }
+
+    public func lastReport() -> CleanupResult? {
+        run("lastReport") { $0.lastReport() }
+    }
 }
 
 /// Hands the engine's notifications, which come on its own threads, to
@@ -114,6 +170,7 @@ public actor EngineClient {
 /// says there is something to drain.
 final class Relay: EngineObserver, Sendable {
     private let topics = OSAllocatedUnfairLock<Set<Changed>>(initialState: [])
+    private let cleanups = OSAllocatedUnfairLock(initialState: 0)
     private let continuation: AsyncStream<Void>.Continuation
 
     init(continuation: AsyncStream<Void>.Continuation) {
@@ -125,8 +182,15 @@ final class Relay: EngineObserver, Sendable {
     }
 
     func changed(topic: Changed) {
+        if topic == .cleanup {
+            cleanups.withLock { $0 += 1 }
+        }
         topics.withLock { _ = $0.insert(topic) }
         continuation.yield()
+    }
+
+    var cleanupsEnded: Int {
+        cleanups.withLock { $0 }
     }
 
     func drain() -> Set<Changed> {
@@ -137,10 +201,17 @@ final class Relay: EngineObserver, Sendable {
     }
 }
 
-/// Moving to the Trash comes with the cleanup flow (M6); until then the
-/// app moves nothing.
-final class RefusingTrash: TrashHost, Sendable {
-    func trash(path: String) -> TrashOutcome {
-        .refused(reason: "Moving to the Trash is not available yet")
+/// The system's Trash: `FileManager.trashItem`, so that Finder's "Put
+/// Back" works. The engine calls it on its own thread, never the main one.
+public final class SystemTrash: TrashHost, Sendable {
+    public init() {}
+
+    public func trash(path: String) -> TrashOutcome {
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+            return .moved
+        } catch {
+            return .refused(reason: error.localizedDescription)
+        }
     }
 }

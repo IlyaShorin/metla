@@ -24,6 +24,7 @@ import Testing
         let earlier = now.addingTimeInterval(-120)
         #expect(Format.relative(earlier, now: now, english) == "2 min. ago")
         #expect(Format.relative(earlier, now: now, russian) == "2 мин. назад")
+        #expect(Format.relative(now, now: now, english) == "1 sec. ago", "never in the future, not even by zero")
         #expect(Format.relative(now.addingTimeInterval(60), now: now, english) == Format.relative(now, now: now, english),
                 "a time ahead of now reads as now")
         #expect(Format.date(86_400) == Date(timeIntervalSince1970: 86_400))
