@@ -5,6 +5,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
 use std::ptr::NonNull;
 
+use super::bulk::BulkCall;
 use super::sys::{c_name, checked, errno, meta_of, retry_interrupted};
 use crate::domain::{Entry, EntryKind, EntryMeta, Errno};
 
@@ -186,10 +187,23 @@ pub fn list_dir(dir: &DirHandle) -> Result<Vec<Entry>, ListError> {
     collect(|sink| visit_dir(dir, sink))
 }
 
+/// [`list_dir`] with `call` in place of `getattrlistbulk`.
+pub fn list_dir_with(dir: &DirHandle, call: BulkCall) -> Result<Vec<Entry>, ListError> {
+    collect(|sink| visit_with(dir, call, sink))
+}
+
 /// [`list_dir`] handing each entry to `sink` as it is read, so a
 /// directory of any size is listed in bounded memory.
 pub fn visit_dir(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<(), ListError> {
-    if super::bulk::visit(dir, sink)? == super::bulk::Listing::Unsupported {
+    visit_with(dir, super::bulk::getattrlistbulk, sink)
+}
+
+fn visit_with(
+    dir: &DirHandle,
+    call: BulkCall,
+    sink: &mut dyn FnMut(Entry),
+) -> Result<(), ListError> {
+    if super::bulk::visit(dir, call, sink)? == super::bulk::Listing::Unsupported {
         visit_classic(dir, sink)?;
     }
     Ok(())

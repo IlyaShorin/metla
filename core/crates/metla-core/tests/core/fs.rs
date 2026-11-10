@@ -6,8 +6,8 @@ use std::path::Path;
 
 use metla_core::domain::{Entry, EntryKind, EntryMeta, Errno, Stamp, UnixTime};
 use metla_core::fs::{
-    Bulk, DirHandle, ListError, decode_bulk, list_dir, list_dir_classic, mounts, peak_rss,
-    raise_open_file_limit, raised_open_file_limit, retry_interrupted, volume,
+    Bulk, BulkCall, DirHandle, ListError, decode_bulk, list_dir, list_dir_classic, list_dir_with,
+    mounts, peak_rss, raise_open_file_limit, raised_open_file_limit, retry_interrupted, volume,
 };
 
 use crate::support::{Fixture, write_file};
@@ -283,6 +283,28 @@ fn both(path: &Path) -> (Vec<Entry>, Vec<Entry>) {
     bulk.sort_by(|a, b| a.name.cmp(&b.name));
     classic.sort_by(|a, b| a.name.cmp(&b.name));
     (bulk, classic)
+}
+
+/// No file system here refuses `getattrlistbulk`, so the call is a
+/// parameter: answered with `ENOTSUP`, the listing falls back to
+/// `readdir` and `fstatat`; any other error is the listing's error.
+#[test]
+fn a_file_system_without_the_bulk_call_is_listed_the_classic_way() {
+    let fx = Fixture::new();
+    write_file(&fx.path("file"), 5000);
+    fx.dir("sub");
+    symlink("file", fx.path("link")).unwrap();
+    let dir = DirHandle::open(&fx.path("")).unwrap();
+    let unsupported: BulkCall = |_, _, _, _| Err(libc::ENOTSUP);
+    let sorted = |mut entries: Vec<Entry>| {
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries
+    };
+    let listed = sorted(list_dir_with(&dir, unsupported).unwrap());
+    assert_eq!(listed, sorted(list_dir_classic(&dir).unwrap()));
+    assert_eq!(listed.len(), 3);
+    let failing: BulkCall = |_, _, _, _| Err(libc::EIO);
+    assert!(list_dir_with(&dir, failing).is_err());
 }
 
 #[test]

@@ -53,15 +53,44 @@ pub(super) enum Listing {
     /// Every entry was handed on.
     Done,
     /// The file system does not support the bulk call; nothing was
-    /// handed on. Not seen on the development machine: APFS, HFS+ and
-    /// devfs all answer (the kernel emulates the call where needed), so
-    /// no test reaches this case.
+    /// handed on.
     Unsupported,
 }
 
-/// Hands every entry of `dir` to `sink`, unless its file system does not
-/// support the bulk call.
-pub(super) fn visit(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<Listing, ListError> {
+/// The bulk call: fills the buffer with records of the open directory's
+/// entries for the request and options, and says how many, or fails with
+/// an errno. A parameter, so that a test can answer as a file system
+/// without the call does (`ENOTSUP`): APFS, HFS+ and devfs all answer it.
+pub type BulkCall = fn(libc::c_int, &mut libc::attrlist, &mut [u8], u64) -> Result<usize, i32>;
+
+/// `getattrlistbulk(2)`, repeated when interrupted.
+pub fn getattrlistbulk(
+    fd: libc::c_int,
+    request: &mut libc::attrlist,
+    buffer: &mut [u8],
+    options: u64,
+) -> Result<usize, i32> {
+    // SAFETY: the caller's descriptor is open, the request is a valid
+    // attrlist and the buffer is writable for its whole length.
+    let count = checked(|| unsafe {
+        libc::getattrlistbulk(
+            fd,
+            std::ptr::from_mut(request).cast(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            options,
+        )
+    })?;
+    Ok(count as usize)
+}
+
+/// Hands every entry of `dir` to `sink`, listed with `call`, unless its
+/// file system does not support the bulk call.
+pub(super) fn visit(
+    dir: &DirHandle,
+    call: BulkCall,
+    sink: &mut dyn FnMut(Entry),
+) -> Result<Listing, ListError> {
     let own = dir.reopen()?;
     let mut request = libc::attrlist {
         bitmapcount: libc::ATTR_BIT_MAP_COUNT,
@@ -74,18 +103,7 @@ pub(super) fn visit(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<List
     SPACE.with_borrow_mut(|buffer| {
         loop {
             let options = u64::from(libc::FSOPT_PACK_INVAL_ATTRS);
-            // SAFETY: the descriptor is open, the request is a valid
-            // attrlist and the buffer is writable for its whole length.
-            let read = checked(|| unsafe {
-                libc::getattrlistbulk(
-                    own.raw(),
-                    (&raw mut request).cast(),
-                    buffer.as_mut_ptr().cast(),
-                    buffer.len(),
-                    options,
-                )
-            });
-            let count = match read {
+            let count = match call(own.raw(), &mut request, buffer, options) {
                 Ok(count) => count,
                 Err(libc::ENOTSUP) => return Ok(Listing::Unsupported),
                 Err(errno) => return Err(ListError::from_errno(errno)),

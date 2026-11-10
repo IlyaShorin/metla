@@ -437,7 +437,9 @@ M4 changes:
   own and an entry with an attribute the call could not give are asked
   with `fstatat`, exactly as before, so their errors are classified as
   the classic listing classifies them; a file system without the call
-  (`ENOTSUP`) is listed with `readdir` and `fstatat`, which stays
+  (`ENOTSUP`) is listed with `readdir` and `fstatat` (the call is a
+  parameter, `fs::BulkCall`, which a test answers with `ENOTSUP`: no
+  file system here refuses it), which stays
   available (`ScanOptions::classic`, `scan --classic`) for comparison. A
   directory's own link count is not used and is one in both listings.
   Reading a record is a pure function (`fs::decode_bulk`), tested on
