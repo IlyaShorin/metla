@@ -392,7 +392,8 @@ fn equivalent(seed: u64, steps: usize, every: usize) {
             continue;
         }
         clock += Duration::from_secs(1);
-        loop {
+        for round in 0.. {
+            assert!(round < 1_000, "seed {seed}: tasks keep coming");
             let tasks = coalescer.due(clock);
             if tasks.is_empty() {
                 break;

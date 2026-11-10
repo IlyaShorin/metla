@@ -347,7 +347,12 @@ fn a_reader_sees_one_consistent_picture_while_scans_are_written() {
         });
         let mut reader = reader(&index);
         let mut checks = 0;
+        let started = std::time::Instant::now();
         while !done.load(Ordering::SeqCst) || checks == 0 {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(30),
+                "writes never ended"
+            );
             reader
                 .read(|snap| {
                     let root = snap.root()?.unwrap();

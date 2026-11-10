@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use metla_cli::{
-    BURST, Bench, CHURN, Command, LATENCY, Place, freshness_line, parse, profiles, spent,
+    BURST, Bench, CHURN, Command, LATENCY, PATIENCE, Place, freshness_line, parse, profiles, spent,
     state_text,
 };
 use metla_core::domain::{Bytes, ProgressSnapshot, UnixTime};
@@ -26,6 +26,7 @@ fn place(profile: PowerProfile) -> Place {
         latency: LATENCY,
         settle: None,
         profile,
+        patience: PATIENCE,
     }
 }
 
@@ -39,11 +40,12 @@ fn watch_takes_where_how_and_for_how_long() {
         })
     );
     let line = "watch --root /r --data-dir /d --home /h --seconds 5 --latency-ms 20 \
-                --settle-ms 7 --profile saver";
+                --settle-ms 7 --profile saver --wait-s 30";
     let expected = Place {
         home: Some(PathBuf::from("/h")),
         latency: Duration::from_millis(20),
         settle: Some(Duration::from_millis(7)),
+        patience: Duration::from_secs(30),
         ..place(PowerProfile::Saver)
     };
     assert_eq!(
@@ -54,6 +56,7 @@ fn watch_takes_where_how_and_for_how_long() {
         })
     );
     assert_eq!(LATENCY, Duration::from_secs(1));
+    assert_eq!(PATIENCE, Duration::from_secs(600));
 }
 
 #[test]
@@ -236,7 +239,7 @@ impl Bed {
     fn run(&self, line: &str) -> (i32, String, String) {
         let home = self.root.join("home");
         let words = format!(
-            "{line} --root {} --data-dir {} --home {} --latency-ms 20 --settle-ms 5",
+            "{line} --root {} --data-dir {} --home {} --latency-ms 20 --settle-ms 5 --wait-s 30",
             self.root.display(),
             self.data.display(),
             home.display()

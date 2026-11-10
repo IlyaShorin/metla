@@ -20,7 +20,8 @@ use std::io::Write;
 use std::path::Path;
 
 pub use args::{
-    BURST, Bench, CANDIDATE_LIMIT, CHURN, Command, Edit, LATENCY, TOP_LIMIT, USAGE, View, parse,
+    BURST, Bench, CANDIDATE_LIMIT, CHURN, Command, Edit, LATENCY, PATIENCE, TOP_LIMIT, USAGE, View,
+    parse,
 };
 pub use cleaned::{Cleaned, clean_text, outcome_text};
 pub use commands::{ScanHow, default_threads};

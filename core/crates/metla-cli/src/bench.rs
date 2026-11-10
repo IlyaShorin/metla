@@ -135,7 +135,7 @@ pub fn bench_churn(place: &Place, length: Duration, per_burst: usize) -> Result<
     stop.store(true, Ordering::Release);
     let churned = churner.join().map_err(|_| "the churn failed")?;
     let ended = Instant::now();
-    let quiet = waited(Duration::from_secs(600), || idle(&engine)).ok_or("never idle")?;
+    let quiet = waited(place.patience, || idle(&engine)).ok_or("never idle")?;
     let after = (engine.counters(), usage());
     let right = exactly_right(place)?;
     let to_right = ended.elapsed();
@@ -173,11 +173,11 @@ pub fn bench_refresh(place: &Place) -> Result<String, String> {
     let engine = scanned(place)?;
     let probe = place.root.join("refresh-probe");
     fs::create_dir_all(&probe).map_err(|e| e.to_string())?;
-    waited(Duration::from_secs(600), || idle(&engine)).ok_or("never idle")?;
+    waited(place.patience, || idle(&engine)).ok_or("never idle")?;
     let mut lines = format!("refresh with {:?}:", place.profile);
     for round in 0..3 {
         let file = probe.join(format!("w{round}"));
-        let shown = shown_after_write(&engine, &place.root, &file)?;
+        let shown = shown_after_write(&engine, place, &file)?;
         lines.push_str(&format!(" {shown}"));
     }
     let _ = fs::remove_dir_all(&probe);
@@ -190,14 +190,14 @@ fn scanned(place: &Place) -> Result<Engine, String> {
     fixture(&place.root)?;
     let (engine, _) = open(place, false)?;
     engine.start_scan().map_err(|e| e.to_string())?;
-    waited(Duration::from_secs(600), || idle(&engine)).ok_or("the first scan did not end")?;
+    waited(place.patience, || idle(&engine)).ok_or("the first scan did not end")?;
     Ok(engine)
 }
 
 /// Writes 1 MiB to `file`; how long until the root's total shows it.
 /// Returns once the engine is idle again.
-fn shown_after_write(engine: &Engine, root: &Path, file: &Path) -> Result<String, String> {
-    let root = DirRef::Path(root.to_path_buf());
+fn shown_after_write(engine: &Engine, place: &Place, file: &Path) -> Result<String, String> {
+    let root = DirRef::Path(place.root.clone());
     // No entries: only the directory's own totals are read.
     let none = Page {
         offset: usize::MIN,
@@ -206,8 +206,8 @@ fn shown_after_write(engine: &Engine, root: &Path, file: &Path) -> Result<String
     let total = || engine.children(&root, none).ok().map(|f| f.dir.tree.bytes);
     let before = total();
     fs::write(file, vec![9u8; 1 << 20]).map_err(|e| e.to_string())?;
-    let shown = waited(Duration::from_secs(900), || total() != before);
-    waited(Duration::from_secs(900), || idle(engine)).ok_or("never idle")?;
+    let shown = waited(place.patience, || total() != before);
+    waited(place.patience, || idle(engine)).ok_or("never idle")?;
     let precise = |shown: Duration| format!("{:.3} s", shown.as_secs_f64());
-    Ok(shown.map_or("not within 15 min".to_owned(), precise))
+    Ok(shown.map_or("never".to_owned(), precise))
 }

@@ -28,7 +28,7 @@ pub const USAGE: &str = "usage:
   metla-cli watch      --root <dir> --data-dir <dir> [engine options] [--seconds N]
   metla-cli bench      open|churn|refresh --root <dir> --data-dir <dir> [engine options]
                        [--seconds N] [--files N]
-engine options: [--home <dir>] [--profile p] [--latency-ms N] [--settle-ms N]
+engine options: [--home <dir>] [--profile p] [--latency-ms N] [--settle-ms N] [--wait-s N]
 categories: app-cache, dev-cache, build, log, worktree, temp
 profiles: interactive, background, saver, off
 clean works only on a root marked .metla-fixture; without --yes it only previews;
@@ -36,6 +36,8 @@ bench churn and refresh write only into a root marked .metla-fixture";
 
 /// The FSEvents latency `watch` and `bench` use unless told otherwise.
 pub const LATENCY: Duration = Duration::from_secs(1);
+/// How long a bench waits for the engine unless told otherwise.
+pub const PATIENCE: Duration = Duration::from_secs(600);
 /// How long `bench churn` churns, and how many files per burst.
 pub const CHURN: Duration = Duration::from_secs(120);
 pub const BURST: usize = 400;
@@ -125,7 +127,7 @@ pub enum Edit {
     List,
 }
 
-const VALUE_FLAGS: [&str; 13] = [
+const VALUE_FLAGS: [&str; 14] = [
     "--root",
     "--index",
     "--threads",
@@ -139,6 +141,7 @@ const VALUE_FLAGS: [&str; 13] = [
     "--profile",
     "--files",
     "--settle-ms",
+    "--wait-s",
 ];
 
 const PROFILES: [(&str, PowerProfile); 4] = [
@@ -221,6 +224,9 @@ impl Parsed {
             latency: self.millis("--latency-ms")?.unwrap_or(LATENCY),
             settle: self.millis("--settle-ms")?,
             profile: self.profile()?,
+            patience: self
+                .number("--wait-s")?
+                .map_or(PATIENCE, |s| Duration::from_secs(s as u64)),
         })
     }
 

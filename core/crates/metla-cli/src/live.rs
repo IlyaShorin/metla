@@ -35,6 +35,8 @@ pub struct Place {
     /// cap then eight times as long, no pause between batches).
     pub settle: Option<Duration>,
     pub profile: PowerProfile,
+    /// How long a bench waits for the engine before it gives up.
+    pub patience: Duration,
 }
 
 /// The standard profiles, or all of them settling after `settle`.

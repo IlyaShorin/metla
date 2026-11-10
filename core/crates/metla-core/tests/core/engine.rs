@@ -861,7 +861,9 @@ fn a_cleanup_shows_as_cleaning_while_it_runs() {
     let seen = std::sync::atomic::AtomicBool::new(false);
     std::thread::scope(|scope| {
         scope.spawn(|| {
+            let started = Instant::now();
             while engine.last_report().is_none() {
+                assert!(started.elapsed() < Duration::from_secs(10), "no report");
                 let state = engine.snapshot().unwrap().freshness.state;
                 if state == EngineState::Cleaning {
                     seen.store(true, std::sync::atomic::Ordering::Relaxed);
