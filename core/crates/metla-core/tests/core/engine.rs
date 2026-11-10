@@ -658,6 +658,7 @@ fn switching_off_cancels_the_first_background_scan() {
     let place = Place::new(HOME);
     wide(&place);
     let engine = Engine::open(slow(&place)).unwrap();
+    until(&engine, |e| e.progress().is_some());
     engine.set_power_profile(PowerProfile::Off).unwrap();
     until(&engine, |e| {
         let state = e.snapshot().unwrap().freshness.state;
@@ -673,6 +674,7 @@ fn switching_background_analysis_off_cancels_the_first_background_scan() {
     let place = Place::new(HOME);
     wide(&place);
     let engine = Engine::open(slow(&place)).unwrap();
+    until(&engine, |e| e.progress().is_some());
     engine.set_background(false).unwrap();
     until(&engine, |e| {
         let state = e.snapshot().unwrap().freshness.state;

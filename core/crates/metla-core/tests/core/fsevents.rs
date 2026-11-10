@@ -156,6 +156,23 @@ fn fsevents_a_restart_resumes_from_the_stored_event_and_catches_what_changed_mea
 }
 
 #[test]
+fn a_lost_history_matters_only_once_the_engine_watches() {
+    let place = Place::new(HOME);
+    let manual = Engine::open(place.config(PowerProfile::Background)).unwrap();
+    settled(&manual);
+    drop(manual);
+    let off = EngineConfig {
+        profile: PowerProfile::Off,
+        ..real(&place, Duration::from_millis(20), profiles())
+    };
+    let engine = Engine::open(off).unwrap();
+    let freshness = engine.snapshot().unwrap().freshness;
+    assert!(!freshness.needs_full_scan, "nothing is watched yet");
+    engine.set_power_profile(PowerProfile::Background).unwrap();
+    until(&engine, |e| e.counters().full_scans == 1);
+}
+
+#[test]
 fn a_stored_event_from_another_history_or_none_at_all_means_a_full_scan() {
     let place = Place::new(HOME);
     let quick = || real(&place, Duration::from_millis(20), profiles());
