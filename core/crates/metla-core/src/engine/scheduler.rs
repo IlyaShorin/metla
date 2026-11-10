@@ -109,8 +109,11 @@ impl Scheduler {
 
     /// Opening: follow changes from the stored event id when the history
     /// allows it; a full scan is needed without a picture or a history.
+    /// The saved picture's worktree statuses are computed in the
+    /// background, since no scan may come to compute them.
     fn start(&mut self) {
         self.watch();
+        self.worktrees(None);
         self.work();
     }
 

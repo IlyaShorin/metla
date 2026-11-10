@@ -1221,6 +1221,25 @@ fn worktree_status(engine: &Engine) -> Option<Removability> {
 }
 
 #[test]
+fn an_engine_opened_on_a_saved_picture_computes_the_worktree_statuses() {
+    let place = Place::new(&[]);
+    let git_ = isolated(&place.aux);
+    let repo = pushed_repository(&place.fx, &git_);
+    pushed_worktree(&git_, &repo, &place.path("wt"), "feature");
+    let engine = place.open();
+    settled(&engine);
+    until(&engine, |e| {
+        worktree_status(e) != Some(Removability::Unknown)
+    });
+    drop(engine);
+    let again = place.open();
+    assert_eq!(again.counters().full_scans, 0, "no scan: the saved picture");
+    until(&again, |e| {
+        worktree_status(e) != Some(Removability::Unknown)
+    });
+}
+
+#[test]
 fn a_change_below_a_worktree_has_its_status_computed_again() {
     let place = Place::new(&[]);
     let git_ = isolated(&place.aux);
