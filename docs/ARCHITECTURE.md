@@ -408,13 +408,16 @@ M4 changes:
   link count and allocated data size for everything else), packed with
   `FSOPT_PACK_INVAL_ATTRS` and read by the returned attribute set. A
   mount point (the call describes the directory underneath), a firmlink
-  (it describes the link, not its target) and an entry with an attribute
-  the call could not give are asked with `fstatat`, exactly as before; a
-  file system without the call (`ENOTSUP`) is listed with `readdir` and
-  `fstatat`, which stays available (`ScanOptions::classic`, `scan
-  --classic`) for comparison. A directory's own link count is not used
-  and is one in both listings. Tests compare both listings field by
-  field on synthetic trees and on `/` and `/Volumes`.
+  (it describes the link, not its target), an entry with an error of its
+  own and an entry with an attribute the call could not give are asked
+  with `fstatat`, exactly as before, so their errors are classified as
+  the classic listing classifies them; a file system without the call
+  (`ENOTSUP`) is listed with `readdir` and `fstatat`, which stays
+  available (`ScanOptions::classic`, `scan --classic`) for comparison. A
+  directory's own link count is not used and is one in both listings.
+  Reading a record is a pure function (`fs::decode_bulk`), tested on
+  records packed as the kernel packs them; tests also compare both
+  listings field by field on synthetic trees and on `/` and `/Volumes`.
 * **Origins.** A walk starts at an origin: the scan root, or one
   directory of a picture, which inherits from the stored rows above it
   what an unbroken walk would have handed down (`scan::Inherited`: its
