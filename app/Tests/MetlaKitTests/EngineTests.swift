@@ -149,6 +149,21 @@ import Testing
         #expect(file.shownChildren == nil && !file.isDirectory)
     }
 
+    @Test func showInFoldersOpensTheOutlineDownToTheCandidate() async throws {
+        let model = try await started()
+        defer { model.stop() }
+        let table = try #require(model.category(.buildArtifact))
+        await table.reload()
+        let row = try #require(table.rows.first { $0.shownPath == "~/code/app/target" })
+        await model.showInFolders(row.path)
+        #expect(model.screen == .folders)
+        let folders = try #require(model.folders)
+        let selected = try #require(folders.node(folders.selection))
+        #expect(selected.path == row.path && selected.badge == .rule("Cargo build output"))
+        #expect(folders.node((row.path as NSString).deletingLastPathComponent)?.isExpanded == true)
+        #expect(await folders.reveal(model.settings.root + "/nowhere") == false)
+    }
+
     @Test func refreshAndStopReachTheEngine() async throws {
         let model = try await started()
         defer { model.stop() }

@@ -210,6 +210,12 @@ public final class AppModel {
         }
     }
 
+    /// "Show in Folders": the Folders screen, opened down to `path`.
+    public func showInFolders(_ path: String) async {
+        screen = .folders
+        await folders?.reveal(path)
+    }
+
     /// Refresh (⌘R): a full scan the user asked for.
     public func rescan() async {
         try? await client?.startScan()

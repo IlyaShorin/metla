@@ -160,7 +160,9 @@ struct CategoryView: View {
         Button(strings.text("menu.reveal")) { reveal(ids) }
             .keyboardShortcut(.return, modifiers: .command)
         Button(strings.text("menu.showInFolders")) {
-            Task { await model.show(.folders) }
+            if let row = table.rows.first(where: { ids.contains($0.id) }) {
+                Task { await model.showInFolders(row.path) }
+            }
         }
         Button(strings.text("menu.exclude")) { exclude(ids) }
             .keyboardShortcut("e", modifiers: .command)

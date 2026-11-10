@@ -113,6 +113,27 @@ public final class FoldersModel {
         node.isExpanded = false
     }
 
+    /// Opens the outline down to `path` and selects it ("Show in
+    /// Folders"); false when the picture has no such directory.
+    @discardableResult
+    public func reveal(_ path: String) async -> Bool {
+        if top.isEmpty {
+            await reload()
+        }
+        var level = top
+        var found: FolderNode?
+        for name in path.dropFirst(rootPath.count).split(separator: "/").map(String.init) {
+            guard let node = level.first(where: { $0.name == name && $0.isDirectory }) else {
+                return false
+            }
+            await expand(node)
+            found = node
+            level = node.children ?? []
+        }
+        selection = found?.id
+        return found != nil
+    }
+
     /// The selected path from the root down, for the breadcrumb.
     public var breadcrumb: [String] {
         guard let node = node(selection) else {
