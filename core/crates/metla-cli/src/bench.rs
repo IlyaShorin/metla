@@ -22,7 +22,11 @@ use crate::live::{Place, fixture, open, spent};
 
 /// Waits until `done` holds or `limit` passes; how long it took.
 fn waited(limit: Duration, done: impl Fn() -> bool) -> Option<Duration> {
-    let started = Instant::now();
+    waited_since(Instant::now(), limit, done)
+}
+
+/// [`waited`], timed from `started`.
+fn waited_since(started: Instant, limit: Duration, done: impl Fn() -> bool) -> Option<Duration> {
     let deadline = started + limit;
     while !done() {
         // Time left, or none once the deadline has passed.
@@ -224,10 +228,14 @@ fn shown_after_write(engine: &Engine, place: &Place, file: &Path) -> Result<Stri
     };
     let total = || engine.children(&root, none).ok().map(|f| f.dir.tree.bytes);
     let before = total().ok_or("the root is not in the picture")?;
+    // The clock starts before the write: on a busy machine this thread
+    // can wait longer than the stream's latency between the write and its
+    // first look, and the time until the change shows includes that.
+    let started = Instant::now();
     fs::write(file, vec![9u8; 1 << 20]).map_err(|e| e.to_string())?;
     let written = fs::symlink_metadata(file).map_err(|e| e.to_string())?;
     let expected = Some(before + Bytes(written.blocks() * BLOCK_SIZE));
-    let shown = waited(place.patience, || total() == expected);
+    let shown = waited_since(started, place.patience, || total() == expected);
     waited(place.patience, || idle(engine)).ok_or("never idle")?;
     let precise = |shown: Duration| format!("{:.3} s", shown.as_secs_f64());
     Ok(shown.map_or("never".to_owned(), precise))
