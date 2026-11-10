@@ -75,7 +75,7 @@ section "cargo test"
 [[ ${PIPESTATUS[0]} -eq 0 ]] || fail "cargo test"
 
 section "slow tests: real FSEvents streams (ignored group, run once)"
-(cd core && cargo test -p metla-core --test core -- --ignored 2>&1) | tee "$log_dir/slow.txt" \
+(cd core && cargo test -p metla-core --test core -- --ignored --nocapture 2>&1) | tee "$log_dir/slow.txt" \
     | grep -E "^test result|FAILED|panicked|^fsevents:"
 [[ ${PIPESTATUS[0]} -eq 0 ]] || fail "slow tests"
 
