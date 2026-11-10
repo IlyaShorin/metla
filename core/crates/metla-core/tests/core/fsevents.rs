@@ -1,10 +1,11 @@
 //! The engine with a real FSEvents stream on a synthetic root.
 //!
-//! One test, with a 20 ms latency and settle times of milliseconds, is in
-//! the regular suite. The others use the standard profiles' settle times
-//! and a latency of a second, take seconds each, and are ignored by
-//! default: `cargo test -- --ignored fsevents` runs them, and
-//! `scripts/quality.sh` runs them once, apart from the mutation runs.
+//! The tests with a 20 ms latency and settle times of milliseconds are in
+//! the regular suite. The others use the standard table's Interactive
+//! profile (a latency and a settle time of a second: the app's window is
+//! visible), take seconds each, and are ignored by default: `cargo test
+//! -- --ignored fsevents` runs them, and `scripts/quality.sh` runs them
+//! once, apart from the mutation runs.
 
 use std::fs;
 use std::time::{Duration, Instant};
@@ -37,6 +38,15 @@ pub fn following(mut profiles: Profiles, latency: Duration) -> Profiles {
 /// The standard profiles, with the slow ones' threads.
 fn standard() -> Profiles {
     Profiles::standard(4)
+}
+
+/// The standard table, followed as `Interactive` follows changes.
+fn interactive(place: &Place) -> EngineConfig {
+    EngineConfig {
+        watching: Watching::FsEvents,
+        profiles: standard(),
+        ..place.config(PowerProfile::Interactive)
+    }
 }
 
 /// How long a fast test waits for an event: the stream's latency is 20
@@ -128,7 +138,7 @@ fn attention_hands_over_at_once_what_the_stream_held_back() {
 #[ignore = "real FSEvents latency; run with --ignored"]
 fn fsevents_a_created_candidate_appears_and_a_deleted_one_disappears() {
     let place = Place::new(HOME);
-    let engine = Engine::open(real(&place, Duration::from_secs(1), standard())).unwrap();
+    let engine = Engine::open(interactive(&place)).unwrap();
     settled(&engine);
     let made = Instant::now();
     place.fx.build(&["~/Library/Caches/org.new.tool/blob=x"]);
@@ -148,7 +158,7 @@ fn fsevents_a_created_candidate_appears_and_a_deleted_one_disappears() {
 #[ignore = "real FSEvents latency; run with --ignored"]
 fn fsevents_a_storm_of_writes_ends_in_few_rescans() {
     let place = Place::new(HOME);
-    let engine = Engine::open(real(&place, Duration::from_secs(1), standard())).unwrap();
+    let engine = Engine::open(interactive(&place)).unwrap();
     settled(&engine);
     let busy = place.fx.dir("build/out");
     let before = engine.counters();
@@ -211,7 +221,7 @@ fn fsevents_off_stops_activity_and_cancels_a_background_scan() {
 #[ignore = "real FSEvents latency; run with --ignored"]
 fn fsevents_a_restart_resumes_from_the_stored_event_and_catches_what_changed_meanwhile() {
     let place = Place::new(HOME);
-    let config = || real(&place, Duration::from_secs(1), standard());
+    let config = || interactive(&place);
     let engine = Engine::open(config()).unwrap();
     settled(&engine);
     place.fx.build(&["~/Library/Caches/org.before/x=1"]);
