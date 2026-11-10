@@ -11,6 +11,7 @@ mod coalescer;
 mod domain;
 mod fs;
 mod gitrun;
+mod incremental;
 mod index;
 mod offered;
 mod porcelain;
