@@ -30,13 +30,6 @@ struct SymbolCheckbox: ToggleStyle {
     struct Box: View {
         let on: Bool
 
-        static let mark: Path = {
-            var line = Path()
-            line.move(to: CGPoint(x: 3.5, y: 7.2))
-            line.addLine(to: CGPoint(x: 6, y: 10))
-            line.addLine(to: CGPoint(x: 10.8, y: 4))
-            return line.strokedPath(StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
-        }()
 
         var body: some View {
             ZStack {
@@ -45,9 +38,12 @@ struct SymbolCheckbox: ToggleStyle {
                 RoundedRectangle(cornerRadius: 3.5)
                     .strokeBorder(on ? Color.accentColor : Color.secondary.opacity(0.6), lineWidth: 1)
                 if on {
-                    // The mark as a filled outline: a filled shape is what
-                    // every renderer draws, the capture's included.
-                    Self.mark.fill(Color.white)
+                    // The mark as text: text is what every renderer draws,
+                    // the capture's included.
+                    Text("\u{2713}")
+                        .font(.system(size: 11, weight: .heavy))
+                        .foregroundStyle(Color.white)
+                        .accessibilityHidden(true)
                 }
             }
         }

@@ -267,7 +267,7 @@
 "hotkeys.show" = "Показать Metla:";
 "hotkeys.record" = "Записать сочетание";
 "hotkeys.recording" = "Нажмите сочетание…";
-"hotkeys.clear" = "Очистить";
+"hotkeys.clear" = "Сбросить";
 "hotkeys.none" = "Нет";
 "hotkeys.needsModifier" = "Нужен ⌘, ⌥ или ⌃ вместе с клавишей.";
 "hotkeys.taken" = "Недоступно: занято другим приложением (ошибка %@).";

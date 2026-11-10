@@ -72,6 +72,7 @@ scripts/build-app.sh       # Metla.app (release, ad-hoc signed) under target/app
 METLA_CONFIGURATION=debug scripts/build-app.sh   # the debug app: cleans fixtures only
 scripts/run-app.sh         # starts the debug app on a fixture metla-cli makes
 scripts/run-app.sh --capture <dir>   # PNGs of the screens, light and dark
+scripts/run-scenarios.sh   # the cleanup flows end to end on fresh fixtures
 ```
 
 Only the release build of the app can clean a root that is not a

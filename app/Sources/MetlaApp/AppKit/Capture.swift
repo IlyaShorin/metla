@@ -7,7 +7,8 @@ import MetlaKit
 import SwiftUI
 
 /// `--capture <dir>`: renders each main screen of the real window, light
-/// and dark, to PNG files, from a fixture engine, then the app quits.
+/// and dark, to PNG files, from a fixture engine, then every M6 screen
+/// (`CaptureExtras`), then the app quits.
 ///
 /// It draws the app's own layers in-process (no screen recording, which
 /// needs a permission): sidebar, title, toolbar and the screens' content
@@ -36,6 +37,12 @@ enum Capture {
             return 0
         }
         var written = 0
+        // The toolbar's items come up a moment after the first picture,
+        // and the first painting of the window leaves them out: paint it
+        // once and throw that away.
+        await model.show(.overview)
+        try? await Task.sleep(for: .seconds(2))
+        _ = image(of: window)
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             NSApp.appearance = NSAppearance(named: appearance)
             for (name, screen) in screens {
@@ -51,7 +58,13 @@ enum Capture {
                 }
             }
         }
-        return written
+        NSApp.appearance = nil
+        return written + (await CaptureExtras.run(model, into: directory))
+    }
+
+    /// One window, painted as `run` paints the main one.
+    static func png(of window: NSWindow) -> Data? {
+        image(of: window)
     }
 
     /// Waits until the first scan is done and the worktrees are known.

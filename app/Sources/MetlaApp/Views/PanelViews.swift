@@ -190,8 +190,7 @@ struct GeneralPane: View {
         Form {
             Toggle(isOn: Binding(get: { general.settings?.background ?? true },
                                  set: { on in Task { await general.setBackground(on) } })) {
-                Text(strings.text("general.background"))
-                Text(strings.text("general.backgroundNote"))
+                Titled(strings.text("general.background"), note: strings.text("general.backgroundNote"))
             }
             Toggle(strings.text("general.battery"), isOn: Binding(
                 get: { general.settings?.reduceOnBattery ?? true },
@@ -208,8 +207,7 @@ struct GeneralPane: View {
                 Task { await general.setRecentDays(general.recentDays + step) }
             }
             Toggle(isOn: Binding(get: { general.showInMenuBar }, set: { general.setShowInMenuBar($0) })) {
-                Text(strings.text("general.menuBar"))
-                Text(strings.text("general.menuBarNote"))
+                Titled(strings.text("general.menuBar"), note: strings.text("general.menuBarNote"))
             }
         }
         .formStyle(.grouped)
@@ -382,7 +380,10 @@ struct AccessPane: View {
     var body: some View {
         Form {
             LabeledContent(strings.text("access.title")) {
-                Label(state, systemImage: symbol).foregroundStyle(tint)
+                HStack(spacing: 6) {
+                    Circle().fill(tint).frame(width: 8, height: 8).accessibilityHidden(true)
+                    Text(state).foregroundStyle(tint)
+                }
             }
             Text(strings.text("access.why")).fixedSize(horizontal: false, vertical: true)
             HStack {
@@ -403,19 +404,29 @@ struct AccessPane: View {
         }
     }
 
-    private var symbol: String {
-        switch access.state {
-        case .granted: "checkmark.shield"
-        case .notGranted: "xmark.shield"
-        case .unknown: "questionmark.circle"
-        }
-    }
-
     private var tint: Color {
         switch access.state {
         case .granted: .green
         case .notGranted: .orange
         case .unknown: .secondary
+        }
+    }
+}
+
+/// A setting's title with a note under it.
+struct Titled: View {
+    let title: String
+    let note: String
+
+    init(_ title: String, note: String) {
+        self.title = title
+        self.note = note
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(note).font(.caption).foregroundStyle(.secondary)
         }
     }
 }

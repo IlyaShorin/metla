@@ -70,15 +70,15 @@ for line in open(sys.argv[1]):
     name = parts[0]
     lines, missed, cover = int(parts[7]), int(parts[8]), parts[9]
     rows.append((name, lines, missed, cover))
-    gated = name.startswith(("Models/", "Text/"))
+    gated = name.startswith(("Models/", "Text/", "Scenarios/"))
     if gated and float(cover.rstrip("%")) < floor:
         low.append(name)
 for name, lines, missed, cover in rows:
-    mark = "  *" if name.startswith(("Models/", "Text/")) else ""
+    mark = "  *" if name.startswith(("Models/", "Text/", "Scenarios/")) else ""
     print(f"{name:40} lines {lines:4}  missed {missed:4}  {cover:>8}{mark}")
 total = [l for l in open(sys.argv[1]) if l.startswith("TOTAL")]
 print(total[0].rstrip() if total else "no total")
-print(f"* view models and text: at least {floor:.0f}% each")
+print(f"* view models, text and scenarios: at least {floor:.0f}% each")
 for name in low:
     print(f"  below the floor: {name}")
 sys.exit(1 if low or not rows else 0)

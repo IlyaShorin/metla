@@ -58,6 +58,7 @@ final class Bridge {
                 let combo = model.hotkeys?.bindings[action]?.display ?? "-"
                 print("hotkey \(action.rawValue) \(combo): \(model.hotkeys?.registrations[action] ?? .unassigned)")
             }
+            fflush(stdout)
         }
         power = PowerMonitor { [weak self] state in
             Task { await self?.model.powerChanged(state) }

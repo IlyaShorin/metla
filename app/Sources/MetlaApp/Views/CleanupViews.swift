@@ -313,7 +313,8 @@ struct ReportLine: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: row.problem ? "exclamationmark.circle" : "checkmark.circle")
+            Text(row.problem ? "!" : "\u{2713}")
+                .fontWeight(.bold).frame(width: 14)
                 .foregroundStyle(row.problem ? Color.orange : Color.green)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 0) {

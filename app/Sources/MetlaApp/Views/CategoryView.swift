@@ -120,7 +120,7 @@ struct CategoryView: View {
                 .lineLimit(1).truncationMode(.middle)
                 .help(row.path)
         }
-        .width(min: 160, ideal: worktrees ? 280 : 330)
+        .width(min: 160, ideal: worktrees ? 250 : 330)
     }
 
     private var rule: some TableColumnContent<CandidateRow, Never> {
@@ -141,7 +141,7 @@ struct CategoryView: View {
         TableColumn(strings.text("category.branch")) { (row: CandidateRow) in
             Text(row.branch ?? "\u{2014}").lineLimit(1).truncationMode(.middle)
         }
-        .width(min: 80, ideal: 130)
+        .width(min: 80, ideal: 115)
     }
 
     private var state: some TableColumnContent<CandidateRow, Never> {
@@ -159,7 +159,7 @@ struct CategoryView: View {
                 .foregroundStyle(row.recent ? Color.orange : Color.secondary)
                 .fontWeight(row.recent ? .medium : .regular)
         }
-        .width(min: 70, ideal: 95)
+        .width(min: 90, ideal: 105)
     }
 
     private var size: some TableColumnContent<CandidateRow, KeyPathComparator<CandidateRow>> {
