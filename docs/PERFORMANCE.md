@@ -312,3 +312,105 @@ command, event batch or deadline), not as CPU wake-ups of the whole
 process; cold-cache scans (no `purge` without root); the app's own
 cost (M5); a Saver run on battery (profiles were set by hand, on AC
 power); idle with a quiet desktop (the desktop was busy throughout).
+
+## M5: idle cadence, index size, the app
+
+**Conditions.** Same machine, macOS 26.6.2, the disk about 98 % full
+(7.6 GB available). Release build of `metla-cli` at d73b7fd, the
+standard profile table (Background: stream latency 15 s, settle 30 s,
+cap 300 s, 60 s between batches). Read-only on `/`, no Full Disk
+Access, not root; indexes and data directories on the RAM disk,
+deleted afterwards. Warm cache. No other build or test ran; the
+desktop was in ordinary use (1-minute load average 5.6 to 8.4, with
+one spike to 27 in the last minute of the idle run, not from this
+work). One run of each.
+
+**Idle.** As in M4: a first `watch --profile interactive` (240 s) made
+the picture and stored the event id; then `watch --root / --profile
+background --seconds 600` resumed from it, so no full scan ran.
+
+| build | events | rescans (batches) | full scans | wake-ups | CPU user + system | peak RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| 64afccd (M4) | 13,162 | 1,122 (519) | 0 | 1,372 | 9.0 + 8.6 s = 17.6 s (2.9 % of a core) | 51.3 MB |
+| d73b7fd | 5,023 | 406 (10) | 0 | 231 | 1.1 + 1.5 s = 2.6 s (0.43 % of a core) | 35.8 MB |
+
+The target (at most 3 s per 600 s) is met by the engine's process, the
+figure M4 measured (its CPU while it watches, Git's own processes not
+counted). Batches came once a minute (10 in 600 s instead of 519).
+Events depend on the desktop's activity and are not comparable between
+the runs.
+
+Not in that figure, and new in M5: **the worktree status pass at
+opening.** An engine opened on a saved picture computes the status of
+every linked worktree in it (three Git calls each, two at a time; M5
+added it so that the list does not say "Checking…" forever). On this
+disk that costs about 38 s of CPU in Git processes once per opening
+(`/usr/bin/time` of the whole process: 5.8 + 35.2 s for the 600 s run;
+a 60 s run cost 39 s and a 300 s run 43 s, the difference being the
+engine's own CPU). It is a launch cost, not an idle one, but the app
+pays it at every launch; computing the statuses only when the worktree
+list is first asked for would avoid it. Not done in M5.
+
+**Churn.** `bench churn --seconds 120 --files 250 --profile background`
+on a fixture, as in M4.
+
+| build | files created + deleted | churn CPU | engine batches / rescans / full scans | events | engine CPU | idle after the churn | picture |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 64afccd (M4) | 326,500 + 326,500 | 38.4 s | 16 / 21 / 1 | 654,537 | 3.1 s | 60.0 s | exactly right |
+| d73b7fd | 325,250 + 325,250 | 39.0 s | 2 / 2 / 1 | 652,015 | 3.6 s | 180.1 s | exactly right |
+
+The engine's CPU is about the same (3.6 s against 3.1 s; one run
+each). The picture is right 180 s after the churn ends instead of 60 s:
+Background now waits a settle time of 30 s, backs off to 300 s and
+pauses 60 s between batches, by design; with the app's window visible
+(attention) the engine follows as Interactive. As in M4 one full scan
+of the fixture ran; its cause was not recorded.
+
+**Index size on the full disk.** Three consecutive `scan --root /
+--index <file>` runs into one index file (8 threads, bulk listing),
+with `auto_vacuum = INCREMENTAL` and the space given back after each
+swap:
+
+| | run 1 | run 2 | run 3 |
+|---|---:|---:|---:|
+| scan wall time | 96.8 s | 89.5 s | 91.4 s |
+| Git pass (verdicts) | 10.7 s | 8.5 s | 10.1 s |
+| rest of the process (open, swap, giving back, exit) | 2.7 s | 3.1 s | 3.2 s |
+| CPU user / system | 15.4 / 293.3 s | 14.4 / 274.7 s | 14.3 / 273.4 s |
+| directories | 2,237,853 | 2,237,860 | 2,237,862 |
+| files | 12,875,927 | 12,876,000 | 12,875,950 |
+| denied gaps | 498 | 498 | 498 |
+| peak RSS | 133.2 MB | 134.7 MB | 130.2 MB |
+| index file after the run | 293.1 MB | 293.5 MB | 293.5 MB |
+| free pages after the run | 0 | 0 | 0 |
+
+M4's second and third scans left 508.8 and 509.4 MB; now the file
+returns to one picture after every scan. Giving back the old picture's
+pages (about 71,000 of 4 KiB, in steps of 4,096) costs about 0.4 s: the
+rest of the process takes 3.1 to 3.2 s when there is a picture to give
+back and 2.7 s when there is none. During a scan the file still holds
+two pictures for a while (the old one stays readable); the peak was not
+sampled.
+
+**The app.** `Metla.app` (release build at d73b7fd, ad-hoc signed)
+started six times on the fixture (`scripts/run-app.sh`, English, a
+saved picture in its data directory), with
+`METLA_PRINT_LAUNCH_TIMING=1`: time from the process's start (kernel
+start time) to the first window and to the first picture shown, and the
+resident memory then and 10 s later.
+
+| run | first window | first picture | RSS at first picture | RSS after 10 s |
+|---:|---:|---:|---:|---:|
+| 1 | 809 ms | 966 ms | 111.2 MB | 111.3 MB |
+| 2 | 436 ms | 604 ms | 109.7 MB | 109.2 MB |
+| 3 | 460 ms | 627 ms | 111.3 MB | 109.7 MB |
+| 4 | 452 ms | 601 ms | 111.1 MB | 109.6 MB |
+| 5 | 392 ms | 554 ms | 111.1 MB | 109.7 MB |
+| 6 | 380 ms | 547 ms | 109.7 MB | 109.2 MB |
+
+The first run is the first after a rebuild (caches cold). The fixture
+is small; on the full disk's picture the first window comes before the
+engine is asked anything, and the first picture after one read of the
+index (0.1 s, `bench open`). Not measured: the app on the full disk
+(every app run in M5 uses a fixture), its memory over hours, and the
+worktree status pass at launch on the full disk from inside the app.
