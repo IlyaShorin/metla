@@ -55,6 +55,48 @@ pub struct Page {
     pub limit: usize,
 }
 
+/// What a list of candidates is sorted by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortKey {
+    /// The tree size when scanned.
+    Size,
+    /// The newest modification time in the tree; unknown sorts as oldest.
+    Activity,
+    Path,
+}
+
+/// The order of a list of candidates. Ties keep the largest first, then
+/// the order of their ids.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Order {
+    pub key: SortKey,
+    pub descending: bool,
+}
+
+impl Default for Order {
+    /// Largest first.
+    fn default() -> Order {
+        Order {
+            key: SortKey::Size,
+            descending: true,
+        }
+    }
+}
+
+impl Order {
+    fn compare(&self, a: &Found, b: &Found) -> std::cmp::Ordering {
+        let ascending = match self.key {
+            SortKey::Size => a.row.tree.bytes.cmp(&b.row.tree.bytes),
+            SortKey::Activity => a.row.tree.newest.cmp(&b.row.tree.newest),
+            SortKey::Path => a.path.cmp(&b.path),
+        };
+        match self.descending {
+            true => ascending.reverse(),
+            false => ascending,
+        }
+    }
+}
+
 /// A candidate row with its rule and path, before it is shown.
 struct Found {
     row: DirRecord,
@@ -217,6 +259,21 @@ impl Snapshot<'_> {
         self.records(&sql, params![id.0, int(limit as u64)])
     }
 
+    /// The `limit` largest directories of the picture but its root, with
+    /// their paths, largest first.
+    pub fn largest(&self, limit: usize) -> Result<Vec<(PathBuf, DirRecord)>, IndexError> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM dirs WHERE parent_id IS NOT NULL
+             ORDER BY tree_bytes DESC, id LIMIT ?1"
+        );
+        let mut lineage = self.lineage()?;
+        let mut largest = Vec::new();
+        for row in self.records(&sql, [int(limit as u64)])? {
+            largest.push((lineage.path(row.id)?.unwrap_or_default(), row));
+        }
+        Ok(largest)
+    }
+
     /// How many subdirectories `id` has.
     pub fn child_count(&self, id: DirId) -> Result<usize, IndexError> {
         let sql = "SELECT count(*) FROM dirs WHERE parent_id = ?1";
@@ -355,9 +412,24 @@ impl Snapshot<'_> {
         page: Page,
         recency: &Recency,
     ) -> Result<Vec<Candidate>, IndexError> {
-        let visible = self.visible(category)?.into_iter();
-        let page = visible.skip(page.offset).take(page.limit);
-        Ok(page.map(|found| found.candidate(recency)).collect())
+        let order = Order::default();
+        Ok(self.candidate_page(category, order, page, recency)?.0)
+    }
+
+    /// One page of the offered candidates of `category` in `order`, and
+    /// how many are offered in all.
+    pub fn candidate_page(
+        &self,
+        category: Option<Category>,
+        order: Order,
+        page: Page,
+        recency: &Recency,
+    ) -> Result<(Vec<Candidate>, usize), IndexError> {
+        let mut visible = self.visible(category)?;
+        visible.sort_by(|a, b| order.compare(a, b));
+        let total = visible.len();
+        let page = visible.into_iter().skip(page.offset).take(page.limit);
+        Ok((page.map(|found| found.candidate(recency)).collect(), total))
     }
 
     /// The candidate with this id, if it is one and is offered.

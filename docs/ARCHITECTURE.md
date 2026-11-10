@@ -554,7 +554,13 @@ deadline; with nothing due it does not wake up (`Counters::wakeups`).
 The observer is told what changed (`Changed::{Picture, Activity,
 Worktrees, Cleanup, Settings, Exclusions}`), never the data.
 
-`snapshot()` answers the Overview; `freshness()` only how fresh the
+`snapshot()` answers the Overview; `largest_folders(n)` its largest
+folders (the `n` largest directories that hold none of the others,
+from the picture, or from the live tree while a first scan runs,
+marked as still counting); `candidate_page(category, order, page)` a
+page of a category in the order a table asks for (size, activity or
+path, either way; ties largest first) with the total;
+`freshness()` only how fresh the
 picture is (it reads no candidate), for a status line that follows
 every batch. `Freshness` is explicit: the last full scan, the last update, pending
 changes, `EngineState` (`Idle`, `Scanning { progress, interactive }`,

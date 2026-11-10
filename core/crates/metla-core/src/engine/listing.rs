@@ -1,14 +1,15 @@
-//! A folder's page: its subdirectories from the picture and its files
-//! listed now, largest first. A directory may hold a million files, so
-//! only the largest are kept (a bounded heap) and the rest are counted.
+//! Folders as the app lists them. A folder's page: its subdirectories
+//! from the picture and its files listed now, largest first; a directory
+//! may hold a million files, so only the largest are kept (a bounded
+//! heap) and the rest are counted. The Overview's largest folders.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use super::view::{Folder, FolderEntry};
-use crate::domain::{Bytes, DirRecord, EntryKind};
+use super::view::{Folder, FolderEntry, TopFolder};
+use crate::domain::{Bytes, DirId, DirRecord, EntryKind, LiveDir};
 use crate::fs::{DirHandle, visit_dir};
 use crate::index::Page;
 
@@ -121,4 +122,69 @@ fn name(entry: &FolderEntry) -> Option<&OsString> {
         FolderEntry::File { name, .. } => Some(name),
         FolderEntry::MoreFiles { .. } => None,
     }
+}
+
+/// Directories looked at for every largest folder shown.
+const SAMPLE: usize = 8;
+
+/// How many of the largest directories to look at for `limit` folders.
+pub fn sample(limit: usize) -> usize {
+    limit.saturating_mul(SAMPLE)
+}
+
+/// The `limit` largest of `folders` that hold none of the others: a
+/// folder holding a larger or equal one shows nothing new.
+pub fn tops(mut folders: Vec<TopFolder>, limit: usize) -> Vec<TopFolder> {
+    folders.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.path.cmp(&b.path)));
+    let holds = |outer: &TopFolder| {
+        let below =
+            |inner: &TopFolder| inner.path != outer.path && inner.path.starts_with(&outer.path);
+        folders.iter().any(below)
+    };
+    let kept: Vec<TopFolder> = folders
+        .iter()
+        .filter(|f| !holds(f))
+        .take(limit)
+        .cloned()
+        .collect();
+    kept
+}
+
+/// The picture's largest directories as folders.
+pub fn pictured(largest: Vec<(PathBuf, DirRecord)>) -> Vec<TopFolder> {
+    let folders = largest.into_iter().map(|(path, row)| TopFolder {
+        path,
+        bytes: row.tree.bytes,
+        files: row.tree.files,
+        counting: false,
+    });
+    folders.collect()
+}
+
+/// The live tree of a running scan as folders below `root`, still being
+/// counted; the root itself is left out.
+pub fn live(root: &Path, dirs: Vec<LiveDir>) -> Vec<TopFolder> {
+    let links: BTreeMap<DirId, (Option<DirId>, OsString)> = dirs
+        .iter()
+        .map(|d| (d.id, (d.parent, d.name.clone())))
+        .collect();
+    let path = |mut id: DirId| {
+        let mut names = Vec::new();
+        while let Some((Some(parent), name)) = links.get(&id) {
+            names.push(name.clone());
+            id = *parent;
+        }
+        names
+            .iter()
+            .rev()
+            .fold(root.to_path_buf(), |path, name| path.join(name))
+    };
+    let below = dirs.iter().filter(|d| d.parent.is_some());
+    let folders = below.map(|d| TopFolder {
+        path: path(d.id),
+        bytes: d.bytes,
+        files: d.files,
+        counting: true,
+    });
+    folders.collect()
 }

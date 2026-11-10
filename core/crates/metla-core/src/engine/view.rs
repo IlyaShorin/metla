@@ -157,6 +157,23 @@ pub enum DirRef {
     Path(PathBuf),
 }
 
+/// One of the Overview's largest folders.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TopFolder {
+    pub path: PathBuf,
+    pub bytes: Bytes,
+    pub files: u64,
+    /// From the live tree of a first scan: still growing.
+    pub counting: bool,
+}
+
+/// One page of candidates as a list shows them, and how many are offered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CandidatePage {
+    pub listed: Vec<Listed>,
+    pub total: usize,
+}
+
 /// One entry of a folder listing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FolderEntry {

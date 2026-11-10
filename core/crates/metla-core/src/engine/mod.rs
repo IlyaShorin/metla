@@ -30,7 +30,9 @@ use crate::domain::{
 };
 use crate::fs::{now, volume};
 use crate::git::{Git, WorktreeSettings};
-use crate::index::{IndexEditor, IndexError, IndexReader, IndexWriter, Page, Picture, Snapshot};
+use crate::index::{
+    IndexEditor, IndexError, IndexReader, IndexWriter, Order, Page, Picture, Snapshot,
+};
 use crate::rules::RuleSet;
 use crate::scan::{ScanRoot, ScanScope};
 use crate::watch::Coalescer;
@@ -41,8 +43,8 @@ pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
 pub use scheduler::{EVENTS_NOTE, Watching};
 pub use settings::{HotkeyMode, Settings};
 pub use view::{
-    Changed, Completeness, Counters, DirRef, EngineObserver, EngineState, Failure, Folder,
-    FolderEntry, Freshness, Listed, Overview, Removability, VolumeSpace,
+    CandidatePage, Changed, Completeness, Counters, DirRef, EngineObserver, EngineState, Failure,
+    Folder, FolderEntry, Freshness, Listed, Overview, Removability, TopFolder, VolumeSpace,
 };
 
 use scheduler::{Command, Scheduler, resumable};
@@ -395,10 +397,26 @@ impl Engine {
         category: Option<Category>,
         page: Page,
     ) -> Result<Vec<Listed>, EngineError> {
+        Ok(self
+            .candidate_page(category, Order::default(), page)?
+            .listed)
+    }
+
+    /// One page of the offered candidates of `category` in `order`, and
+    /// how many are offered.
+    pub fn candidate_page(
+        &self,
+        category: Option<Category>,
+        order: Order,
+        page: Page,
+    ) -> Result<CandidatePage, EngineError> {
         let recency = self.recency();
-        let (picture, found) = self.read(|snap| {
+        let (picture, (found, total)) = self.read(|snap| {
             let picture = snap.scan()?.and_then(|s| s.picture).map(|p| p.id());
-            Ok((picture, snap.candidates(category, page, &recency)?))
+            Ok((
+                picture,
+                snap.candidate_page(category, order, page, &recency)?,
+            ))
         })?;
         let listed = found.into_iter().map(|candidate| {
             let worktree = candidate.category() == Category::GitWorktree;
@@ -410,7 +428,30 @@ impl Engine {
                 removability,
             }
         });
-        Ok(listed.collect())
+        Ok(CandidatePage {
+            listed: listed.collect(),
+            total,
+        })
+    }
+
+    /// The Overview's largest folders: the `limit` largest that hold none
+    /// of the others, from the picture, or from the live tree while the
+    /// first scan runs.
+    pub fn largest_folders(&self, limit: usize) -> Result<Vec<TopFolder>, EngineError> {
+        let root = self.shared.root.clone();
+        let (pictured, largest) = self.read(|snap| {
+            let pictured = snap
+                .scan()?
+                .and_then(|s| s.picture)
+                .filter(|p| p.root == root);
+            Ok((pictured.is_some(), snap.largest(listing::sample(limit))?))
+        })?;
+        let running = lock(&self.shared.scan).as_ref().map(|s| s.control.live());
+        let folders = match (pictured, running) {
+            (false, Some(live)) => listing::live(&root, live),
+            _ => listing::pictured(largest),
+        };
+        Ok(listing::tops(folders, limit))
     }
 
     /// Offered candidates per category; every category is present.

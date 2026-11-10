@@ -18,7 +18,7 @@ use metla_core::engine::{
     Failure, FolderEntry, HotkeyMode, LISTED_FILES, Largest, Listed, PowerProfile, Profile,
     Profiles, Removability, Settings, Watching,
 };
-use metla_core::index::Page;
+use metla_core::index::{Order, Page, SortKey};
 use metla_core::watch::Timing;
 
 use crate::repo::{git, isolated, pushed_repository, pushed_worktree};
@@ -587,6 +587,121 @@ fn the_largest_files_are_kept_and_the_rest_counted() {
     let (kept, rest) = none.finish();
     assert!(kept.is_empty());
     assert_eq!((rest.files, rest.bytes), (1, Bytes(4)));
+}
+
+/// Three caches of 8, 24 and 16 KB, active 30, 10 and 20 days ago.
+fn three_caches() -> Place {
+    let place = Place::new(&[]);
+    let now = std::time::SystemTime::now();
+    for (name, size, days) in [
+        ("org.a", 8_000, 30),
+        ("org.b", 24_000, 10),
+        ("org.c", 16_000, 20),
+    ] {
+        let file = place.path(&format!("~/Library/Caches/{name}/blob"));
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        write_file(&file, size);
+        let at = now - Duration::from_secs(days * 86_400);
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+        let dir = fs::File::open(file.parent().unwrap()).unwrap();
+        dir.set_modified(at).unwrap();
+    }
+    place
+}
+
+#[test]
+fn a_page_of_candidates_comes_in_the_order_asked_for_with_the_total() {
+    let place = three_caches();
+    let engine = place.open();
+    settled(&engine);
+    let names = |key: SortKey, descending: bool, page: Page| {
+        let order = Order { key, descending };
+        let found = engine
+            .candidate_page(Some(Category::AppCache), order, page)
+            .unwrap();
+        assert_eq!(found.total, 3);
+        let names = found
+            .listed
+            .iter()
+            .map(|l| l.candidate.path.file_name().unwrap().to_owned());
+        names
+            .map(|n| n.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(SortKey::Size, true, ALL), ["org.b", "org.c", "org.a"]);
+    assert_eq!(
+        names(SortKey::Size, false, ALL),
+        ["org.a", "org.c", "org.b"]
+    );
+    assert_eq!(
+        names(SortKey::Activity, true, ALL),
+        ["org.b", "org.c", "org.a"]
+    );
+    assert_eq!(
+        names(SortKey::Activity, false, ALL),
+        ["org.a", "org.c", "org.b"]
+    );
+    assert_eq!(
+        names(SortKey::Path, false, ALL),
+        ["org.a", "org.b", "org.c"]
+    );
+    assert_eq!(names(SortKey::Path, true, ALL), ["org.c", "org.b", "org.a"]);
+    let second = Page {
+        offset: 1,
+        limit: 1,
+    };
+    assert_eq!(names(SortKey::Path, false, second), ["org.b"]);
+    assert_eq!(
+        Order::default(),
+        Order {
+            key: SortKey::Size,
+            descending: true
+        }
+    );
+}
+
+#[test]
+fn the_largest_folders_are_the_largest_that_hold_none_of_the_others() {
+    let place = Place::new(&["a/b/c/x=1", "a/d/y=1", "e/z=1"]);
+    write_file(&place.path("a/b/c/big"), 90_000);
+    write_file(&place.path("a/d/mid"), 50_000);
+    write_file(&place.path("e/small"), 20_000);
+    let engine = place.open();
+    settled(&engine);
+    let tops = engine.largest_folders(4).unwrap();
+    let paths: Vec<PathBuf> = tops.iter().map(|f| f.path.clone()).collect();
+    assert_eq!(
+        paths,
+        [place.path("a/b/c"), place.path("a/d"), place.path("e")],
+        "not a or a/b, which hold a/b/c"
+    );
+    assert!(tops.iter().all(|f| !f.counting));
+    assert!(tops[0].bytes.0 >= 90_000 && tops[0].files == 2);
+    assert_eq!(engine.largest_folders(1).unwrap().len(), 1);
+}
+
+#[test]
+fn during_the_first_scan_the_largest_folders_come_from_the_live_tree() {
+    let place = Place::new(HOME);
+    wide(&place);
+    let engine = Engine::open(slow(&place)).unwrap();
+    let started = Instant::now();
+    let mut seen = false;
+    while !seen && started.elapsed() < Duration::from_secs(10) {
+        let before = engine.progress().is_some();
+        let tops = engine.largest_folders(3).unwrap();
+        let after = engine.progress().is_some();
+        if before && after && !tops.is_empty() {
+            assert!(tops.iter().all(|f| f.counting), "{tops:?}");
+            seen = true;
+        }
+    }
+    assert!(seen, "never caught the first scan running");
 }
 
 #[test]
