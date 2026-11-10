@@ -74,6 +74,11 @@ public final class AppModel {
     /// runs (it runs as Interactive).
     public private(set) var power = PowerState()
     public private(set) var userScan = false
+    /// Held while a scan the user asked for runs (App Nap is otherwise
+    /// left alone).
+    private var scanActivity: (any NSObjectProtocol)?
+    private var userScanSeen = false
+    private var userScanFrom: Int64?
     public let preferences: any Preferences
     /// The cleanup flow shows in its own window (the main window was
     /// closed when the hotkey asked for it), not as a sheet.
@@ -185,10 +190,7 @@ public final class AppModel {
             if topics.contains(.settings) {
                 await hotkeys?.load()
             }
-            if userScan, !scanning {
-                userScan = false
-                await applyPower()
-            }
+            await endUserScanIfOver(topics)
             failure = nil
         } catch {
             failure = String(describing: error)
@@ -291,9 +293,37 @@ public final class AppModel {
     /// Refresh (⌘R): a full scan the user asked for, run as Interactive.
     public func rescan() async {
         userScan = true
+        userScanSeen = false
+        userScanFrom = freshness?.fullScan
+        if scanActivity == nil {
+            scanActivity = ProcessInfo.processInfo.beginActivity(
+                options: .userInitiated, reason: "A scan the user asked for")
+        }
         await applyPower()
         try? await client?.startScan()
         await refresh([.activity])
+    }
+
+    /// The user's scan is over once none runs and it was seen running, a
+    /// newer full scan is in the picture, or the picture changed (a scan
+    /// too quick to be seen).
+    private func endUserScanIfOver(_ topics: Set<Changed>) async {
+        guard userScan else { return }
+        if scanning {
+            userScanSeen = true
+            return
+        }
+        let ended = userScanSeen || freshness?.fullScan != userScanFrom || topics.contains(.picture)
+        guard ended else { return }
+        await endUserScan()
+    }
+
+    private func endUserScan() async {
+        userScan = false
+        userScanSeen = false
+        scanActivity.map(ProcessInfo.processInfo.endActivity)
+        scanActivity = nil
+        await applyPower()
     }
 
     /// The Mac's power state changed (or is told at the start).
@@ -418,6 +448,9 @@ public final class AppModel {
     /// Stop: cancels the running scan.
     public func stopScan() async {
         await client?.cancelScan()
+        if userScan {
+            await endUserScan()
+        }
         await refresh([.activity])
     }
 

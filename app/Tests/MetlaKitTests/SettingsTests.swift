@@ -111,6 +111,26 @@ import Testing
         }
     }
 
+    @Test func aScanTheUserAskedForRunsAsInteractiveUntilItEnds() async throws {
+        let model = try await started(Fixture.settings())
+        defer { model.stop() }
+        let before = model.overview?.freshness.fullScan
+        await model.rescan()
+        #expect(model.userScan)
+        try await until {
+            await model.refresh([.activity])
+            return !model.userScan
+        }
+        #expect(model.overview?.freshness.fullScan != before || before == nil, "a new full scan")
+        try await until {
+            await model.refresh([.picture])
+            return model.overview?.profile == .background
+        }
+        await model.rescan()
+        await model.stopScan()
+        #expect(!model.userScan, "a stopped scan is over")
+    }
+
     @Test func aLoginItemTheSystemRefusesSaysWhy() async throws {
         let login = FakeLogin()
         login.refuses = true

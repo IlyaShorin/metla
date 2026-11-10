@@ -194,6 +194,42 @@ import Testing
         }
     }
 
+    @Test func aCleanedRowIsNoLongerCheckedOrSelected() async throws {
+        let (model, _) = try await Self.fresh()
+        defer { model.stop() }
+        let table = try #require(model.category(.buildArtifact))
+        await table.reload()
+        let target = try #require(table.rows.first { $0.path.hasSuffix("/home/code/app/target") })
+        for row in table.rows where row.id != target.id && table.isChecked(row.id) {
+            table.toggle(row.id)
+        }
+        #expect(model.selection.ids == [target.id])
+        await model.cleanSelected()
+        let cleanup = try #require(model.cleanup)
+        try await Self.cleaned(cleanup)
+        try await until {
+            await model.refresh([.picture, .cleanup])
+            await table.reload()
+            return !table.rows.contains { $0.id == target.id }
+        }
+        #expect(!table.isChecked(target.id) && model.selection.ids.isEmpty, "nothing stale stays selected")
+    }
+
+    @Test func progressIsAShareOfTheItemsDone() {
+        #expect(CleanupProgressData(done: 0, items: 0, removed: 0, current: nil).share == 0)
+        #expect(CleanupProgressData(done: 3, items: 4, removed: 10, current: "~/x").share == 0.75)
+        #expect(CleanupProgressData(done: 5, items: 4, removed: 10, current: nil).share == 1)
+    }
+
+    @Test func theSystemTrashMovesAndSaysWhyNot() throws {
+        let missing = Fixture.scratch().appendingPathComponent("not-there").path
+        guard case .refused(let reason) = SystemTrash().trash(path: missing) else {
+            Issue.record("a missing path cannot be moved")
+            return
+        }
+        #expect(!reason.isEmpty)
+    }
+
     @Test func aQuickCleanTakesOnlyTheChosenQuickCategories() async throws {
         let (model, _) = try await Self.fresh()
         defer { model.stop() }
@@ -226,6 +262,9 @@ import Testing
         }
         let hud = await model.quickCleanNow([.appCache, .devCache, .buildArtifact])
         #expect(hud.title == "Nothing was cleaned")
+        let cleanup = try #require(model.cleanup)
+        await cleanup.open([1])
+        #expect(cleanup.stage == .closed && cleanup.failure != nil, "no preview of a root that is not a fixture")
         #expect(Self.exists(model, "home/Library/Caches/com.example.editor/cache.db"))
         #expect(Self.exists(model, "home/code/app/target/debug/app"))
     }

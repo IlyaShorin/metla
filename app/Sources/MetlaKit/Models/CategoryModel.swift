@@ -120,6 +120,11 @@ public final class CategoryModel {
             let page = try await client.candidates(category, order: order, offset: offset, limit: limit)
             let loaded = page.listed.map { CandidateRow($0, home: home, names) }
             rows = replacing ? loaded : rows + loaded
+            if replacing {
+                // What the engine no longer offers (cleaned, excluded)
+                // is not checked any more.
+                checked.formIntersection(rows.map(\.id))
+            }
             total = Int(page.total)
             failure = nil
             settle()
