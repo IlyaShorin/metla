@@ -439,7 +439,7 @@ fn rule_ids_identity_and_kinds_are_stored_in_a_stable_format() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
     let verdict: i64 = conn
         .query_row("SELECT verdict FROM dirs WHERE id = 4", [], |r| r.get(0))
         .unwrap();

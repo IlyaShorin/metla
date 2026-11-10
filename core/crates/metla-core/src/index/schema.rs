@@ -7,12 +7,14 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use super::IndexError;
 
-/// Version 3 (M3): Git's verdict on project output in `dirs`, the
-/// directories cleaned since the scan (`stale`), and the home directory
-/// the picture was classified for. Version 2 (M2) added directory
-/// identity and rule ids in `dirs`, the candidate index, exclusions and
-/// bytes by file kind.
-pub const SCHEMA_VERSION: i64 = 3;
+/// Version 4 (M4): what a directory needs to be rescanned on its own —
+/// its modification time, its newest file, what it hands down (in
+/// `flags` and `markers`) and its own bytes by kind — and an index of the
+/// rows that were not read. Version 3 (M3) added Git's verdict on project
+/// output, the directories cleaned since the scan (`stale`) and the
+/// picture's home directory; version 2 (M2) directory identity, rule ids,
+/// the candidate index, exclusions and bytes by file kind.
+pub const SCHEMA_VERSION: i64 = 4;
 
 const WAL_SIZE_LIMIT: i64 = 32 << 20;
 
@@ -20,7 +22,9 @@ const WAL_SIZE_LIMIT: i64 = 32 << 20;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// One row per directory. `own_*` are NULL for a directory that was not
-/// read; `flags` holds its state (see `codec`); `rule_id` is set for a
+/// read (`own_mtime` also when it holds no file); `mtime` and `changed`
+/// (its ctime in nanoseconds) are the directory's own; `flags` holds its state and what it hands down,
+/// `markers` and `kinds` the rest (see `codec`); `rule_id` is set for a
 /// candidate; `verdict` is Git's verdict on project output, NULL until it
 /// is asked.
 pub fn dirs_table(name: &str) -> String {
@@ -31,24 +35,31 @@ pub fn dirs_table(name: &str) -> String {
             name BLOB NOT NULL,
             own_bytes INTEGER,
             own_files INTEGER,
+            own_mtime INTEGER,
             tree_bytes INTEGER NOT NULL,
             tree_files INTEGER NOT NULL,
             tree_dirs INTEGER NOT NULL,
             tree_mtime INTEGER,
+            mtime INTEGER NOT NULL,
+            changed INTEGER NOT NULL,
             flags INTEGER NOT NULL,
             device INTEGER NOT NULL,
             inode INTEGER NOT NULL,
             rule_id TEXT,
-            verdict INTEGER
+            verdict INTEGER,
+            markers BLOB,
+            kinds BLOB
         );"
     )
 }
 
-/// `dirs_candidates` holds only the candidate rows, so candidate queries
-/// never read the whole table.
+/// `dirs_candidates` holds only the candidate rows and `dirs_unread` only
+/// the rows of directories that were not read, so candidate and coverage
+/// queries never read the whole table.
 pub const DIRS_INDEXES: &str = "CREATE INDEX dirs_by_parent ON dirs(parent_id, name);
      CREATE INDEX dirs_by_size ON dirs(tree_bytes);
-     CREATE INDEX dirs_candidates ON dirs(rule_id) WHERE rule_id IS NOT NULL;";
+     CREATE INDEX dirs_candidates ON dirs(rule_id) WHERE rule_id IS NOT NULL;
+     CREATE INDEX dirs_unread ON dirs(id) WHERE flags & 255 != 0;";
 
 const OTHER_TABLES: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value) WITHOUT ROWID;
      CREATE TABLE coverage_counts (code INTEGER PRIMARY KEY, count INTEGER NOT NULL);

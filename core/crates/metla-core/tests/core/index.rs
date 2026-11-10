@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use metla_core::domain::{
-    Bytes, Coverage, DirId, DirRecord, DirState, Errno, Gap, GapAt, KindTotals, OwnTotals,
-    ScanSummary, Skip, TreeTotals, UnixTime,
+    Bytes, Coverage, DirId, DirRecord, DirState, Errno, Gap, GapAt, KindTotals, OwnTotals, Passed,
+    ScanSummary, Skip, Stamp, TreeTotals, UnixTime,
 };
 use metla_core::index::{IndexError, IndexReader, IndexWriter};
 
@@ -30,12 +30,17 @@ pub fn read(id: i64, parent: Option<i64>, name: &str, own: u64, total: TreeTotal
         name: OsString::from(name),
         device: 7,
         inode: 1000 + id.unsigned_abs(),
+        mtime: UnixTime(40),
+        changed: Stamp(40_000_000_123),
         state: DirState::Read(OwnTotals {
             bytes: Bytes(own),
             files: 1,
+            newest: Some(UnixTime(45)),
+            kinds: KindTotals::default(),
         }),
         tree: total,
         rule: None,
+        passed: Passed::default(),
     }
 }
 
@@ -46,12 +51,15 @@ fn unread(id: i64, parent: i64, name: &str, state: DirState) -> DirRecord {
         name: OsString::from(name),
         device: 7,
         inode: 1000 + id.unsigned_abs(),
+        mtime: UnixTime(30),
+        changed: Stamp(30_000_000_456),
         state,
         tree: TreeTotals {
             newest: None,
             ..tree(0, 0, 1)
         },
         rule: None,
+        passed: Passed::default(),
     }
 }
 

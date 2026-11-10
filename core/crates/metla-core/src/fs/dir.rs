@@ -125,6 +125,18 @@ impl DirHandle {
     }
 }
 
+/// The metadata of `path` itself, without following a final symlink and
+/// without needing to read it.
+pub fn entry_at(path: &Path) -> Result<EntryMeta, ListError> {
+    let path = c_name(path.as_os_str()).map_err(ListError::from_errno)?;
+    let mut st = MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `path` is NUL-terminated and `st` is writable stat storage.
+    checked(|| unsafe { libc::lstat(path.as_ptr(), st.as_mut_ptr()) })
+        .map_err(ListError::from_errno)?;
+    // SAFETY: lstat succeeded, so it initialised `st`.
+    Ok(meta_of(unsafe { st.assume_init_ref() }))
+}
+
 fn adopt(fd: Result<libc::c_int, i32>) -> Result<OwnedFd, ListError> {
     let fd = fd.map_err(ListError::from_errno)?;
     // SAFETY: `fd` was just returned by a successful open and nothing else

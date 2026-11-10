@@ -8,8 +8,10 @@
 //! the previous picture or the new one, never a mix.
 
 mod codec;
+mod lineage;
 mod reader;
 mod schema;
+mod update;
 mod writer;
 
 use std::fmt;
@@ -49,7 +51,9 @@ impl ScanRecord {
 }
 
 /// Which picture: directory ids are only meaningful within one, so edits
-/// that name directories say which picture they were read from.
+/// that name directories say which picture they were read from. A
+/// picture brought up to date in place stays the same picture; ids of
+/// directories that went are never given out again within it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PictureId(i64);
 
@@ -61,6 +65,9 @@ pub struct Picture {
     pub home: Option<PathBuf>,
     pub started: UnixTime,
     pub finished: UnixTime,
+    /// When changes were last applied in place, if any were since the
+    /// scan.
+    pub updated: Option<UnixTime>,
     pub coverage: Coverage,
     /// The scan's bytes by file kind.
     pub kinds: KindTotals,

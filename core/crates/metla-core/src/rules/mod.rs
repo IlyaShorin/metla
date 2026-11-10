@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::{DirFacts, FileKind, RuleId};
 
+pub use crate::domain::Area;
 pub use catalogue::{CATALOGUE, Marker, Matcher, Removes, Rule};
-pub use kinds::Area;
 
 use kinds::Kinds;
 use location::Locations;

@@ -18,11 +18,11 @@ pub use cleanup::{
     PreviewItem, Rejected, Rejection, Separate, SkipReason, Warning,
 };
 pub use coverage::{Coverage, GapAt};
-pub use dir::{DirId, DirRecord, DirState, Errno, Gap, GapKind, Skip};
-pub use entry::{BLOCK_SIZE, Bytes, Entry, EntryKind, EntryMeta, UnixTime};
-pub use kind::{FileKind, KindTotals};
+pub use dir::{DirId, DirRecord, DirState, Errno, Gap, GapKind, Passed, Skip};
+pub use entry::{BLOCK_SIZE, Bytes, Entry, EntryKind, EntryMeta, Stamp, UnixTime};
+pub use kind::{Area, FileKind, KindTotals};
 pub use rule::{Category, Disposal, QuickCategory, RuleId};
-pub use scan::{DirFacts, LiveDir, Probe, ProgressSnapshot, ScanSummary};
+pub use scan::{DirFacts, LiveDir, Probe, ProgressSnapshot, RescanTask, Rescanned, ScanSummary};
 pub use totals::{OwnTotals, TreeTotals};
 pub use verdict::Verdict;
 pub use worktree::{Manager, Reason, Reasons, WorktreeStatus};

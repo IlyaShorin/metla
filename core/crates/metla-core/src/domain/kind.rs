@@ -26,7 +26,30 @@ impl FileKind {
     ];
 }
 
-/// Allocated bytes per file kind, for a whole scan.
+/// Where a directory is, as far as file kinds go (see `rules`). Ordered
+/// by strength: a directory takes the stronger of its parent's area and
+/// its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Area {
+    #[default]
+    User,
+    System,
+    Applications,
+    Developer,
+}
+
+impl Area {
+    /// Every area, in a fixed order (also the stored order).
+    pub const ALL: [Area; 4] = [
+        Area::User,
+        Area::System,
+        Area::Applications,
+        Area::Developer,
+    ];
+}
+
+/// Allocated bytes per file kind: of one directory's own files, or of a
+/// whole scan.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KindTotals([Bytes; FileKind::ALL.len()]);
 
@@ -38,6 +61,15 @@ impl KindTotals {
     pub fn merge(&mut self, other: &KindTotals) {
         for kind in FileKind::ALL {
             self.add(kind, other.get(kind));
+        }
+    }
+
+    /// Takes away totals that were merged in before; a kind never goes
+    /// below zero.
+    pub fn remove(&mut self, other: &KindTotals) {
+        for kind in FileKind::ALL {
+            let left = self.get(kind).0.saturating_sub(other.get(kind).0);
+            self.0[kind as usize] = Bytes(left);
         }
     }
 

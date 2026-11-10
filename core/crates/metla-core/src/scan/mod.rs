@@ -1,5 +1,6 @@
 //! Scanning a tree: a parallel, metadata-only walk that emits one record
-//! per directory, post-order, to a caller-supplied sink.
+//! per directory, post-order, to a caller-supplied sink; and rescanning
+//! one directory of a picture, shallowly or with everything below it.
 
 mod control;
 mod scope;
@@ -9,15 +10,18 @@ use std::fmt;
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
-use crate::domain::{DirFacts, DirRecord, ScanSummary, UnixTime};
-use crate::fs::{now, raise_open_file_limit};
+use crate::domain::{DirFacts, DirId, DirRecord, EntryKind, EntryMeta, Rescanned, ScanSummary};
+use crate::fs::{DirHandle, entry_at, now, raise_open_file_limit};
 use crate::rules::RuleSet;
 
 pub use control::{LIVE_DEPTH, ScanControl};
 pub use scope::ScanScope;
+pub use walk::{Inherited, Stored};
+
+use walk::{Identity, Origin, Walk};
 
 /// Directory records are handed to the sink in batches of at most this
 /// many.
@@ -27,12 +31,12 @@ pub const ROW_BATCH: usize = 1024;
 pub const GAP_LIMIT: usize = 32;
 
 /// The directory a scan starts from: canonical, existing, a directory.
+/// Its times are read again whenever it is scanned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScanRoot {
     path: PathBuf,
     device: u64,
     inode: u64,
-    mtime: UnixTime,
 }
 
 impl ScanRoot {
@@ -46,7 +50,6 @@ impl ScanRoot {
             path,
             device: meta.dev(),
             inode: meta.ino(),
-            mtime: UnixTime(meta.mtime()),
         })
     }
 
@@ -60,10 +63,6 @@ impl ScanRoot {
 
     pub fn inode(&self) -> u64 {
         self.inode
-    }
-
-    pub fn mtime(&self) -> UnixTime {
-        self.mtime
     }
 }
 
@@ -120,6 +119,11 @@ impl ScanOptions {
     pub fn root(&self) -> &ScanRoot {
         &self.root
     }
+
+    /// What the root inherits from the unread directories above it.
+    pub fn root_inherits(&self) -> Inherited {
+        Walk::root_inherited(self)
+    }
 }
 
 /// The scan could not start.
@@ -145,27 +149,136 @@ pub fn run(
     sink: &(dyn Fn(Vec<DirRecord>) + Sync),
 ) -> Result<ScanSummary, ScanError> {
     raise_open_file_limit();
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(options.threads)
-        .thread_name(|n| format!("metla-scan-{n}"))
-        .build()
-        .map_err(|e| ScanError {
-            reason: e.to_string(),
-        })?;
+    let pool = pool(options.threads)?;
     let started = now();
     let clock = Instant::now();
-    let walk = walk::Walk::new(options, control, sink);
-    pool.scope(|scope| walk.run(scope));
-    let (totals, kinds, coverage) = walk.finish();
+    let root = options.root();
+    let (_, meta) = locate(&root.path, &root.path).ok_or_else(|| ScanError {
+        reason: format!("{} cannot be opened", root.path.display()),
+    })?;
+    let origin = Origin {
+        id: DirId(0),
+        parent: None,
+        inherited: Walk::root_inherited(options),
+        above: None,
+        path: root.path.clone(),
+        depth: 0,
+        mtime: meta.mtime,
+        identity: Identity {
+            device: meta.device,
+            inode: meta.inode,
+            changed: meta.changed,
+        },
+        skip: None,
+        shallow: None,
+    };
+    let walk = Walk::new(options, control, sink, DirId(1));
+    pool.scope(|scope| walk.run(scope, origin));
+    let walked = walk.finish();
     Ok(ScanSummary {
-        root: options.root.path.clone(),
+        root: root.path.clone(),
         home: options.rules.as_ref().map(|r| r.home().to_path_buf()),
         started,
         finished: now(),
         elapsed: clock.elapsed(),
         threads: options.threads,
-        totals,
-        kinds,
-        coverage,
+        totals: walked.totals,
+        kinds: walked.kinds,
+        coverage: walked.coverage,
     })
+}
+
+fn pool(threads: usize) -> Result<rayon::ThreadPool, ScanError> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|n| format!("metla-scan-{n}"))
+        .build()
+        .map_err(|e| ScanError {
+            reason: e.to_string(),
+        })
+}
+
+/// A directory of a picture to bring up to date, with what the picture
+/// says about it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Target {
+    /// Its path, inside the scan root.
+    pub path: PathBuf,
+    pub id: DirId,
+    pub parent: Option<DirId>,
+    /// Levels below the scan root.
+    pub depth: u32,
+    pub inherited: Inherited,
+    /// `Some`: a shallow rescan, which re-reads the directory and walks
+    /// only the subdirectories that changed. `None`: the directory and
+    /// everything below it are walked again.
+    pub stored: Option<Stored>,
+}
+
+/// Rescans `target`; new directories get ids from `next_id` on. `None`
+/// when it is no longer a directory reached from the root without a
+/// symlink: then its parent has changed, and that is what to rescan.
+pub fn rescan(
+    options: &ScanOptions,
+    target: Target,
+    next_id: DirId,
+    control: &ScanControl,
+) -> Result<Option<Rescanned>, ScanError> {
+    let Some((above, meta)) = locate(options.root().path(), &target.path) else {
+        return Ok(None);
+    };
+    let pool = pool(options.threads)?;
+    let rows = Mutex::new(Vec::new());
+    let sink = |batch: Vec<DirRecord>| {
+        rows.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(batch)
+    };
+    let whole = target.stored.is_none();
+    let origin = Origin {
+        id: target.id,
+        parent: target.parent,
+        inherited: target.inherited,
+        above,
+        skip: options.scope.decide(&target.path, &meta),
+        path: target.path,
+        depth: target.depth,
+        mtime: meta.mtime,
+        identity: Identity {
+            device: meta.device,
+            inode: meta.inode,
+            changed: meta.changed,
+        },
+        shallow: target.stored,
+    };
+    let walk = Walk::new(options, control, &sink, next_id);
+    pool.scope(|scope| walk.run(scope, origin));
+    let walked = walk.finish();
+    let removed = match whole {
+        true => vec![target.id],
+        false => walked.removed,
+    };
+    Ok(Some(Rescanned {
+        origin: target.id,
+        removed,
+        rows: rows.into_inner().unwrap_or_else(PoisonError::into_inner),
+    }))
+}
+
+/// The open parent of the directory at `path` (`None` for the root) and
+/// the directory's metadata as listed there, opening every directory from
+/// the root down without following a symlink. `None` when it is not
+/// there as a directory.
+fn locate(root: &Path, path: &Path) -> Option<(Option<DirHandle>, EntryMeta)> {
+    let relative = path.strip_prefix(root).ok()?;
+    let Some(name) = relative.file_name() else {
+        let meta = entry_at(root).ok().filter(|m| m.kind == EntryKind::Dir)?;
+        return Some((None, meta));
+    };
+    let mut parent = DirHandle::open(root).ok()?;
+    for part in relative.parent().into_iter().flat_map(Path::components) {
+        parent = parent.open_child(part.as_os_str()).ok()?;
+    }
+    let meta = parent.entry(name).ok()?;
+    (meta.kind == EntryKind::Dir).then_some((Some(parent), meta))
 }

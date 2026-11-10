@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use metla_core::domain::{
-    Bytes, Coverage, EntryKind, EntryMeta, Errno, Gap, GapAt, GapKind, OwnTotals, Skip, TreeTotals,
-    UnixTime,
+    Bytes, Coverage, EntryKind, EntryMeta, Errno, Gap, GapAt, GapKind, KindTotals, OwnTotals, Skip,
+    Stamp, TreeTotals, UnixTime,
 };
 
 fn meta(kind: EntryKind, blocks: u64, links: u64) -> EntryMeta {
@@ -13,6 +13,7 @@ fn meta(kind: EntryKind, blocks: u64, links: u64) -> EntryMeta {
         device: 1,
         inode: 2,
         mtime: UnixTime(100),
+        changed: Stamp(100_000_000_000),
         dataless: false,
     }
 }
@@ -40,13 +41,18 @@ fn a_directory_inode_contributes_nothing_itself() {
 #[test]
 fn own_totals_count_every_non_directory_entry() {
     let mut own = OwnTotals::default();
-    own.add(&meta(EntryKind::File, 8, 1));
+    own.add(&EntryMeta {
+        mtime: UnixTime(200),
+        ..meta(EntryKind::File, 8, 1)
+    });
     own.add(&meta(EntryKind::Other, 2, 1));
     assert_eq!(
         own,
         OwnTotals {
             bytes: Bytes(5120),
-            files: 2
+            files: 2,
+            newest: Some(UnixTime(200)),
+            kinds: KindTotals::default(),
         }
     );
 }
@@ -68,12 +74,14 @@ fn a_directory_tree_starts_with_itself() {
 #[test]
 fn tree_totals_add_own_totals_and_keep_the_newest_time() {
     let mut tree = TreeTotals::directory(UnixTime(7));
-    let own = OwnTotals {
+    let own = |newest| OwnTotals {
         bytes: Bytes(10),
         files: 3,
+        newest: Some(UnixTime(newest)),
+        kinds: KindTotals::default(),
     };
-    tree.add_own(&own, Some(UnixTime(9)));
-    tree.add_own(&own, Some(UnixTime(8)));
+    tree.add_own(&own(9));
+    tree.add_own(&own(8));
     assert_eq!(
         tree,
         TreeTotals {

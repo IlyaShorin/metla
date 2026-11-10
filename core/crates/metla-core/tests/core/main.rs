@@ -16,6 +16,7 @@ mod porcelain;
 mod preview;
 mod remove;
 mod repo;
+mod rescan;
 mod revalidate;
 mod rules;
 mod scan;

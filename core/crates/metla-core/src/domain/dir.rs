@@ -1,5 +1,7 @@
 use std::ffi::OsString;
 
+use super::entry::{Stamp, UnixTime};
+use super::kind::Area;
 use super::rule::RuleId;
 use super::totals::{OwnTotals, TreeTotals};
 
@@ -90,6 +92,21 @@ pub enum DirState {
     Skipped(Skip),
 }
 
+/// What a directory that was read hands down to the classification of the
+/// directories below it. A directory that was not read hands down nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Passed {
+    /// Its entries the rules want as markers (none inside a candidate).
+    pub markers: Vec<OsString>,
+    /// It is, or is inside, a Git repository.
+    pub in_repo: bool,
+    /// It is, or is inside, a candidate other than a linked worktree:
+    /// nothing below it is classified.
+    pub in_candidate: bool,
+    /// Its area for file kinds.
+    pub area: Area,
+}
+
 /// One directory of the picture: a row of the index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirRecord {
@@ -98,11 +115,16 @@ pub struct DirRecord {
     pub parent: Option<DirId>,
     /// Empty for the root.
     pub name: OsString,
-    /// The directory's device and inode when it was listed.
+    /// The directory's device, inode, modification time and change stamp
+    /// when it was listed.
     pub device: u64,
     pub inode: u64,
+    pub mtime: UnixTime,
+    pub changed: Stamp,
     pub state: DirState,
     pub tree: TreeTotals,
     /// The rule the directory matched: it is a candidate.
     pub rule: Option<RuleId>,
+    /// What it hands down to the directories below it.
+    pub passed: Passed,
 }

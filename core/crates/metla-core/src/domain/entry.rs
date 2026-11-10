@@ -33,6 +33,12 @@ impl Sum for Bytes {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UnixTime(pub i64);
 
+/// When an inode last changed (its `ctime`), in nanoseconds since the
+/// Unix epoch. Any change of a directory's entries, permissions or owner
+/// moves it, so an unchanged stamp means an unchanged directory.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Stamp(pub i64);
+
 /// What a directory entry is. Symlinks are never followed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
@@ -53,6 +59,7 @@ pub struct EntryMeta {
     pub device: u64,
     pub inode: u64,
     pub mtime: UnixTime,
+    pub changed: Stamp,
     /// A cloud placeholder whose data is not on this disk (`SF_DATALESS`).
     pub dataless: bool,
 }

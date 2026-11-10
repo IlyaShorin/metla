@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::coverage::Coverage;
-use super::dir::DirId;
+use super::dir::{DirId, DirRecord};
 use super::entry::{Bytes, Entry, UnixTime};
 use super::kind::KindTotals;
 use super::totals::TreeTotals;
@@ -80,4 +80,30 @@ pub struct DirFacts<'a> {
 pub struct Probe {
     pub name: OsString,
     pub head: Vec<u8>,
+}
+
+/// A request to bring part of the picture up to date.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RescanTask {
+    /// Re-read one directory: its own files and which subdirectories it
+    /// has. New or changed subdirectories are walked whole.
+    Shallow(PathBuf),
+    /// Walk a directory and everything below it again.
+    Recursive(PathBuf),
+    /// Scan the whole root again.
+    Full,
+}
+
+/// What a rescan of one directory changed in the picture. The index
+/// applies it in one transaction and then recomputes the tree totals of
+/// every directory above `origin`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rescanned {
+    /// The directory that was rescanned; its row is in `rows`.
+    pub origin: DirId,
+    /// Directories that go, with everything below them.
+    pub removed: Vec<DirId>,
+    /// Rows to write: new directories, and re-read ones replacing the row
+    /// with their id.
+    pub rows: Vec<DirRecord>,
 }

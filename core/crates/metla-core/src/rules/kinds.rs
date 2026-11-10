@@ -13,17 +13,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use crate::domain::{Category, FileKind};
-
-/// Where a directory is, as far as file kinds go. Ordered by strength.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Area {
-    #[default]
-    User,
-    System,
-    Applications,
-    Developer,
-}
+use crate::domain::{Area, Category, FileKind};
 
 const SYSTEM_ROOTS: [&str; 7] = [
     "/System", "/Library", "/private", "/usr", "/bin", "/sbin", "/cores",

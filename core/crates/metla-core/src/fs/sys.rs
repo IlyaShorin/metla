@@ -4,10 +4,12 @@ use std::ffi::{CStr, CString, OsStr};
 use std::num::NonZeroU64;
 use std::os::unix::ffi::OsStrExt;
 
-use crate::domain::{EntryKind, EntryMeta, UnixTime};
+use crate::domain::{EntryKind, EntryMeta, Stamp, UnixTime};
 
 /// `SF_DATALESS` from `<sys/stat.h>`: the file's data is not on this disk.
 const SF_DATALESS: u32 = 0x4000_0000;
+
+const NANOS: i64 = 1_000_000_000;
 
 /// The calling thread's `errno`.
 pub fn errno() -> i32 {
@@ -58,6 +60,7 @@ pub fn meta_of(st: &libc::stat) -> EntryMeta {
         device: device_id(st.st_dev),
         inode: st.st_ino,
         mtime: UnixTime(st.st_mtime),
+        changed: Stamp(st.st_ctime * NANOS + st.st_ctime_nsec),
         dataless: st.st_flags & SF_DATALESS != 0,
     }
 }

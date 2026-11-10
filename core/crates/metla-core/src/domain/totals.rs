@@ -1,16 +1,22 @@
 use super::entry::{Bytes, EntryMeta, UnixTime};
+use super::kind::KindTotals;
 
 /// Files directly in a directory (every entry that is not a directory).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct OwnTotals {
     pub bytes: Bytes,
     pub files: u64,
+    /// The newest modification time among them.
+    pub newest: Option<UnixTime>,
+    /// Their bytes by file kind (all zero when the scan had no rules).
+    pub kinds: KindTotals,
 }
 
 impl OwnTotals {
     pub fn add(&mut self, meta: &EntryMeta) {
         self.bytes += meta.share();
         self.files += 1;
+        self.newest = self.newest.max(Some(meta.mtime));
     }
 }
 
@@ -35,10 +41,10 @@ impl TreeTotals {
         }
     }
 
-    pub fn add_own(&mut self, own: &OwnTotals, newest: Option<UnixTime>) {
+    pub fn add_own(&mut self, own: &OwnTotals) {
         self.bytes += own.bytes;
         self.files += own.files;
-        self.newest = self.newest.max(newest);
+        self.newest = self.newest.max(own.newest);
     }
 
     pub fn add_tree(&mut self, other: &TreeTotals) {

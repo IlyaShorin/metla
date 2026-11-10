@@ -4,7 +4,7 @@ use std::num::NonZeroU64;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use metla_core::domain::{EntryKind, EntryMeta, Skip, UnixTime};
+use metla_core::domain::{EntryKind, EntryMeta, Skip, Stamp, UnixTime};
 use metla_core::fs::Mount;
 use metla_core::scan::{ScanRoot, ScanScope};
 
@@ -23,6 +23,7 @@ fn dir_on(device: u64) -> EntryMeta {
         device,
         inode: 1,
         mtime: UnixTime(0),
+        changed: Stamp(0),
         dataless: false,
     }
 }

@@ -9,12 +9,15 @@ use std::thread::{self, JoinHandle};
 use rusqlite::{Connection, OptionalExtension, Params, params};
 
 use super::codec::{
-    COLUMNS, gap_code, gap_flags, id_bits, int, kind_code, name_bytes, path_bytes, skip_code,
-    state_columns, verdict_code,
+    COLUMNS, gap_code, gap_flags, id_bits, int, kind_code, name_bytes, names_blob, path_bytes,
+    skip_code, state_columns, verdict_code,
 };
 use super::schema::{DIRS_INDEXES, dirs_table, open_for_writing};
+use super::update::apply;
 use super::{IndexError, PictureId};
-use crate::domain::{DirId, DirRecord, Exclusion, ScanSummary, UnixTime, Verdict};
+use crate::domain::{
+    Coverage, DirId, DirRecord, Exclusion, KindTotals, Rescanned, ScanSummary, UnixTime, Verdict,
+};
 
 /// Batches waiting for the writer; senders block when it falls behind.
 const QUEUE_DEPTH: usize = 16;
@@ -25,6 +28,8 @@ enum Command {
     Start(UnixTime, Reply<()>),
     Rows(Vec<DirRecord>),
     Finish(Box<ScanSummary>, Reply<()>),
+    Abandon(Reply<()>),
+    Apply(PictureId, Box<Rescanned>, UnixTime, Reply<bool>),
     Exclude(Exclusion, Reply<bool>),
     Include(Exclusion, Reply<bool>),
     Verdicts(PictureId, Vec<(DirId, Verdict)>, Reply<bool>),
@@ -59,6 +64,20 @@ impl IndexWriter {
     pub fn start_scan(&mut self, started: UnixTime) -> Result<ScanWriter<'_>, IndexError> {
         self.ask(|reply| Command::Start(started, reply))?;
         Ok(ScanWriter { writer: self })
+    }
+
+    /// Brings the picture `picture` up to date with one rescan, in one
+    /// transaction: the totals above the rescanned directory, the bytes by
+    /// kind and the coverage are recomputed, and `now` is recorded as the
+    /// picture's last update. False, and nothing changed, when another
+    /// picture has replaced it.
+    pub fn apply(
+        &self,
+        picture: PictureId,
+        change: Rescanned,
+        now: UnixTime,
+    ) -> Result<bool, IndexError> {
+        self.ask(|reply| Command::Apply(picture, Box::new(change), now, reply))
     }
 
     /// Keeps `exclusion` and everything beneath it out of the candidates.
@@ -133,6 +152,12 @@ impl ScanWriter<'_> {
         let summary = Box::new(summary.clone());
         self.writer.ask(|reply| Command::Finish(summary, reply))
     }
+
+    /// Drops the scan's rows as if it had never started: the picture stays
+    /// and reads as current again.
+    pub fn abandon(self) -> Result<(), IndexError> {
+        self.writer.ask(Command::Abandon)
+    }
 }
 
 /// The writer thread's state: the connection and the first failure of the
@@ -158,6 +183,10 @@ impl Server {
             Command::Start(started, reply) => answer(reply, self.start(started)),
             Command::Rows(rows) => self.insert(&rows),
             Command::Finish(summary, reply) => answer(reply, self.finish(&summary)),
+            Command::Abandon(reply) => answer(reply, abandon(&self.conn)),
+            Command::Apply(picture, change, now, reply) => {
+                answer(reply, apply(&self.conn, picture, &change, now))
+            }
             Command::Exclude(exclusion, reply) => {
                 answer(reply, edit(&self.conn, EXCLUDE, &exclusion))
             }
@@ -199,7 +228,11 @@ fn answer<T>(reply: Reply<T>, result: Result<T, IndexError>) {
     let _ = reply.send(result);
 }
 
-fn set_meta(conn: &Connection, key: &str, value: impl rusqlite::ToSql) -> Result<(), IndexError> {
+pub(super) fn set_meta(
+    conn: &Connection,
+    key: &str,
+    value: impl rusqlite::ToSql,
+) -> Result<(), IndexError> {
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
         params![key, value],
@@ -225,31 +258,44 @@ fn begin(conn: &Connection, started: UnixTime) -> Result<(), IndexError> {
 
 fn insert(conn: &Connection, rows: &[DirRecord]) -> Result<(), IndexError> {
     let tx = conn.unchecked_transaction()?;
-    {
-        let mut statement = tx.prepare(&format!(
-            "INSERT INTO dirs_next ({COLUMNS})
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
-        ))?;
-        for row in rows {
-            let (own_bytes, own_files, flags) = state_columns(&row.state);
-            statement.execute(params![
-                row.id.0,
-                row.parent.map(|p| p.0),
-                name_bytes(&row.name),
-                own_bytes,
-                own_files,
-                int(row.tree.bytes.0),
-                int(row.tree.files),
-                int(row.tree.dirs),
-                row.tree.newest.map(|t| t.0),
-                flags,
-                id_bits(row.device),
-                id_bits(row.inode),
-                row.rule.as_ref().map(|r| r.as_str()),
-            ])?;
-        }
-    }
+    write_rows(&tx, "INSERT INTO dirs_next", rows)?;
     tx.commit()?;
+    Ok(())
+}
+
+/// Writes rows with `verb` (an INSERT into a table).
+pub(super) fn write_rows(
+    conn: &Connection,
+    verb: &str,
+    rows: &[DirRecord],
+) -> Result<(), IndexError> {
+    let mut statement = conn.prepare(&format!(
+        "{verb} ({COLUMNS})
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)"
+    ))?;
+    for row in rows {
+        let state = state_columns(&row.state, &row.passed);
+        statement.execute(params![
+            row.id.0,
+            row.parent.map(|p| p.0),
+            name_bytes(&row.name),
+            state.own_bytes,
+            state.own_files,
+            state.own_mtime,
+            int(row.tree.bytes.0),
+            int(row.tree.files),
+            int(row.tree.dirs),
+            row.tree.newest.map(|t| t.0),
+            row.mtime.0,
+            row.changed.0,
+            state.flags,
+            id_bits(row.device),
+            id_bits(row.inode),
+            row.rule.as_ref().map(|r| r.as_str()),
+            names_blob(&row.passed.markers),
+            state.kinds,
+        ])?;
+    }
     Ok(())
 }
 
@@ -258,14 +304,29 @@ fn insert(conn: &Connection, rows: &[DirRecord]) -> Result<(), IndexError> {
 fn swap(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexError> {
     let tx = conn.unchecked_transaction()?;
     tx.execute_batch(
-        "DROP TABLE dirs; ALTER TABLE dirs_next RENAME TO dirs;
-         DELETE FROM coverage_counts; DELETE FROM coverage_gaps; DELETE FROM kinds;
-         DELETE FROM stale; DELETE FROM meta WHERE key = 'picture_home';",
+        "DROP TABLE dirs; ALTER TABLE dirs_next RENAME TO dirs; DELETE FROM stale;
+         DELETE FROM meta WHERE key IN ('picture_home', 'picture_updated');",
     )?;
     tx.execute_batch(DIRS_INDEXES)?;
-    write_coverage(&tx, summary)?;
-    write_kinds(&tx, summary)?;
+    write_coverage(&tx, &summary.coverage)?;
+    write_kinds(&tx, &summary.kinds)?;
     write_picture(&tx, summary)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Ends a scan that is given up: no staging table, and the scan number
+/// and start of the picture again.
+fn abandon(conn: &Connection) -> Result<(), IndexError> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
+        "DROP TABLE IF EXISTS dirs_next;
+         DELETE FROM meta WHERE key IN ('scan_seq', 'scan_started');
+         INSERT INTO meta (key, value)
+             SELECT 'scan_seq', value FROM meta WHERE key = 'picture_seq';
+         INSERT INTO meta (key, value)
+             SELECT 'scan_started', value FROM meta WHERE key = 'picture_started';",
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -274,6 +335,11 @@ fn write_picture(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexEr
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value)
          SELECT 'picture_seq', value FROM meta WHERE key = 'scan_seq'",
+        [],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value)
+         SELECT 'next_id', coalesce(max(id), -1) + 1 FROM dirs",
         [],
     )?;
     set_meta(conn, "picture_root", path_bytes(&summary.root))?;
@@ -285,8 +351,9 @@ fn write_picture(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexEr
     set_meta(conn, "gap_limit", int(summary.coverage.limit() as u64))
 }
 
-fn write_coverage(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexError> {
-    let coverage = &summary.coverage;
+/// Replaces the stored coverage: counts by kind and the shallowest gaps.
+pub(super) fn write_coverage(conn: &Connection, coverage: &Coverage) -> Result<(), IndexError> {
+    conn.execute_batch("DELETE FROM coverage_counts; DELETE FROM coverage_gaps;")?;
     let codes = coverage
         .gap_counts()
         .map(|(kind, n)| (gap_code(kind), n))
@@ -311,8 +378,10 @@ fn write_coverage(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexE
     Ok(())
 }
 
-fn write_kinds(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexError> {
-    for (kind, bytes) in summary.kinds.iter() {
+/// Replaces the stored bytes by kind.
+pub(super) fn write_kinds(conn: &Connection, kinds: &KindTotals) -> Result<(), IndexError> {
+    conn.execute("DELETE FROM kinds", [])?;
+    for (kind, bytes) in kinds.iter() {
         conn.execute(
             "INSERT INTO kinds (code, bytes) VALUES (?1, ?2)",
             params![kind_code(kind), int(bytes.0)],
@@ -333,6 +402,18 @@ fn edit(conn: &Connection, sql: &str, exclusion: &Exclusion) -> Result<bool, Ind
 const SET_VERDICT: &str = "UPDATE dirs SET verdict = ?2 WHERE id = ?1";
 const CLEANED: &str = "INSERT OR IGNORE INTO stale (dir_id) VALUES (?1)";
 
+/// The picture the index holds now, if any.
+pub(super) fn current_picture(conn: &Connection) -> Result<Option<PictureId>, IndexError> {
+    let current: Option<i64> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'picture_seq'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(current.map(PictureId))
+}
+
 /// Runs `sql` once per row of parameters, in one transaction, when
 /// `picture` is still the index's picture; true when it was.
 fn mark<P: Params>(
@@ -342,14 +423,7 @@ fn mark<P: Params>(
     rows: impl Iterator<Item = P>,
 ) -> Result<bool, IndexError> {
     let tx = conn.unchecked_transaction()?;
-    let current: Option<i64> = tx
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'picture_seq'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if current != Some(picture.0) {
+    if current_picture(&tx)? != Some(picture) {
         return Ok(false);
     }
     {

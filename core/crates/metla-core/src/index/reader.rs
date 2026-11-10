@@ -6,11 +6,12 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use rusqlite::types::FromSql;
-use rusqlite::{Connection, OptionalExtension, Params, Statement, params};
+use rusqlite::{Connection, OptionalExtension, Params, params};
 
 use super::codec::{
     CANDIDATE_COLUMNS, COLUMNS, Row, count, gap, gap_kind, int, kind, path_from, skip, verdict,
 };
+use super::lineage::Lineage;
 use super::schema::open_for_reading;
 use super::{IndexError, Picture, ScanRecord};
 use crate::domain::{
@@ -147,6 +148,39 @@ impl Snapshot<'_> {
                 Some(dir) => self.child(dir.id, part.as_os_str()),
                 None => Ok(None),
             })
+    }
+
+    /// The deepest directory of the picture on the way to `path`, with
+    /// its path: `path` itself when the picture has it, else its nearest
+    /// ancestor that the picture has. `None` outside the picture's root.
+    pub fn nearest(&self, path: &Path) -> Result<Option<(PathBuf, DirRecord)>, IndexError> {
+        let Some(root) = self.picture_root()? else {
+            return Ok(None);
+        };
+        let (Ok(relative), Some(mut found)) = (path.strip_prefix(&root), self.root()?) else {
+            return Ok(None);
+        };
+        let mut at = root;
+        for part in relative.components() {
+            let Some(child) = self.child(found.id, part.as_os_str())? else {
+                break;
+            };
+            at.push(part);
+            found = child;
+        }
+        Ok(Some((at, found)))
+    }
+
+    /// The directory `id`, if the picture has it.
+    pub fn record(&self, id: DirId) -> Result<Option<DirRecord>, IndexError> {
+        let sql = format!("SELECT {COLUMNS} FROM dirs WHERE id = ?1");
+        Ok(self.records(&sql, [id.0])?.pop())
+    }
+
+    /// The id the next new directory of the picture gets: no id is given
+    /// out twice within one picture.
+    pub fn next_id(&self) -> Result<DirId, IndexError> {
+        Ok(DirId(self.meta("next_id")?.unwrap_or_default()))
     }
 
     /// The subdirectories of `id`, largest tree first.
@@ -315,12 +349,7 @@ impl Snapshot<'_> {
     }
 
     fn lineage(&self) -> Result<Lineage<'_>, IndexError> {
-        Ok(Lineage {
-            statement: self
-                .conn
-                .prepare("SELECT parent_id, name FROM dirs WHERE id = ?1")?,
-            root: self.picture_root()?.unwrap_or_default(),
-        })
+        Lineage::new(self.conn, self.picture_root()?.unwrap_or_default())
     }
 
     fn child(&self, parent: DirId, name: &OsStr) -> Result<Option<DirRecord>, IndexError> {
@@ -376,6 +405,7 @@ impl Snapshot<'_> {
             home: self.picture_home()?,
             started: UnixTime(self.meta("picture_started")?.unwrap_or_default()),
             finished: UnixTime(self.meta("picture_finished")?.unwrap_or_default()),
+            updated: self.meta("picture_updated")?.map(UnixTime),
             coverage: self.coverage()?,
             kinds: self.kinds()?,
             scan,
@@ -445,35 +475,4 @@ impl Snapshot<'_> {
 /// Whether any exclusion hides a candidate at `path`.
 fn hides(exclusions: &[Exclusion], path: &Path) -> bool {
     exclusions.iter().any(|exclusion| exclusion.hides(path))
-}
-
-/// Builds paths of the picture's directories from their parent links, with
-/// one prepared statement for any number of paths.
-struct Lineage<'c> {
-    statement: Statement<'c>,
-    root: PathBuf,
-}
-
-impl Lineage<'_> {
-    fn path(&mut self, id: DirId) -> Result<Option<PathBuf>, IndexError> {
-        let mut names = Vec::new();
-        let mut next = Some(id);
-        while let Some(current) = next {
-            let step = self
-                .statement
-                .query_row([current.0], |r| {
-                    Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Vec<u8>>(1)?))
-                })
-                .optional()?;
-            let Some((parent, name)) = step else {
-                return Ok(None);
-            };
-            names.extend(parent.map(|_| name));
-            next = parent.map(DirId);
-        }
-        let path = names.iter().rev().fold(self.root.clone(), |path, name| {
-            path.join(OsStr::from_bytes(name))
-        });
-        Ok(Some(path))
-    }
 }

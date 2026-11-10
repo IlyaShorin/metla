@@ -5,6 +5,7 @@
 
 pub mod clean;
 pub mod domain;
+pub mod engine;
 pub mod fs;
 pub mod git;
 pub mod index;
