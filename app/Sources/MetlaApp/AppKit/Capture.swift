@@ -21,7 +21,7 @@ enum Capture {
         ("folders", .folders),
     ]
 
-    /// The window's size in the images, in points.
+    /// The window's content size in the images, in points.
     static let size = NSSize(width: 1120, height: 720)
 
     /// Renders every screen in both appearances; how many files it wrote.
@@ -35,10 +35,11 @@ enum Capture {
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             NSApp.appearance = NSAppearance(named: appearance)
             for (name, screen) in screens {
-                window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
                 await model.show(screen)
                 await prepare(model, screen)
+                window.setContentSize(size)
                 try? await Task.sleep(for: .milliseconds(900))
+                window.setContentSize(size)
                 window.displayIfNeeded()
                 let file = (directory as NSString).appendingPathComponent("\(name)-\(suffix).png")
                 if let png = image(of: window), (try? png.write(to: URL(fileURLWithPath: file))) != nil {
