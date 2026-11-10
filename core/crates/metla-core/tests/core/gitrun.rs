@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use metla_core::git::{Git, Output, RunError};
 
-use crate::repo::script;
+use crate::repo::{git, isolated, pushed_repository, script};
 use crate::support::Fixture;
 
 fn run(git: &Git, dir: &std::path::Path, args: &[&str], input: &[u8]) -> Result<Output, RunError> {
@@ -36,7 +36,7 @@ fn git_runs_in_the_directory_quietly_with_its_input_and_extra_environment() {
     let output = run(&fake, fx.root(), &["status", "-z"], b"from stdin").unwrap();
     let printed = String::from_utf8(output.stdout).unwrap();
     let expected = format!(
-        "args: --no-pager -C {} status -z\n\
+        "args: --no-pager -c core.fsmonitor=false -C {} status -z\n\
          locks=0 prompt=0 pager=cat/cat lang=C extra=yes\n\
          from stdin",
         fx.root().display()
@@ -90,4 +90,21 @@ fn git_ended_by_a_signal_or_never_started_is_an_error() {
     assert!(error.to_string().starts_with("git could not start: "));
     assert_eq!(RunError::TimedOut.to_string(), "git timed out");
     assert_eq!(RunError::Killed.to_string(), "git was killed");
+}
+
+#[test]
+fn a_repository_cannot_make_git_run_a_program_it_names() {
+    let fx = Fixture::new();
+    let git_ = isolated(&fx);
+    let repo = pushed_repository(&fx, &git_);
+    let witness = fx.path("the-monitor-ran");
+    let monitor = script(
+        &fx.path("monitor"),
+        &format!("touch '{}'", witness.display()),
+    );
+    let named = monitor.to_str().unwrap();
+    git(&git_, &repo, &["config", "core.fsmonitor", named]);
+    git(&git_, &repo, &["status", "--porcelain=v2", "-z"]);
+    git(&git_, &repo, &["status"]);
+    assert!(!witness.exists(), "git ran the repository's fsmonitor");
 }

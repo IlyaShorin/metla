@@ -515,6 +515,18 @@ shim, which costs about 40 ms a call). It collects every reason at once:
 
 Only a worktree with no reason is removable. There is no force path.
 
+**Trust model.** Metla runs Git in repositories it did not make, so a
+repository must not be able to make Metla run anything. Git is called
+only with stock commands (`worktree list`, `status`, `rev-list`,
+`check-ignore`, `ls-files`, `worktree remove`), never with `--force`,
+never with a command that talks to the network (no fetch, push or
+remote query), and every run starts with `--no-pager -c
+core.fsmonitor=false`: a repository's configuration can name a program
+for `git status` to start (`core.fsmonitor`), and that is switched off.
+Metla never sets `safe.directory`; a repository Git refuses because
+another user owns it stays `InspectionFailed` (a worktree) or
+`Unverifiable` (project output), so nothing in it is offered.
+
 ## 10. The Rust/Swift boundary
 
 * UniFFI (proc-macro mode). Domain types derive the UniFFI traits behind the

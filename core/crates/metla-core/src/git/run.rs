@@ -1,5 +1,6 @@
 //! Running the stock `git` binary: no pager, no prompts, no optional
-//! locks, the C locale, a time limit, and everything it prints captured.
+//! locks, no file-system monitor, the C locale, a time limit, and
+//! everything it prints captured.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -59,6 +60,12 @@ const QUIET: [(&str, &str); 5] = [
     ("LC_ALL", "C"),
 ];
 
+/// Options every run gets before its command. A repository's own
+/// configuration can name a program for `git status` to run
+/// (`core.fsmonitor`); Metla inspects repositories it did not make, so it
+/// never lets them start one.
+const HARDENED: [&str; 3] = ["--no-pager", "-c", "core.fsmonitor=false"];
+
 /// How often a running Git is checked on.
 const POLL: Duration = Duration::from_millis(2);
 
@@ -103,14 +110,15 @@ impl Git {
         self
     }
 
-    /// Runs `git -C <dir> <args>` with `input` on its standard input.
+    /// Runs `git -C <dir> <args>` with `input` on its standard input,
+    /// never with a program the repository's configuration names.
     /// Everything, the output included, must arrive within the time limit:
     /// a process Git started cannot keep the call waiting by holding the
     /// pipes open.
     pub fn run(&self, dir: &Path, args: &[&OsStr], input: &[u8]) -> Result<Output, RunError> {
         let deadline = Instant::now() + self.timeout;
         let mut command = Command::new(&self.program);
-        command.arg("--no-pager").arg("-C").arg(dir).args(args);
+        command.args(HARDENED).arg("-C").arg(dir).args(args);
         command
             .envs(QUIET)
             .envs(self.env.iter().map(|(k, v)| (k, v)));
