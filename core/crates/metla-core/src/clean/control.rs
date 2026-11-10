@@ -1,6 +1,8 @@
 //! What another thread can see and do while a cleanup runs: cancel it and
 //! sample its progress.
 
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::domain::Bytes;
@@ -12,10 +14,11 @@ pub struct CleanControl {
     items: AtomicU64,
     done: AtomicU64,
     removed: AtomicU64,
+    current: Mutex<Option<PathBuf>>,
 }
 
 /// A running cleanup's counters, sampled at one moment.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CleanProgress {
     /// Items in the preview being executed.
     pub items: u64,
@@ -23,6 +26,8 @@ pub struct CleanProgress {
     pub done: u64,
     /// Bytes removed so far.
     pub removed: Bytes,
+    /// The item being cleaned now; `None` between items.
+    pub current: Option<PathBuf>,
 }
 
 impl CleanControl {
@@ -45,6 +50,7 @@ impl CleanControl {
             items: self.items.load(Ordering::Relaxed),
             done: self.done.load(Ordering::Relaxed),
             removed: Bytes(self.removed.load(Ordering::Relaxed)),
+            current: self.lock_current().clone(),
         }
     }
 
@@ -52,7 +58,17 @@ impl CleanControl {
         self.items.store(items as u64, Ordering::Relaxed);
     }
 
+    fn lock_current(&self) -> std::sync::MutexGuard<'_, Option<PathBuf>> {
+        let current = self.current.lock();
+        current.unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(super) fn begin_item(&self, path: &Path) {
+        *self.lock_current() = Some(path.to_path_buf());
+    }
+
     pub(super) fn finish_item(&self, removed: Bytes) {
+        *self.lock_current() = None;
         self.removed.fetch_add(removed.0, Ordering::Relaxed);
         self.done.fetch_add(1, Ordering::Relaxed);
     }

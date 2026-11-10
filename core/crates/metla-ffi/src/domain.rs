@@ -346,6 +346,7 @@ pub struct CleanProgress {
     pub items: u64,
     pub done: u64,
     pub removed: Bytes,
+    pub current: Option<PathBuf>,
 }
 
 #[uniffi::remote(Enum)]

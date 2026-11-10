@@ -239,6 +239,7 @@ impl Cleaner {
         control.start(preview.items.len());
         let free_before = self.available();
         let items = preview.items.iter().map(|item| {
+            control.begin_item(item.path());
             let (outcome, removed) = clean(item, confirmation, &checker, &actor);
             control.finish_item(removed);
             ItemReport {

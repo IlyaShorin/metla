@@ -530,6 +530,44 @@ fn progress_counts_items_and_removed_bytes() {
     assert!(!control.is_cancelled());
 }
 
+/// Moves to the Trash, noting the item the cleanup says it is at.
+struct Watching<'c> {
+    control: &'c CleanControl,
+    trash: &'c FakeTrash,
+    seen: std::cell::RefCell<Vec<Option<std::path::PathBuf>>>,
+}
+
+impl TrashHost for Watching<'_> {
+    fn trash(&self, path: &Path) -> Result<(), String> {
+        self.seen.borrow_mut().push(self.control.progress().current);
+        self.trash.trash(path)
+    }
+}
+
+#[test]
+fn progress_names_the_item_being_cleaned_and_none_after() {
+    let world = world();
+    let found = world.scan();
+    let mut cleaner = world.cleaner();
+    let preview = cleaner.preview(world.picked(&found, &[TARGET, LOGS]), next_year());
+    let control = CleanControl::new();
+    assert_eq!(control.progress().current, None);
+    let host = Watching {
+        control: &control,
+        trash: &world.trash,
+        seen: Default::default(),
+    };
+    let context = Context {
+        now: next_year(),
+        exclusions: &[],
+    };
+    cleaner
+        .execute(preview.id, &all_groups(), &context, &control, &host)
+        .unwrap();
+    assert_eq!(host.seen.into_inner(), [Some(world.path(LOGS))]);
+    assert_eq!(control.progress().current, None, "nothing after the last");
+}
+
 #[test]
 fn what_cannot_be_removed_stays_and_the_rest_goes() {
     let world = world();
