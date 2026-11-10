@@ -184,19 +184,23 @@ struct FreedCard: View {
                         Task { await model.show(.category(category)) }
                     }
                 } label: {
-                    HStack(spacing: 10) {
-                        Text(part.name).frame(width: 150, alignment: .leading)
+                    HStack(spacing: 8) {
+                        Text(part.name).lineLimit(1).minimumScaleFactor(0.85)
+                            .frame(width: 128, alignment: .leading)
                         ShareBar(share: part.share, tint: Palette.category(index))
+                            .frame(minWidth: 24)
                         VStack(alignment: .trailing, spacing: 0) {
                             Text(Format.bytes(part.bytes, strings)).monospacedDigit()
                             if let found = part.found {
                                 Text(strings.format("overview.found", Format.bytes(found, strings)))
                                     .font(.caption2).foregroundStyle(.secondary)
+                                    .lineLimit(1).minimumScaleFactor(0.8)
                             }
                         }
-                        .frame(width: 96, alignment: .trailing)
+                        .frame(width: 108, alignment: .trailing)
                         Text(part.note ?? "").font(.caption).foregroundStyle(.secondary)
-                            .frame(width: 120, alignment: .leading)
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                            .frame(width: 112, alignment: .leading)
                     }
                     .contentShape(Rectangle())
                 }
