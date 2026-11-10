@@ -1,8 +1,9 @@
 //! Worktree statuses for lists. On the real disk there are hundreds of
 //! linked worktrees and each costs three Git calls, so they are computed
-//! in the background after a scan — two at a time, at background
-//! priority, abandoned when a newer request comes — kept per picture, and
-//! served with the candidate page. They are for display only: a preview
+//! in the background after a scan — two at a time, at the priority of the
+//! profile in force (background priority where it throttles), abandoned
+//! when a newer request comes — kept per picture, and served with the
+//! candidate page. They are for display only: a preview
 //! and an execution compute a worktree's status again.
 
 use std::collections::BTreeMap;
@@ -16,6 +17,7 @@ use crate::domain::{Candidate, DirId, UnixTime, WorktreeStatus};
 use crate::fs::background_thread;
 use crate::git::{Git, WorktreeSettings, inspect_worktree};
 use crate::index::PictureId;
+use crate::scan::Priority;
 
 /// Statuses handed to the list at a time.
 const CHUNK: usize = 8;
@@ -36,6 +38,7 @@ struct Job {
     worktrees: Vec<Candidate>,
     now: UnixTime,
     settings: WorktreeSettings,
+    priority: Priority,
 }
 
 pub struct Statuses {
@@ -82,14 +85,16 @@ impl Statuses {
     }
 
     /// Computes the statuses of `worktrees` of `picture` again, in the
-    /// background. A request for another picture forgets the old one's;
-    /// an earlier request still running is abandoned.
+    /// background, its Git calls made from threads at `priority`. A
+    /// request for another picture forgets the old one's; an earlier
+    /// request still running is abandoned.
     pub fn compute(
         &self,
         picture: PictureId,
         worktrees: Vec<Candidate>,
         now: UnixTime,
         settings: WorktreeSettings,
+        priority: Priority,
     ) {
         {
             let mut known = lock(&self.known);
@@ -110,6 +115,7 @@ impl Statuses {
             worktrees,
             now,
             settings,
+            priority,
         };
         if let Some(jobs) = lock(&self.jobs).as_ref() {
             let _ = jobs.send(job);
@@ -123,7 +129,6 @@ impl Statuses {
     }
 
     fn serve(&self, git: &Git, queue: Receiver<Job>, ready: &dyn Fn()) {
-        background_thread();
         for job in queue {
             self.run(git, &job, ready);
         }
@@ -157,7 +162,9 @@ fn inspect(git: &Git, chunk: &[Candidate], job: &Job) -> Vec<(DirId, WorktreeSta
     thread::scope(|scope| {
         for _ in 0..AT_ONCE {
             scope.spawn(|| {
-                background_thread();
+                if let Priority::Background = job.priority {
+                    background_thread();
+                }
                 while let Some(c) = chunk.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let status = inspect_worktree(git, &c.path, c.activity, job.now, &job.settings);
                     lock(&found).push((c.id, status));

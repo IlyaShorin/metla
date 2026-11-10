@@ -578,8 +578,9 @@ due, and no full scan starts on its own until the user starts one
 again and again. `EngineConfig::index_limit` caps the index file.
 
 Worktree statuses for lists are computed after a scan and after changes
-below a worktree on a background-priority thread, two Git calls at a
-time, abandoned when a newer request comes or the engine closes, kept
+below a worktree on a worker thread, two Git calls at a time from
+threads at the priority of the profile in force (background priority
+where the profile throttles, as Saver does), abandoned when a newer request comes or the engine closes, kept
 per picture and served with the candidate page (`Removability::{Unknown,
 Removable, Blocked}`). They are for display only: a preview and an
 execution compute them again.

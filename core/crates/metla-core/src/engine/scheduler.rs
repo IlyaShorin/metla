@@ -370,7 +370,8 @@ impl Scheduler {
             home: self.shared.home.clone(),
             stale_after: lock(&self.shared.settings).stale_after,
         };
-        (self.shared.statuses).compute(picture, chosen, now(), settings);
+        let priority = self.shared.profile().priority();
+        (self.shared.statuses).compute(picture, chosen, now(), settings, priority);
     }
 
     /// A full scan with the user's threads (`interactive`) or the
