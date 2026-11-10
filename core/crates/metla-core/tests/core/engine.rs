@@ -705,6 +705,32 @@ fn during_the_first_scan_the_largest_folders_come_from_the_live_tree() {
 }
 
 #[test]
+fn during_a_rescan_the_largest_folders_stay_those_of_the_picture() {
+    let place = Place::new(HOME);
+    wide(&place);
+    let mut config = slow(&place);
+    config.profiles.interactive.threads = 1;
+    let engine = Engine::open(config).unwrap();
+    settled(&engine);
+    engine.start_scan().unwrap();
+    let started = Instant::now();
+    let mut seen = false;
+    while !seen && started.elapsed() < Duration::from_secs(10) {
+        let before = engine.progress().is_some();
+        let tops = engine.largest_folders(3).unwrap();
+        let after = engine.progress().is_some();
+        if before && after {
+            assert!(
+                !tops.is_empty() && tops.iter().all(|f| !f.counting),
+                "{tops:?}"
+            );
+            seen = true;
+        }
+    }
+    assert!(seen, "never caught the rescan running");
+}
+
+#[test]
 fn the_engine_asks_git_about_project_output_after_a_scan_and_after_an_update() {
     let place = Place::new(&["code/app/Cargo.toml", "code/app/target/debug/out=binary"]);
     let git_ = isolated(&place.aux);
