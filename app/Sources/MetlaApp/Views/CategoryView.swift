@@ -42,10 +42,21 @@ struct CategoryView: View {
                 reveal(selected)
                 return .handled
             }
-            Text(strings.text("category.hint"))
+            footer
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.vertical, 8)
+        }
+    }
+
+    /// The key hints, or for a selected blocked worktree every reason.
+    @ViewBuilder private var footer: some View {
+        let chosen = table.rows.first { selected.contains($0.id) && !$0.reasons.isEmpty }
+        if worktrees, let chosen {
+            Text(chosen.shownPath + ": " + chosen.reasons.joined(separator: ", "))
+                .lineLimit(2).textSelection(.enabled)
+        } else {
+            Text(strings.text("category.hint"))
         }
     }
 
@@ -69,7 +80,6 @@ struct CategoryView: View {
             Table(of: CandidateRow.self, selection: $selected, sortOrder: $sortOrder) {
                 check
                 path
-                rule
                 branch
                 state
                 activity
@@ -95,7 +105,7 @@ struct CategoryView: View {
             Toggle(isOn: Binding(get: { table.isChecked(row.id) }, set: { _ in table.toggle(row.id) })) {
                 EmptyView()
             }
-            .toggleStyle(.checkbox)
+            .toggleStyle(.symbolCheckbox)
             .disabled(!row.selectable)
             .accessibilityLabel(strings.format("category.check", row.shownPath))
             .onAppear { Task { await table.shown(row.id) } }
@@ -110,31 +120,37 @@ struct CategoryView: View {
                 .lineLimit(1).truncationMode(.middle)
                 .help(row.path)
         }
-        .width(min: 160, ideal: worktrees ? 230 : 340)
+        .width(min: 160, ideal: worktrees ? 280 : 330)
     }
 
     private var rule: some TableColumnContent<CandidateRow, Never> {
         TableColumn(strings.text("category.rule")) { (row: CandidateRow) in
-            Text(row.managed ? row.rule + " \u{00B7} " + strings.text("category.managed") : row.rule)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(row.rule).lineLimit(1)
+                if row.managed {
+                    Text(strings.text("category.managed"))
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            .help(row.managed ? row.rule + " \u{00B7} " + strings.text("category.managed") : row.rule)
         }
-        .width(min: 110, ideal: worktrees ? 140 : 170)
+        .width(min: 110, ideal: 180)
     }
 
     private var branch: some TableColumnContent<CandidateRow, Never> {
         TableColumn(strings.text("category.branch")) { (row: CandidateRow) in
-            Text(row.branch ?? "\u{2014}").lineLimit(1)
+            Text(row.branch ?? "\u{2014}").lineLimit(1).truncationMode(.middle)
         }
-        .width(min: 60, ideal: 90)
+        .width(min: 80, ideal: 130)
     }
 
     private var state: some TableColumnContent<CandidateRow, Never> {
         TableColumn(strings.text("category.state")) { (row: CandidateRow) in
             Text(row.state ?? "").lineLimit(1)
                 .foregroundStyle(row.selectable ? Color.primary : Color.secondary)
-                .help(row.state ?? "")
+                .help(row.reasons.isEmpty ? (row.state ?? "") : row.reasons.joined(separator: "\n"))
         }
-        .width(min: 80, ideal: 150)
+        .width(min: 120, ideal: 280, max: .infinity)
     }
 
     private var activity: some TableColumnContent<CandidateRow, KeyPathComparator<CandidateRow>> {

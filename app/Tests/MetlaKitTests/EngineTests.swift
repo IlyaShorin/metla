@@ -28,6 +28,9 @@ import Testing
         #expect(!disk.volume.isEmpty)
         let rows = data.categories.reduce(0) { $0 + $1.bytes }
         #expect(rows == data.freed + data.trashed, "the rows add up to the header")
+        let inFolder = disk.segments.prefix(5).reduce(0) { $0 + $1.bytes }
+        #expect(inFolder == disk.analysed, "categories and other data in this folder add up to the folder")
+        #expect(disk.segments[4].bytes > 0, "worktrees' build output is not counted twice")
     }
 
     @Test func aSavedPictureIsShownAtOnceWithItsAge() async throws {
@@ -96,7 +99,9 @@ import Testing
         #expect(table.total == 7)
         let blocked = table.rows.filter { !$0.selectable }
         #expect(blocked.count >= 5)
-        #expect(blocked.allSatisfy { $0.branch == nil && $0.state?.isEmpty == false })
+        #expect(blocked.allSatisfy { $0.state?.isEmpty == false && !$0.reasons.isEmpty })
+        let dirty = try #require(blocked.first { $0.path.hasSuffix("/app-dirty") })
+        #expect(dirty.branch == "app-dirty" && dirty.reasons == ["Uncommitted"], "a blocked worktree keeps its branch")
         let locked = try #require(blocked.first { $0.state?.contains("Locked") == true })
         table.toggle(locked.id)
         #expect(!table.isChecked(locked.id), "a blocked worktree stays unchecked")

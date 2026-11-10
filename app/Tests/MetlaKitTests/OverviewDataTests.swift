@@ -25,10 +25,13 @@ import Testing
             .log: Reclaimable(freed: nothing, trashed: Tally(count: 1, bytes: 10)),
             .temp: Reclaimable(freed: Tally(count: 1, bytes: 100), trashed: nothing),
         ]
+        // 100 bytes of build output lie inside a worktree: the bar
+        // counts them with the worktree.
         let tallies = found.map {
             CategoryTally(
                 category: $0.0, disposal: $0.1, tally: Tally(count: 1, bytes: $0.2),
-                reclaimable: preselected[$0.0] ?? Reclaimable(freed: nothing, trashed: nothing))
+                reclaimable: preselected[$0.0] ?? Reclaimable(freed: nothing, trashed: nothing),
+                owned: $0.0 == .buildArtifact ? $0.2 - 100 : $0.2)
         }
         let kinds = [KindBytes(kind: .media, bytes: 300), KindBytes(kind: .other, bytes: 100)]
         let coverage = CoverageSummary(
@@ -52,7 +55,8 @@ import Testing
         #expect(disk.low, "under a tenth free")
         let segments = disk.segments.map { ($0.name, $0.bytes) }
         #expect(segments.map(\.0) == ["App caches", "Developer caches", "Build artifacts", "Logs, worktrees, temporary", "Other data", "Free"])
-        #expect(segments.map(\.1) == [100, 200, 400, 140, 110, 50])
+        #expect(segments.map(\.1) == [100, 200, 300, 140, 210, 50], "the bar's own sizes: nothing twice")
+        #expect(segments.dropLast().map(\.1).reduce(0, +) == disk.used)
         #expect(disk.segments.last?.share == 0.05)
         #expect(make(overview(volume: VolumeSpace(total: 1000, available: 100))).disk?.low == false, "exactly a tenth is not low")
         #expect(make(overview(volume: nil)).disk == nil)
@@ -68,7 +72,8 @@ import Testing
         let segments = disk.segments.map { ($0.name, $0.bytes) }
         #expect(segments.map(\.0) == ["App caches", "Developer caches", "Build artifacts", "Logs, worktrees, temporary",
                                       "Other data in this folder", "Outside this folder", "Free"])
-        #expect(segments.map(\.1) == [100, 200, 400, 140, 60, 50, 50], "outside: used 950 minus the folder's 900")
+        #expect(segments.map(\.1) == [100, 200, 300, 140, 160, 50, 50], "outside: used 950 minus the folder's 900")
+        #expect(segments.prefix(5).map(\.1).reduce(0, +) == 900, "the folder's segments add up to its size")
         let russian = OverviewData.make(analysed, largest: [], volume: folder, home: "/Users/u", Names(Strings(language: "ru", region: "RU"), titles: []))
         #expect(russian.disk?.segments[5].name == "Вне этой папки")
         let unscanned = try #require(make(overview(), volume: folder).disk)

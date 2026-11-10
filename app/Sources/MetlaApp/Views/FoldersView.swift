@@ -128,11 +128,14 @@ struct NameCell: View {
             Text(node.name).lineLimit(1).truncationMode(.middle)
                 .foregroundStyle(node.isDirectory ? Color.primary : Color.secondary)
             if let badge = node.badge {
+                // A badge keeps its width: the name shrinks first.
                 Text(text(badge))
                     .font(.caption.weight(.semibold))
+                    .lineLimit(1).fixedSize()
                     .padding(.horizontal, 6).padding(.vertical, 1)
                     .background(Capsule().fill(color(badge).opacity(0.18)))
                     .foregroundStyle(color(badge))
+                    .layoutPriority(1)
             }
         }
         .accessibilityElement(children: .combine)

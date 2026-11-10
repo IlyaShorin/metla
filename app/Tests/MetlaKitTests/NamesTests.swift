@@ -34,6 +34,6 @@ import Testing
                                               "Managed by Claude", "Not listed by Git", "Git could not tell"])
         #expect(names.removability(.unknown) == "Checking…")
         #expect(names.removability(.removable(branch: "main")) == "Clean")
-        #expect(names.removability(.blocked([.uncommitted, .locked])) == "Uncommitted, Locked")
+        #expect(names.removability(.blocked(branch: "feature", reasons: [.uncommitted, .locked])) == "Uncommitted, Locked")
     }
 }

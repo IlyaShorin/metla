@@ -21,6 +21,8 @@ public struct CandidateRow: Identifiable, Equatable, Sendable {
     /// A worktree's state ("Clean", the reasons it is blocked, "Checking…");
     /// `nil` for everything else.
     public let state: String?
+    /// Every reason a worktree is blocked for, one per entry.
+    public let reasons: [String]
     public let branch: String?
     /// Only removable worktrees can be selected.
     public let selectable: Bool
@@ -37,12 +39,20 @@ public struct CandidateRow: Identifiable, Equatable, Sendable {
         preselected = candidate.preselected
         managed = candidate.managed != nil
         state = listed.removability.map(names.removability)
-        if case .removable(let branch)? = listed.removability {
+        reasons = if case .blocked(_, let reasons)? = listed.removability { reasons.map(names.reason) } else { [] }
+        switch listed.removability {
+        case .removable(let branch)?:
             self.branch = branch
             selectable = true
-        } else {
+        case .blocked(let branch, _)?:
+            self.branch = branch
+            selectable = false
+        case .unknown?:
             branch = nil
-            selectable = listed.removability == nil
+            selectable = false
+        case nil:
+            branch = nil
+            selectable = true
         }
     }
 }

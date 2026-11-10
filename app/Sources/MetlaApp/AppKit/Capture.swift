@@ -13,7 +13,9 @@ import SwiftUI
 /// needs a permission): sidebar, title, toolbar and the screens' content
 /// as they are shown. On macOS 26 the window server composes Liquid Glass
 /// itself: the glass surfaces (the sidebar's and toolbar items' panes,
-/// the blur behind them) and the marks of checked boxes are left out.
+/// the blur behind them) are left out. The tables' checkboxes are drawn
+/// with SwiftUI shapes (`SymbolCheckbox`), so their marks are in the
+/// images.
 @MainActor
 enum Capture {
     static let screens: [(String, Screen)] = [

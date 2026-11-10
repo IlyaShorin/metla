@@ -67,7 +67,7 @@ public struct Names: Sendable {
         switch removability {
         case .unknown: strings.text("worktree.checking")
         case .removable: strings.text("worktree.clean")
-        case .blocked(let reasons): reasons.map(reason).joined(separator: ", ")
+        case .blocked(_, let reasons): reasons.map(reason).joined(separator: ", ")
         }
     }
 

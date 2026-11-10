@@ -184,23 +184,24 @@ struct FreedCard: View {
                         Task { await model.show(.category(category)) }
                     }
                 } label: {
-                    HStack(spacing: 8) {
-                        Text(part.name).lineLimit(1).minimumScaleFactor(0.85)
-                            .frame(width: 128, alignment: .leading)
-                        ShareBar(share: part.share, tint: Palette.category(index))
-                            .frame(minWidth: 24)
-                        VStack(alignment: .trailing, spacing: 0) {
+                    // The bar takes what the name and the size leave: how
+                    // the category goes and what was found sit below.
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 8) {
+                            Text(part.name).lineLimit(1)
+                                .frame(width: 128, alignment: .leading)
+                            ShareBar(share: part.share, tint: Palette.category(index))
+                                .frame(maxWidth: .infinity)
                             Text(Format.bytes(part.bytes, strings)).monospacedDigit()
+                                .frame(width: 72, alignment: .trailing)
+                        }
+                        HStack(spacing: 6) {
+                            Text(part.note ?? "")
                             if let found = part.found {
                                 Text(strings.format("overview.found", Format.bytes(found, strings)))
-                                    .font(.caption2).foregroundStyle(.secondary)
-                                    .lineLimit(1).minimumScaleFactor(0.8)
                             }
                         }
-                        .frame(width: 108, alignment: .trailing)
-                        Text(part.note ?? "").font(.caption).foregroundStyle(.secondary)
-                            .lineLimit(1).minimumScaleFactor(0.8)
-                            .frame(width: 112, alignment: .leading)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     .contentShape(Rectangle())
                 }
@@ -233,11 +234,15 @@ struct LargestCard: View {
                 .font(.caption).foregroundStyle(.secondary)
             ForEach(data.largest) { part in
                 HStack(spacing: 10) {
+                    // The path has the row's free width; it truncates in the
+                    // middle only when it does not fit.
                     Text(part.name)
                         .font(.system(.callout, design: .monospaced))
                         .lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 8)
-                    ShareBar(share: part.share).frame(width: 110)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .layoutPriority(1)
+                        .help(part.id)
+                    ShareBar(share: part.share).frame(width: 72)
                     Text(Format.bytes(part.bytes, strings) + (data.growing ? "\u{2026}" : ""))
                         .monospacedDigit().frame(width: 72, alignment: .trailing)
                 }

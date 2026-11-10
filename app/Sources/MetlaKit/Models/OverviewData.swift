@@ -64,10 +64,10 @@ public struct OverviewData: Equatable, Sendable {
     ) -> OverviewData {
         let scanning = if case .scanning = overview.freshness.state { true } else { false }
         let categories = categoryParts(overview, names)
-        let found = overview.categories.map(\.tally.bytes)
+        let owned = overview.categories.map(\.owned)
         return OverviewData(
             banner: banner(overview, scanning: scanning),
-            disk: disk(overview, volume: volume, home: home, found: found, names.strings),
+            disk: disk(overview, volume: volume, home: home, owned: owned, names.strings),
             freed: overview.reclaimable.freed.bytes,
             trashed: overview.reclaimable.trashed.bytes,
             categories: categories,
@@ -119,18 +119,21 @@ public struct OverviewData: Equatable, Sendable {
         }
     }
 
+    /// The disk card; `owned` is each category's share of the bar, in
+    /// which a candidate inside another counts with the outer one, so the
+    /// segments add up to the analysed size.
     static func disk(
-        _ overview: Overview, volume: VolumeInfo, home: String, found: [UInt64], _ strings: Strings
+        _ overview: Overview, volume: VolumeInfo, home: String, owned: [UInt64], _ strings: Strings
     ) -> Disk? {
         guard let space = overview.volume, space.total > 0 else {
             return nil
         }
         let used = space.total - min(space.available, space.total)
-        let cleanable = found.reduce(0, +)
+        let cleanable = owned.reduce(0, +)
         let analysed = overview.totals?.bytes ?? 0
-        var parts = zip(["category.appCache", "category.devCache", "category.buildArtifact"], found)
+        var parts = zip(["category.appCache", "category.devCache", "category.buildArtifact"], owned)
             .map { (strings.text($0.0), $0.1) }
-        parts.append((strings.text("overview.restCategories"), found.dropFirst(3).reduce(0, +)))
+        parts.append((strings.text("overview.restCategories"), owned.dropFirst(3).reduce(0, +)))
         if volume.isRoot {
             parts.append((strings.text("overview.other"), used - min(cleanable, used)))
         } else {
