@@ -120,7 +120,11 @@ fn show(index: &Path, view: View) -> Result<String, String> {
 fn measure(place: &Place, bench: Bench) -> Result<String, String> {
     match bench {
         Bench::Open => live::bench_open(place),
-        Bench::Churn { length, per_burst } => bench::bench_churn(place, length, per_burst),
+        Bench::Churn {
+            length,
+            per_burst,
+            look,
+        } => bench::bench_churn(place, length, per_burst, look),
         Bench::Refresh => bench::bench_refresh(place),
     }
 }

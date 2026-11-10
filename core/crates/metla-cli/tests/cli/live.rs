@@ -72,13 +72,15 @@ fn bench_takes_what_to_measure() {
     let churn = Bench::Churn {
         length: CHURN,
         per_burst: BURST,
+        look: false,
     };
     assert_eq!(bench("churn"), Ok(at(churn)));
     let short = Bench::Churn {
         length: Duration::from_secs(3),
         per_burst: 9,
+        look: true,
     };
-    assert_eq!(bench("churn --seconds 3 --files 9"), Ok(at(short)));
+    assert_eq!(bench("churn --seconds 3 --files 9 --look"), Ok(at(short)));
     assert_eq!((CHURN, BURST), (Duration::from_secs(120), 400));
     let interactive = parse(&args(
         "bench refresh --root /r --data-dir /d --profile interactive",
@@ -333,6 +335,20 @@ fn bench_churn_follows_the_churn_and_ends_exactly_right() {
         !bed.root.join("churn").exists(),
         "the churn cleans up after itself"
     );
+}
+
+/// Someone looks when the churn ends (the app's window opens): what
+/// waits is applied at once, whatever the profile's pause.
+#[test]
+fn bench_churn_looked_at_is_right_without_the_pause() {
+    let bed = Bed::new();
+    let (code, out, err) = bed.run("bench churn --seconds 1 --files 20 --look");
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert!(
+        out.contains("after the churn, looked at: idle after "),
+        "{out}"
+    );
+    assert!(out.contains("picture exactly right"), "{out}");
 }
 
 #[test]

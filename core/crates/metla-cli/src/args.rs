@@ -27,7 +27,7 @@ pub const USAGE: &str = "usage:
   metla-cli clean      --index <file> --root <fixture> [--category <c>] [--yes]
   metla-cli watch      --root <dir> --data-dir <dir> [engine options] [--seconds N]
   metla-cli bench      open|churn|refresh --root <dir> --data-dir <dir> [engine options]
-                       [--seconds N] [--files N]
+                       [--seconds N] [--files N] [--look]
 engine options: [--home <dir>] [--profile p] [--latency-ms N] [--settle-ms N] [--wait-s N]
 categories: app-cache, dev-cache, build, log, worktree, temp
 profiles: interactive, background, saver, off
@@ -111,8 +111,13 @@ pub enum View {
 pub enum Bench {
     /// Opening the engine on a saved picture and the first snapshot.
     Open,
-    /// Following a churn of files, and how soon the picture is right.
-    Churn { length: Duration, per_burst: usize },
+    /// Following a churn of files, and how soon the picture is right;
+    /// `look`: someone looks at the picture as soon as the churn ends.
+    Churn {
+        length: Duration,
+        per_burst: usize,
+        look: bool,
+    },
     /// How soon a small change shows.
     Refresh,
 }
@@ -148,7 +153,7 @@ const PROFILES: [(&str, PowerProfile); 4] = [
     ("saver", PowerProfile::Saver),
     ("off", PowerProfile::Off),
 ];
-const SWITCHES: [&str; 4] = ["--json", "--no-rules", "--yes", "--classic"];
+const SWITCHES: [&str; 5] = ["--json", "--no-rules", "--yes", "--classic", "--look"];
 
 /// Flags with values, switches and positional arguments.
 #[derive(Default)]
@@ -397,6 +402,7 @@ fn bench(parsed: &mut Parsed) -> Result<Command, String> {
         Some("churn") => Bench::Churn {
             length: parsed.seconds()?.unwrap_or(CHURN),
             per_burst: parsed.number("--files")?.unwrap_or(BURST),
+            look: parsed.switch("--look"),
         },
         Some("refresh") => Bench::Refresh,
         _ => return Err("bench needs open, churn or refresh".into()),

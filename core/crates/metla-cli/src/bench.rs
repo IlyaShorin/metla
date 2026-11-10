@@ -119,8 +119,15 @@ fn exactly_right(place: &Place) -> Result<bool, String> {
 }
 
 /// Churns below `<root>/churn` for `length` while the engine follows the
-/// root; then measures how long until its picture is exactly right.
-pub fn bench_churn(place: &Place, length: Duration, per_burst: usize) -> Result<String, String> {
+/// root; then measures how long until its picture is exactly right. With
+/// `look`, someone looks at the picture as soon as the churn ends (the
+/// app's window opens), so what waits is applied at once.
+pub fn bench_churn(
+    place: &Place,
+    length: Duration,
+    per_burst: usize,
+    look: bool,
+) -> Result<String, String> {
     if place.data_dir.starts_with(&place.root) {
         return Err("the data directory must lie outside the root".into());
     }
@@ -136,6 +143,9 @@ pub fn bench_churn(place: &Place, length: Duration, per_burst: usize) -> Result<
     stop.store(true, Ordering::Release);
     let churned = churner.join().map_err(|_| "the churn failed")?;
     let ended = Instant::now();
+    if look {
+        engine.set_attention(true).map_err(|e| e.to_string())?;
+    }
     let quiet = waited(place.patience, || idle(&engine)).ok_or("never idle")?;
     let after = (engine.counters(), usage());
     let right = exactly_right(place)?;
@@ -151,7 +161,7 @@ pub fn bench_churn(place: &Place, length: Duration, per_burst: usize) -> Result<
         "churn: {} files created and deleted in {} bursts in {}, churn CPU {}\n\
          engine: {} batches, {} rescans, {} full scans, {} events; process {}\n\
          engine CPU without the churn thread: {}\n\
-         after the churn: idle after {}; picture {} (checked against a full scan {} after the churn ended)\n",
+         after the churn{}: idle after {}; picture {} (checked against a full scan {} after the churn ended)\n",
         count(churned.files * 2),
         churned.bursts,
         seconds(length),
@@ -162,6 +172,7 @@ pub fn bench_churn(place: &Place, length: Duration, per_burst: usize) -> Result<
         did.events,
         spent(&before.1, &after.1),
         seconds(engine_cpu.saturating_sub(churned.cpu)),
+        if look { ", looked at" } else { "" },
         seconds(quiet),
         picture,
         seconds(to_right),
