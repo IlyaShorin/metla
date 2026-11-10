@@ -172,12 +172,15 @@ fn report_text(out: &mut String, root: &Path, report: &CleanupReport) {
         bytes(report.removed()),
         signed_bytes(report.freed())
     );
-    let trashed = report.moved_to_trash();
-    if trashed.0 > 0 {
+    let trashed = report
+        .items
+        .iter()
+        .any(|i| i.outcome == Outcome::MovedToTrash);
+    if trashed {
         let _ = writeln!(
             out,
             "moved to Trash {} (not freed until the Trash is emptied)",
-            bytes(trashed)
+            bytes(report.moved_to_trash())
         );
     }
     for item in &report.items {

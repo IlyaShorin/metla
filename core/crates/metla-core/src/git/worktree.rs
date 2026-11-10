@@ -10,7 +10,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::porcelain::{Status, Unparsable, count, status, worktree_list};
+use super::porcelain::{Unparsable, count, status, worktree_list};
 use super::run::{Git, Output, RunError};
 use crate::domain::{Manager, Reason, UnixTime, WorktreeStatus};
 
@@ -93,19 +93,23 @@ pub fn inspect_worktree(
 /// in its repository. Git refuses a worktree that is dirty or locked; its
 /// refusal is the error.
 pub fn remove_worktree(git: &Git, path: &Path) -> Result<(), String> {
-    let common = pointer(path).map_err(|_| "not a linked worktree".to_owned())?;
+    let pointer = pointer(path).map_err(|_| "not a linked worktree".to_owned())?;
     let args = [
         OsStr::new("worktree"),
         OsStr::new("remove"),
         path.as_os_str(),
     ];
-    let output = git.run(&common.0, &args, &[]).map_err(|e| e.to_string())?;
-    succeeded(output).map(|_| ())
+    let output = git.run(&pointer.common, &args, &[]);
+    succeeded(output.map_err(|e| e.to_string())?).map(|_| ())
 }
 
-/// The repository's and the worktree's own git directories, from the
-/// worktree's `.git` pointer file.
-struct Pointer(PathBuf, PathBuf);
+/// Where a worktree's `.git` pointer file leads.
+struct Pointer {
+    /// The repository's git directory.
+    common: PathBuf,
+    /// The worktree's own git directory, `<common>/worktrees/<name>`.
+    own: PathBuf,
+}
 
 fn pointer(path: &Path) -> Result<Pointer, Reason> {
     let file = path.join(".git");
@@ -123,13 +127,16 @@ fn pointer(path: &Path) -> Result<Pointer, Reason> {
         .parent()
         .filter(|p| p.file_name() == Some(OsStr::new("worktrees")));
     let common = worktrees.and_then(Path::parent).ok_or(Reason::NotListed)?;
-    Ok(Pointer(common.to_path_buf(), own))
+    Ok(Pointer {
+        common: common.to_path_buf(),
+        own,
+    })
 }
 
 /// The worktree as its repository lists it: exactly one listed entry is
 /// this directory, and it is not the main worktree.
 fn linked(git: &Git, path: &Path) -> Result<Linked, Reason> {
-    let Pointer(common, own) = pointer(path)?;
+    let Pointer { common, own } = pointer(path)?;
     let args = ["worktree", "list", "--porcelain", "-z"].map(OsStr::new);
     let output = git.run(&common, &args, &[]).map_err(failed)?;
     let listed = worktree_list(&succeeded(output).map_err(Reason::InspectionFailed)?);
@@ -213,7 +220,7 @@ fn git_reasons(git: &Git, path: &Path) -> Result<(Option<String>, Vec<Reason>), 
     .map(OsStr::new);
     let output = succeeded(git.run(path, &args, &[]).map_err(|e| e.to_string())?)?;
     let status = status(&output).map_err(|Unparsable(what)| what)?;
-    let unpushed = unpushed(git, path, &status)?;
+    let unpushed = unpushed(git, path)?;
     let flags = [
         (
             status.staged + status.modified + status.conflicted > 0,
@@ -226,12 +233,11 @@ fn git_reasons(git: &Git, path: &Path) -> Result<(Option<String>, Vec<Reason>), 
     Ok((status.branch, reasons.collect()))
 }
 
-/// Commits ahead of the upstream, or reachable from HEAD and from no
-/// remote ref. Without remotes every commit is unpushed.
-fn unpushed(git: &Git, path: &Path, status: &Status) -> Result<bool, String> {
-    if status.ahead.is_some_and(|ahead| ahead > 0) {
-        return Ok(true);
-    }
+/// Commits reachable from HEAD and from no remote ref: this covers
+/// commits ahead of a remote upstream, a branch without upstream, a
+/// detached HEAD, an upstream that is a local branch, and a repository
+/// without remotes (every commit is unpushed).
+fn unpushed(git: &Git, path: &Path) -> Result<bool, String> {
     let args = ["rev-list", "--count", "HEAD", "--not", "--remotes"].map(OsStr::new);
     let output = succeeded(git.run(path, &args, &[]).map_err(|e| e.to_string())?)?;
     Ok(count(&output).map_err(|Unparsable(what)| what)? > 0)

@@ -102,24 +102,26 @@ fn a_read_only_file_is_removed_without_changing_its_mode() {
 fn what_a_read_only_directory_holds_stays_and_the_rest_goes() {
     let fx = Fixture::new();
     let c = fx.dir("c");
-    fx.build(&["c/locked/a", "c/locked/b", "c/free/x", "c/y"]);
-    fs::set_permissions(c.join("locked"), fs::Permissions::from_mode(0o555)).unwrap();
+    fx.build(&["c/deep/locked/a", "c/deep/locked/b", "c/free/x", "c/y"]);
+    let locked = c.join("deep/locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
     let removal = remove(&c);
-    fs::set_permissions(c.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(removal.leftovers.failures, 2);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(removal.leftovers.failures, 2, "{:?}", removal.leftovers);
     let mut first = removal.leftovers.first.clone();
     first.sort();
     assert_eq!(
         first,
         [
-            (PathBuf::from("locked/a"), Errno(libc::EACCES)),
-            (PathBuf::from("locked/b"), Errno(libc::EACCES)),
-        ]
+            (PathBuf::from("deep/locked/a"), Errno(libc::EACCES)),
+            (PathBuf::from("deep/locked/b"), Errno(libc::EACCES)),
+        ],
+        "the directories holding them stay without being failures"
     );
     assert!(!removal.leftovers.is_empty());
-    assert_eq!(entries(&c), ["locked"], "free/, free/x and y are gone");
-    assert_eq!(entries(&c.join("locked")), ["a", "b"]);
-    assert_eq!(fs::metadata(c.join("locked/a")).unwrap().len(), 0);
+    assert_eq!(entries(&c), ["deep"], "free/, free/x and y are gone");
+    assert_eq!(entries(&locked), ["a", "b"]);
+    assert_eq!(fs::metadata(locked.join("a")).unwrap().len(), 0);
 }
 
 #[test]
@@ -271,14 +273,14 @@ fn a_directory_that_cannot_be_listed_is_one_failure() {
 fn an_entry_removed_meanwhile_is_not_a_failure() {
     let fx = Fixture::new();
     let c = fx.dir("c");
-    fx.build(&["c/sub/a", "c/sub/b"]);
+    fx.build(&["c/outer/sub/a", "c/outer/sub/b"]);
     let handle = DirHandle::open(&c).unwrap();
-    let removed_meanwhile = Cell::new(false);
+    let asked = Cell::new(0);
     let removal = remove_contents(&handle, device(&c), &|| {
-        if !removed_meanwhile.replace(true) {
-            fs::remove_file(c.join("sub/a")).unwrap();
-            fs::remove_file(c.join("sub/b")).unwrap();
-            fs::remove_dir(c.join("sub")).unwrap();
+        // Once `outer` is listed, its `sub` goes away.
+        asked.set(asked.get() + 1);
+        if asked.get() == 2 {
+            fs::remove_dir_all(c.join("outer/sub")).unwrap();
         }
         false
     });

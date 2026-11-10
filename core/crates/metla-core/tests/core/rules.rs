@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use metla_core::domain::{Category, DirFacts, Entry, FileKind, Probe, RuleId};
-use metla_core::rules::{Area, PROBE_LIMIT, RuleSet};
+use metla_core::rules::{Area, PROBE_LIMIT, Removes, RuleSet};
 use metla_core::scan::ScanControl;
 
 use crate::scan::{options, scan_with};
@@ -57,7 +57,7 @@ fn the_rules_that_keep_their_directory_are_the_documented_ones() {
     let rules = rules();
     let keepers: BTreeSet<String> = rules
         .rules()
-        .filter(|(_, rule)| rule.keeps)
+        .filter(|(_, rule)| rule.removes == Removes::Contents)
         .map(|(id, _)| id.to_string())
         .collect();
     assert_eq!(keepers, documented_keepers());

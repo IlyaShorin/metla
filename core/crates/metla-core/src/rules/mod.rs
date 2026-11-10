@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::{DirFacts, FileKind, RuleId};
 
-pub use catalogue::{CATALOGUE, Marker, Matcher, Rule};
+pub use catalogue::{CATALOGUE, Marker, Matcher, Removes, Rule};
 pub use kinds::Area;
 
 use kinds::Kinds;

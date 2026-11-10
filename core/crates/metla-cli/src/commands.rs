@@ -325,10 +325,8 @@ impl TrashHost for FixtureTrash {
     fn trash(&self, path: &Path) -> Result<(), String> {
         std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let mut candidates = (1..).map(|n| match n {
-            1 => self.dir.join(&*name),
-            n => self.dir.join(format!("{name} {n}")),
-        });
+        let numbered = (2..).map(|n| self.dir.join(format!("{name} {n}")));
+        let mut candidates = std::iter::once(self.dir.join(&*name)).chain(numbered);
         let target = candidates.find(|t| !t.exists()).unwrap_or_default();
         std::fs::rename(path, target).map_err(|e| e.to_string())
     }

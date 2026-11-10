@@ -169,7 +169,7 @@ fn wait(child: &mut Child, deadline: Instant) -> Result<ExitStatus, RunError> {
         {
             return Ok(status);
         }
-        if Instant::now() >= deadline {
+        if deadline.saturating_duration_since(Instant::now()).is_zero() {
             let _ = child.kill();
             let _ = child.wait();
             return Err(RunError::TimedOut);

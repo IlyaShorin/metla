@@ -126,6 +126,16 @@ fn each_directory_is_judged_by_its_own_repository() {
 }
 
 #[test]
+fn a_repository_that_ignores_none_of_them_says_so() {
+    let repo = Repo::new();
+    let paths = repo.dirs(&["src", "docs"]);
+    assert_eq!(
+        verify_outputs(&repo.git, &paths),
+        [Verdict::NotIgnored, Verdict::NotIgnored]
+    );
+}
+
+#[test]
 fn many_directories_are_checked_in_batches() {
     let repo = Repo::new();
     let names: Vec<String> = (0..1100).map(|n| format!("p{n}/node_modules")).collect();

@@ -506,10 +506,10 @@ shim, which costs about 40 ms a call). It collects every reason at once:
   (default 30 days; unknown activity counts as recent) — `InUse`;
 * `git status --porcelain=v2 --branch --untracked-files=all -z`: staged,
   modified or conflicted — `Uncommitted`; untracked — `Untracked`;
-* ahead of the upstream, or any commit reachable from HEAD and from no
-  remote ref (`rev-list --count HEAD --not --remotes`, which also covers a
-  detached HEAD, a missing or local upstream, and a repository without
-  remotes) — `Unpushed`;
+* any commit reachable from HEAD and from no remote ref (`rev-list
+  --count HEAD --not --remotes`), which covers commits ahead of a remote
+  upstream, a detached HEAD, a missing or local upstream, and a
+  repository without remotes — `Unpushed`;
 * Codex Desktop and Claude Code worktrees — `Managed(…)`;
 * any Git failure or unparsable output — `InspectionFailed`.
 

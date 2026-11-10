@@ -18,6 +18,7 @@ fn run(git: &Git, dir: &std::path::Path, args: &[&str], input: &[u8]) -> Result<
 fn the_system_git_is_called_directly() {
     let git = Git::system();
     assert_eq!(git.program().file_name(), Some(OsStr::new("git")));
+    assert!(git.program().is_absolute(), "{}", git.program().display());
     let output = run(&git, std::path::Path::new("/"), &["--version"], b"").unwrap();
     assert_eq!(output.code, 0);
     assert!(output.stdout.starts_with(b"git version "));

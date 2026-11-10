@@ -145,6 +145,35 @@ moved to Trash 40.0 kB (not freed until the Trash is emptied)
 }
 
 #[test]
+fn a_report_without_anything_trashed_does_not_mention_the_trash() {
+    let report = CleanupReport {
+        preview: PreviewId(1),
+        items: vec![ItemReport {
+            candidate: DirId(1),
+            path: PathBuf::from("/f/repo/target"),
+            rule: RuleId::parse("build.cargo-target").unwrap(),
+            found: Bytes(1_000),
+            removed: Bytes(1_000),
+            outcome: Outcome::Removed,
+        }],
+        free_before: Bytes(0),
+        free_after: Bytes(1_000),
+    };
+    let cleaned = Cleaned {
+        root: PathBuf::from("/f"),
+        preview: CleanupPreview {
+            id: PreviewId(1),
+            items: Vec::new(),
+            rejected: Vec::new(),
+        },
+        report: Some(report),
+    };
+    let text = clean_text(&cleaned);
+    assert!(text.contains("found 1.0 kB, removed 1.0 kB, freed on disk 1.0 kB (measured)\n"));
+    assert!(!text.contains("Trash"), "{text}");
+}
+
+#[test]
 fn every_outcome_says_what_happened() {
     let left = Leftovers {
         failures: 2,

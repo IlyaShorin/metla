@@ -15,9 +15,17 @@ pub struct Rule {
     pub title: &'static str,
     pub why: &'static str,
     pub matcher: Matcher,
-    /// The directory is a place its owner expects to exist: a cleanup
-    /// removes what it holds and keeps the directory.
-    pub keeps: bool,
+    pub removes: Removes,
+}
+
+/// What a cleanup removes of a candidate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Removes {
+    /// The directory and everything in it.
+    Directory,
+    /// What the directory holds: the directory is a place its owner
+    /// expects to exist, so it stays.
+    Contents,
 }
 
 #[derive(Debug)]
@@ -74,7 +82,7 @@ const fn denying(
         title: "",
         why: "",
         matcher: Matcher::Location { patterns, deny },
-        keeps: false,
+        removes: Removes::Directory,
     }
 }
 
@@ -89,7 +97,7 @@ const fn project(
         title: "",
         why: "",
         matcher: Matcher::Project { names, markers },
-        keeps: false,
+        removes: Removes::Directory,
     }
 }
 
@@ -100,7 +108,7 @@ impl Rule {
 
     const fn keeps(self) -> Rule {
         Rule {
-            keeps: true,
+            removes: Removes::Contents,
             ..self
         }
     }
@@ -348,6 +356,6 @@ pub const CATALOGUE: &[Rule] = &[
         title: "Linked Git worktree",
         why: "Removed only when clean, pushed, unlocked and not managed by another tool.",
         matcher: Matcher::LinkedWorktree,
-        keeps: false,
+        removes: Removes::Directory,
     },
 ];

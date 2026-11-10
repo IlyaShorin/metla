@@ -405,6 +405,21 @@ fn git_that_prints_nonsense_blocks_the_worktree() {
 }
 
 #[test]
+fn a_directory_listed_as_the_main_worktree_is_not_a_linked_one() {
+    let world = World::new();
+    let wt = world.worktree("wt");
+    let listing = format!(
+        "printf 'worktree {}\\0\\0worktree {}\\0\\0'",
+        wt.display(),
+        world.repo.display()
+    );
+    let body = format!("case \"$*\" in\n*'worktree list'*) {listing};;\nesac");
+    let liar = Git::new(script(&world.fx.path("first-git"), &body));
+    let status = inspect_worktree(&liar, &wt, Some(now()), next_year(), &world.settings());
+    assert_eq!(reasons(&status), BTreeSet::from([Reason::NotListed]));
+}
+
+#[test]
 fn every_reason_is_reported_at_once() {
     let world = World::new();
     let wt = world.worktree("home/.codex/worktrees/b2/repo");

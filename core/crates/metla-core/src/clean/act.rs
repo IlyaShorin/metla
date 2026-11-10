@@ -10,7 +10,7 @@ use crate::domain::{
 };
 use crate::fs::{ListError, list_dir, remove_contents, survey};
 use crate::git::{Git, WorktreeSettings, inspect_worktree, remove_worktree};
-use crate::rules::RuleSet;
+use crate::rules::{Removes, RuleSet};
 
 /// What acting needs.
 pub struct Actor<'a> {
@@ -35,7 +35,8 @@ impl Actor<'_> {
     /// Whether the item's rule keeps the directory and removes only what
     /// it holds.
     fn keeps(&self, item: &PreviewItem) -> bool {
-        self.rules.rule(item.rule()).is_some_and(|rule| rule.keeps)
+        let rule = self.rules.rule(item.rule());
+        rule.is_some_and(|rule| rule.removes == Removes::Contents)
     }
 
     /// Deletes what the directory holds, then the directory itself (once

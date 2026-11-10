@@ -181,11 +181,13 @@ fn has_git(dir: &DirHandle) -> bool {
 /// them.
 fn probes(rules: &RuleSet, dir: &DirHandle, entries: &[Entry]) -> Vec<Probe> {
     let wanted = rules.probes();
-    let files = entries
+    let present = wanted
         .iter()
-        .filter(|e| e.meta.kind == EntryKind::File && !e.meta.dataless);
-    let named = files.filter(|e| wanted.iter().any(|name| e.name == *name));
-    named
+        .filter_map(|name| entries.iter().find(|e| e.name == *name));
+    // A dataless file is never opened: reading it would download it.
+    // read_head itself refuses anything but a regular file.
+    present
+        .filter(|e| !e.meta.dataless)
         .filter_map(|e| {
             let head = dir.read_head(&e.name, PROBE_LIMIT).ok()?;
             Some(Probe {

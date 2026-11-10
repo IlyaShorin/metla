@@ -186,6 +186,24 @@ fn with_yes_the_default_selection_is_cleaned_and_reported() {
 }
 
 #[test]
+fn the_fixture_trash_keeps_both_of_two_items_with_one_name() {
+    let made = Made::new();
+    let trash = made.path("home/.Trash");
+    fs::create_dir_all(trash.join("com.example.editor")).unwrap();
+    let out = made.clean(&["--category", "log", "--yes"]);
+    let outcomes = outcomes(&out);
+    assert_eq!(
+        outcomes["home/Library/Logs/com.example.editor"],
+        "moved to Trash"
+    );
+    assert!(
+        trash.join("com.example.editor 2/today.log").exists(),
+        "{out}"
+    );
+    assert!(trash.join("editor.crash").exists());
+}
+
+#[test]
 fn a_root_without_the_fixture_marker_is_refused() {
     let made = Made::new();
     fs::remove_file(made.path(".metla-fixture")).unwrap();
