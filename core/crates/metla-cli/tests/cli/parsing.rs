@@ -18,17 +18,21 @@ fn scan_takes_root_index_threads_and_json() {
             home: None,
             rules: true,
             threads: Some(3),
+            classic: false,
             json: true,
         })
     );
     assert_eq!(
-        parse(&args("scan --index /i --root /r --home /h --no-rules")),
+        parse(&args(
+            "scan --index /i --root /r --home /h --no-rules --classic"
+        )),
         Ok(Command::Scan {
             root: PathBuf::from("/r"),
             index: PathBuf::from("/i"),
             home: Some(PathBuf::from("/h")),
             rules: false,
             threads: None,
+            classic: true,
             json: false,
         })
     );

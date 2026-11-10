@@ -6,13 +6,14 @@
 //! longer than `PATH_MAX` work, symlinks are never followed and file
 //! contents are never opened.
 
+mod bulk;
 mod dir;
 mod process;
 mod remove;
 mod sys;
 mod volume;
 
-pub use dir::{DirHandle, ListError, entry_at, list_dir};
+pub use dir::{DirHandle, ListError, entry_at, list_dir, list_dir_classic};
 pub use process::{
     background_thread, now, peak_rss, raise_open_file_limit, raised_open_file_limit,
 };

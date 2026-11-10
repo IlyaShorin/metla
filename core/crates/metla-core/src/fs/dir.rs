@@ -57,6 +57,11 @@ impl DirHandle {
         stat_of(&self.0)
     }
 
+    /// The raw descriptor, for calls that read through it.
+    pub(super) fn raw(&self) -> libc::c_int {
+        self.0.as_raw_fd()
+    }
+
     /// The directory once more, on a descriptor of its own.
     pub fn reopen(&self) -> Result<DirHandle, ListError> {
         self.open_at(OsStr::new("."), OPEN_DIR)
@@ -174,8 +179,18 @@ fn stat_of(fd: &OwnedFd) -> Result<EntryMeta, ListError> {
 }
 
 /// Every entry of `dir` except `.` and `..`, with metadata read without
-/// following symlinks. An entry removed while the listing runs is left out.
+/// following symlinks. An entry removed while the listing runs is left
+/// out. Uses `getattrlistbulk`, and the classic listing where the file
+/// system does not support it.
 pub fn list_dir(dir: &DirHandle) -> Result<Vec<Entry>, ListError> {
+    match super::bulk::list(dir)? {
+        Some(entries) => Ok(entries),
+        None => list_dir_classic(dir),
+    }
+}
+
+/// [`list_dir`] with `readdir` and one `fstatat` per entry.
+pub fn list_dir_classic(dir: &DirHandle) -> Result<Vec<Entry>, ListError> {
     let stream = DirStream::open(dir)?;
     let mut entries = Vec::new();
     while let Some(name) = stream.next_name()? {
@@ -185,7 +200,7 @@ pub fn list_dir(dir: &DirHandle) -> Result<Vec<Entry>, ListError> {
 }
 
 /// The entry for `name`, or nothing for `.`, `..` and a name that is gone.
-fn entry_of(dir: &DirHandle, name: OsString) -> Result<Option<Entry>, ListError> {
+pub(super) fn entry_of(dir: &DirHandle, name: OsString) -> Result<Option<Entry>, ListError> {
     if name == "." || name == ".." {
         return Ok(None);
     }

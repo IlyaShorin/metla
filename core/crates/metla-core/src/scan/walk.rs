@@ -34,7 +34,7 @@ use crate::domain::{
     Area, Bytes, Coverage, DirFacts, DirId, DirRecord, DirState, Entry, EntryKind, FileKind, Gap,
     GapAt, KindTotals, OwnTotals, Passed, Probe, RuleId, Skip, Stamp, TreeTotals, UnixTime,
 };
-use crate::fs::{DirHandle, ListError, list_dir};
+use crate::fs::{DirHandle, ListError, list_dir, list_dir_classic};
 use crate::rules::PROBE_LIMIT;
 
 /// What the directories above a walk's origin hand down to it: what its
@@ -342,7 +342,11 @@ impl<'a> Walk<'a> {
         if self.control.is_cancelled() {
             return self.finish_unread(task, DirState::Gap(Gap::Cancelled));
         }
-        let listed = task.open().and_then(|dir| Ok((list_dir(&dir)?, dir)));
+        let list = match self.options.classic {
+            true => list_dir_classic,
+            false => list_dir,
+        };
+        let listed = task.open().and_then(|dir| Ok((list(&dir)?, dir)));
         match listed {
             Ok((entries, dir)) => self.read(scope, task, entries, dir),
             Err(error) => self.finish_unread(task, DirState::Gap(gap_of(error))),

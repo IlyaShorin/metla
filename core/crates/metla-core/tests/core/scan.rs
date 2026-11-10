@@ -591,3 +591,15 @@ fn a_scan_root_is_made_canonical() {
     let root = ScanRoot::new(&fx.path("alias/../alias")).unwrap();
     assert_eq!(root.path(), fx.path("real"));
 }
+
+#[test]
+fn a_scan_with_the_classic_listing_records_exactly_the_same_tree() {
+    let fx = Fixture::new();
+    fx.build(&["a/b/c=1", "a/x=22", "d/e/f/g=333", "h/"]);
+    write_file(&fx.path("a/big"), 70_000);
+    symlink("a", fx.path("link")).unwrap();
+    let bulk = scan(fx.root());
+    let classic = scan_with(&options(fx.root()).classic(true), &ScanControl::new(64));
+    assert_eq!(bulk.records, classic.records);
+    assert_eq!(bulk.summary.totals, classic.summary.totals);
+}

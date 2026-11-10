@@ -18,7 +18,7 @@ use std::io::Write;
 
 pub use args::{CANDIDATE_LIMIT, Command, Edit, TOP_LIMIT, USAGE, parse};
 pub use cleaned::{Cleaned, clean_text, outcome_text};
-pub use commands::{ScanRules, default_threads};
+pub use commands::{ScanHow, default_threads};
 pub use format::{ago, bytes, count, per_second, signed_bytes};
 pub use overview::{
     Edited, Freshness, Overview, Shown, candidates_json, candidates_text, edited_text,
@@ -65,13 +65,16 @@ fn execute(command: Command) -> Result<String, String> {
             home,
             rules,
             threads,
+            classic,
             json,
         } => {
-            let rules = ScanRules {
+            let how = ScanHow {
                 home,
-                enabled: rules,
+                rules,
+                threads,
+                classic,
             };
-            let report = commands::scan(&root, &index, &rules, threads);
+            let report = commands::scan(&root, &index, &how);
             report.map(|report| rendered(&report, json, scan_text, scan_json))
         }
         Command::Top {

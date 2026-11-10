@@ -78,6 +78,7 @@ pub struct ScanOptions {
     scope: ScanScope,
     threads: usize,
     throttled: bool,
+    classic: bool,
     rules: Option<Arc<RuleSet>>,
     gap_limit: usize,
     observer: Option<Arc<dyn DirObserver>>,
@@ -91,6 +92,7 @@ impl ScanOptions {
             scope,
             threads: 1,
             throttled: false,
+            classic: false,
             rules: None,
             gap_limit: GAP_LIMIT,
             observer: None,
@@ -105,6 +107,13 @@ impl ScanOptions {
     /// Run the scan threads at background priority, with throttled I/O.
     pub fn throttled(mut self, throttled: bool) -> ScanOptions {
         self.throttled = throttled;
+        self
+    }
+
+    /// List directories with `readdir` and `fstatat` instead of
+    /// `getattrlistbulk`, to compare the two.
+    pub fn classic(mut self, classic: bool) -> ScanOptions {
+        self.classic = classic;
         self
     }
 

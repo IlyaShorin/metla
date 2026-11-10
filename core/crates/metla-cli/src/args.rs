@@ -13,7 +13,7 @@ pub const TOP_LIMIT: usize = 20;
 pub const CANDIDATE_LIMIT: usize = 50;
 
 pub const USAGE: &str = "usage:
-  metla-cli scan       --root <dir> --index <file> [--home <dir>] [--no-rules] [--threads N] [--json]
+  metla-cli scan       --root <dir> --index <file> [--home <dir>] [--no-rules] [--threads N] [--classic] [--json]
   metla-cli top        --index <file> [--under <path>] [--limit N]
   metla-cli ls         --index <file> <path>
   metla-cli candidates --index <file> [--category <c>] [--limit N] [--json]
@@ -33,6 +33,8 @@ pub enum Command {
         home: Option<PathBuf>,
         rules: bool,
         threads: Option<usize>,
+        /// List with `readdir` and `fstatat` instead of `getattrlistbulk`.
+        classic: bool,
         json: bool,
     },
     Top {
@@ -89,7 +91,7 @@ const VALUE_FLAGS: [&str; 7] = [
     "--home",
     "--category",
 ];
-const SWITCHES: [&str; 3] = ["--json", "--no-rules", "--yes"];
+const SWITCHES: [&str; 4] = ["--json", "--no-rules", "--yes", "--classic"];
 
 /// Flags with values, switches and positional arguments.
 #[derive(Default)]
@@ -205,6 +207,7 @@ fn scan(parsed: &mut Parsed) -> Result<Command, String> {
         home: parsed.take("--home").map(PathBuf::from),
         rules: !parsed.switch("--no-rules"),
         threads: parsed.number("--threads")?,
+        classic: parsed.switch("--classic"),
         json: parsed.switch("--json"),
     })
 }

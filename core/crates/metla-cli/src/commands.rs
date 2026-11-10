@@ -39,11 +39,15 @@ fn cores() -> usize {
         .unwrap_or_default()
 }
 
-/// Which rules a scan uses.
-pub struct ScanRules {
-    /// `None`: the current user's home directory.
+/// How a scan runs.
+pub struct ScanHow {
+    /// The home directory for the rules (`None`: the current user's).
     pub home: Option<PathBuf>,
-    pub enabled: bool,
+    pub rules: bool,
+    /// `None`: the `Interactive` profile's threads.
+    pub threads: Option<usize>,
+    /// List directories with `readdir` and `fstatat`.
+    pub classic: bool,
 }
 
 /// The rule set for `home` (default: `$HOME`), for the user `$USER` (or
@@ -61,19 +65,14 @@ fn rule_set(home: Option<&Path>) -> Result<RuleSet, String> {
 }
 
 /// Scans `root` into `index`.
-pub fn scan(
-    root: &Path,
-    index: &Path,
-    rules: &ScanRules,
-    threads: Option<usize>,
-) -> Result<ScanReport, String> {
-    let options = options(root, rules, threads)?;
+pub fn scan(root: &Path, index: &Path, how: &ScanHow) -> Result<ScanReport, String> {
+    let options = options(root, how)?;
     let mut writer = IndexWriter::open(index).map_err(|e| e.to_string())?;
     let session = writer.start_scan(now()).map_err(|e| e.to_string())?;
     let control = ScanControl::new(LIVE_LIMIT);
     let summary = run(&options, &control, &|rows| session.send(rows)).map_err(|e| e.to_string())?;
     session.finish(&summary).map_err(|e| e.to_string())?;
-    let checked = match rules.enabled {
+    let checked = match how.rules {
         true => Some(verify(index, &writer)?),
         false => None,
     };
@@ -90,13 +89,15 @@ pub fn scan(
 }
 
 /// What and how to scan.
-fn options(root: &Path, rules: &ScanRules, threads: Option<usize>) -> Result<ScanOptions, String> {
+fn options(root: &Path, how: &ScanHow) -> Result<ScanOptions, String> {
     let root = ScanRoot::new(root).map_err(|e| format!("{}: {e}", root.display()))?;
     let scope = ScanScope::detect(&root).map_err(|e| e.to_string())?;
-    let threads = threads.unwrap_or_else(|| default_threads(cores()));
-    let options = ScanOptions::new(root, scope).threads(threads);
-    match rules.enabled {
-        true => Ok(options.rules(Arc::new(rule_set(rules.home.as_deref())?))),
+    let threads = how.threads.unwrap_or_else(|| default_threads(cores()));
+    let options = ScanOptions::new(root, scope)
+        .threads(threads)
+        .classic(how.classic);
+    match how.rules {
+        true => Ok(options.rules(Arc::new(rule_set(how.home.as_deref())?))),
         false => Ok(options),
     }
 }

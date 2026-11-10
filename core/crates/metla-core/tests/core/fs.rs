@@ -3,9 +3,9 @@ use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::Path;
 
-use metla_core::domain::{EntryKind, Errno};
+use metla_core::domain::{Entry, EntryKind, Errno};
 use metla_core::fs::{
-    DirHandle, ListError, list_dir, mounts, peak_rss, raise_open_file_limit,
+    DirHandle, ListError, list_dir, list_dir_classic, mounts, peak_rss, raise_open_file_limit,
     raised_open_file_limit, retry_interrupted, volume,
 };
 
@@ -261,4 +261,69 @@ fn only_a_regular_file_is_read_and_a_symlink_is_not_followed() {
         "a FIFO must not block"
     );
     assert_eq!(head(fx.root(), "missing", 10).err(), Some(ListError::Gone));
+}
+
+fn differences(bulk: &[Entry], classic: &[Entry]) {
+    for (b, c) in bulk.iter().zip(classic) {
+        if b != c {
+            eprintln!(
+                "DIFF {:?}\n  bulk    {:?}\n  classic {:?}",
+                b.name, b.meta, c.meta
+            );
+        }
+    }
+}
+
+/// Both listings of `path`, sorted by name.
+fn both(path: &Path) -> (Vec<Entry>, Vec<Entry>) {
+    let dir = DirHandle::open(path).unwrap();
+    let mut bulk = list_dir(&dir).unwrap();
+    let mut classic = list_dir_classic(&dir).unwrap();
+    bulk.sort_by(|a, b| a.name.cmp(&b.name));
+    classic.sort_by(|a, b| a.name.cmp(&b.name));
+    (bulk, classic)
+}
+
+#[test]
+fn the_bulk_listing_gives_exactly_what_readdir_and_fstatat_give() {
+    let fx = Fixture::new();
+    write_file(&fx.path("big"), 300_000);
+    write_file(&fx.path("small"), 10);
+    fs::write(fx.path("empty"), "").unwrap();
+    fs::hard_link(fx.path("small"), fx.path("small-link")).unwrap();
+    symlink("big", fx.path("to-big")).unwrap();
+    fx.dir("sub/inner");
+    fx.dir("é ü 名前");
+    let fifo = std::ffi::CString::new(fx.path("pipe").to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    for i in 0..2500 {
+        let long = format!("{i:05}-{}", "x".repeat(60));
+        fs::write(fx.path(&long), [1u8; 1]).unwrap();
+    }
+    let (bulk, classic) = both(fx.root());
+    assert_eq!(bulk.len(), 2508, "more entries than one call returns");
+    differences(&bulk, &classic);
+    assert_eq!(bulk, classic);
+    let kinds: Vec<EntryKind> = ["pipe", "sub", "to-big", "big"]
+        .iter()
+        .map(|name| bulk.iter().find(|e| e.name == *name).unwrap().meta.kind)
+        .collect();
+    let expected = [
+        EntryKind::Other,
+        EntryKind::Dir,
+        EntryKind::Symlink,
+        EntryKind::File,
+    ];
+    assert_eq!(kinds, expected);
+    let (sub_bulk, sub_classic) = both(&fx.path("sub"));
+    assert_eq!(sub_bulk, sub_classic);
+}
+
+#[test]
+fn the_bulk_listing_describes_mount_points_and_firmlinks_by_what_they_lead_to() {
+    for system in ["/", "/Volumes"] {
+        let (bulk, classic) = both(Path::new(system));
+        differences(&bulk, &classic);
+        assert_eq!(bulk, classic, "{system}");
+    }
 }

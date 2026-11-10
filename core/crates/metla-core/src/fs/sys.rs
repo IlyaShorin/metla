@@ -7,9 +7,10 @@ use std::os::unix::ffi::OsStrExt;
 use crate::domain::{EntryKind, EntryMeta, Stamp, UnixTime};
 
 /// `SF_DATALESS` from `<sys/stat.h>`: the file's data is not on this disk.
-const SF_DATALESS: u32 = 0x4000_0000;
+pub const SF_DATALESS: u32 = 0x4000_0000;
 
-const NANOS: i64 = 1_000_000_000;
+/// Nanoseconds in a second.
+pub const NANOS: i64 = 1_000_000_000;
 
 /// The calling thread's `errno`.
 pub fn errno() -> i32 {
@@ -52,11 +53,19 @@ pub fn c_array_bytes(array: &[libc::c_char]) -> &[u8] {
     unsafe { CStr::from_ptr(array.as_ptr()) }.to_bytes()
 }
 
+/// An entry's metadata from `stat`. A directory's own link count is not
+/// used (it contributes nothing) and is reported as one, as
+/// `getattrlistbulk` reports it.
 pub fn meta_of(st: &libc::stat) -> EntryMeta {
+    let kind = kind_of(st.st_mode);
+    let links = match kind {
+        EntryKind::Dir => NonZeroU64::MIN,
+        _ => NonZeroU64::new(u64::from(st.st_nlink)).unwrap_or(NonZeroU64::MIN),
+    };
     EntryMeta {
-        kind: kind_of(st.st_mode),
+        kind,
         blocks: st.st_blocks.unsigned_abs(),
-        links: NonZeroU64::new(u64::from(st.st_nlink)).unwrap_or(NonZeroU64::MIN),
+        links,
         device: device_id(st.st_dev),
         inode: st.st_ino,
         mtime: UnixTime(st.st_mtime),
