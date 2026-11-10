@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/metla-core", "crates/metla-cli"]
+members = ["crates/metla-core", "crates/metla-cli", "crates/metla-ffi"]
 
 [workspace.package]
 edition = "2024"

@@ -1,0 +1,219 @@
+//! The engine as Swift holds it. Every call is synchronous, returns at
+//! once and is safe from any thread; long work (scans, cleanups) runs on
+//! the engine's threads and is reported through the observer. Nothing
+//! here walks the file system on the caller's thread except `children`,
+//! which lists the one directory asked for, keeping at most
+//! `LISTED_FILES` files.
+
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use metla_core::clean::CleanProgress;
+use metla_core::domain::{
+    Category, CleanupPreview, DirId, Exclusion, PreviewId, ProgressSnapshot, QuickCategory,
+};
+use metla_core::engine::{
+    self, DirRef, EngineConfig, Freshness, PowerProfile, Profiles, TopFolder, Watching,
+};
+use metla_core::git::Git;
+use metla_core::index::{Order, Page};
+
+use crate::callbacks::{EngineObserver, Observer, Trash, TrashHost};
+use crate::error::MetlaError;
+use crate::view::{CandidatePage, CleanupResult, Confirmations, FolderPage, Overview};
+
+/// The most entries a page holds, whatever the caller asks for.
+pub const MAX_PAGE: u32 = 1000;
+
+/// A page starting at `offset`, at most [`MAX_PAGE`] long.
+pub fn page(offset: u64, limit: u32) -> Page {
+    Page {
+        offset: usize::try_from(offset).unwrap_or(usize::MAX),
+        limit: limit.min(MAX_PAGE) as usize,
+    }
+}
+
+/// Where and how an engine runs.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct EngineOptions {
+    /// The directory analysed: `/` in the app, a fixture in development.
+    pub root: String,
+    /// The user's home directory and name, for the rules.
+    pub home: String,
+    pub user: String,
+    /// Where the index lives.
+    pub data_dir: String,
+    /// The profile at the start (the app picks it from the power state).
+    pub profile: PowerProfile,
+    /// Follow the root with an FSEvents stream; without, the picture
+    /// changes only by scans.
+    pub follow: bool,
+}
+
+#[derive(uniffi::Object)]
+pub struct Engine {
+    inner: engine::Engine,
+}
+
+#[uniffi::export]
+impl Engine {
+    /// Opens the engine; the saved picture answers at once. It can clean
+    /// only a root marked as a fixture: this crate cannot make the
+    /// production capability.
+    #[uniffi::constructor]
+    pub fn open(
+        options: EngineOptions,
+        trash: Arc<dyn TrashHost>,
+    ) -> Result<Arc<Engine>, MetlaError> {
+        let watching = match options.follow {
+            true => Watching::FsEvents,
+            false => Watching::Manual,
+        };
+        let config = EngineConfig {
+            root: PathBuf::from(options.root),
+            home: PathBuf::from(options.home),
+            user: OsString::from(options.user),
+            data_dir: PathBuf::from(options.data_dir),
+            git: Git::system(),
+            production: None,
+            trash: Arc::new(Trash(trash)),
+            watching,
+            profiles: Profiles::standard(cores()),
+            profile: options.profile,
+            index_limit: None,
+        };
+        let inner = engine::Engine::open(config)?;
+        Ok(Arc::new(Engine { inner }))
+    }
+
+    pub fn set_observer(&self, observer: Arc<dyn EngineObserver>) {
+        self.inner.set_observer(Arc::new(Observer(observer)));
+    }
+
+    /// Everything the Overview shows.
+    pub fn snapshot(&self) -> Result<Overview, MetlaError> {
+        Ok(Overview::from(self.inner.snapshot()?))
+    }
+
+    /// Only how fresh the picture is: cheaper than a snapshot.
+    pub fn freshness(&self) -> Result<Freshness, MetlaError> {
+        Ok(self.inner.freshness()?)
+    }
+
+    /// The running full scan's counters.
+    pub fn progress(&self) -> Option<ProgressSnapshot> {
+        self.inner.progress()
+    }
+
+    /// The Overview's largest folders, at most [`MAX_PAGE`].
+    pub fn largest_folders(&self, limit: u32) -> Result<Vec<TopFolder>, MetlaError> {
+        let limit = page(0, limit).limit;
+        Ok(self.inner.largest_folders(limit)?)
+    }
+
+    /// One page of the offered candidates of `category` (all when
+    /// `None`) in `order`, and how many there are.
+    pub fn candidates(
+        &self,
+        category: Option<Category>,
+        order: Order,
+        offset: u64,
+        limit: u32,
+    ) -> Result<CandidatePage, MetlaError> {
+        let found = self
+            .inner
+            .candidate_page(category, order, page(offset, limit))?;
+        Ok(CandidatePage::from(found))
+    }
+
+    /// One page of a directory's contents, largest first.
+    pub fn children(&self, dir: DirRef, offset: u64, limit: u32) -> Result<FolderPage, MetlaError> {
+        Ok(FolderPage::from(
+            self.inner.children(&dir, page(offset, limit))?,
+        ))
+    }
+
+    pub fn start_scan(&self) -> Result<(), MetlaError> {
+        Ok(self.inner.start_scan()?)
+    }
+
+    pub fn cancel_scan(&self) {
+        self.inner.cancel_scan();
+    }
+
+    pub fn set_power_profile(&self, profile: PowerProfile) -> Result<(), MetlaError> {
+        Ok(self.inner.set_power_profile(profile)?)
+    }
+
+    /// Whether the app's window or panel is visible.
+    pub fn set_attention(&self, looking: bool) -> Result<(), MetlaError> {
+        Ok(self.inner.set_attention(looking)?)
+    }
+
+    /// A page of the paths the user keeps, in path order.
+    pub fn exclusions(&self, offset: u64, limit: u32) -> Result<Vec<String>, MetlaError> {
+        let page = page(offset, limit);
+        let kept = self
+            .inner
+            .exclusions()?
+            .into_iter()
+            .skip(page.offset)
+            .take(page.limit);
+        Ok(kept
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .collect())
+    }
+
+    /// Keeps `path`; false when it was kept already.
+    pub fn add_exclusion(&self, path: String) -> Result<bool, MetlaError> {
+        Ok(self.inner.add_exclusion(&exclusion(path)?)?)
+    }
+
+    /// No longer keeps `path`; false when it was not kept.
+    pub fn remove_exclusion(&self, path: String) -> Result<bool, MetlaError> {
+        Ok(self.inner.remove_exclusion(&exclusion(path)?)?)
+    }
+
+    /// The preview of cleaning the candidates `selection`.
+    pub fn preview(&self, selection: Vec<DirId>) -> Result<CleanupPreview, MetlaError> {
+        Ok(self.inner.preview(&selection)?)
+    }
+
+    /// Executes the preview `preview` with what the user confirmed.
+    pub fn execute_confirmed(
+        &self,
+        preview: PreviewId,
+        confirmed: Confirmations,
+    ) -> Result<(), MetlaError> {
+        Ok(self.inner.execute_confirmed(preview, confirmed.into())?)
+    }
+
+    /// Cleans the preselected candidates of exactly `categories`, which
+    /// can only be caches and build output.
+    pub fn quick_clean(&self, categories: Vec<QuickCategory>) -> Result<(), MetlaError> {
+        Ok(self.inner.quick_clean(categories)?)
+    }
+
+    pub fn cleanup_progress(&self) -> Option<CleanProgress> {
+        self.inner.cleanup_progress()
+    }
+
+    pub fn cancel_cleanup(&self) {
+        self.inner.cancel_cleanup();
+    }
+
+    /// The last cleanup's report, or why it did not run.
+    pub fn last_report(&self) -> Option<CleanupResult> {
+        self.inner.last_report().map(CleanupResult::from)
+    }
+}
+
+/// `path` as an exclusion, checked where it comes in.
+fn exclusion(path: String) -> Result<Exclusion, MetlaError> {
+    Exclusion::new(Path::new(&path)).ok_or(MetlaError::InvalidPath { path })
+}
+
+fn cores() -> usize {
+    std::thread::available_parallelism().map_or(1, usize::from)
+}

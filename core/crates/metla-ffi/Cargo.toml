@@ -1,0 +1,32 @@
+[package]
+name = "metla-ffi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# The app links the static library scripts/build-core.sh makes with
+# `cargo rustc --crate-type staticlib`; tests use the Rust library, so a
+# test build does not link a static library per mutant.
+test = false
+doctest = false
+
+[[bin]]
+# Generates the Swift bindings from the built library (scripts/build-core.sh).
+name = "uniffi-bindgen-swift"
+path = "src/bin/uniffi-bindgen-swift.rs"
+required-features = ["bindgen"]
+test = false
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+# Without the `production` feature: nothing built from this crate can
+# make the capability to clean a root that is not a fixture.
+metla-core = { path = "../metla-core" }
+uniffi = "0.32"
+
+[dev-dependencies]
+tempfile = "3"

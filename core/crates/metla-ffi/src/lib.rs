@@ -1,0 +1,31 @@
+//! The Rust/Swift boundary: one `Engine` object, the records the app
+//! shows and two traits the app implements, generated into Swift by
+//! UniFFI (proc-macro mode). No logic of its own beyond converting,
+//! paging and mapping errors (ARCHITECTURE §10).
+//!
+//! The domain's types cross as they are (`domain`: UniFFI's remote
+//! derives, checked against the core's definitions when this compiles);
+//! shapes the boundary cannot carry (maps, sets, tuples, private fields)
+//! have a record of their own here (`view`). Every call returns at once
+//! and is safe from any thread; lists are pages of a bounded size.
+//!
+//! This crate depends on metla-core without its `production` feature, so
+//! nothing built from it can make the capability to clean a root that is
+//! not a fixture.
+
+mod callbacks;
+mod domain;
+mod engine;
+mod error;
+mod view;
+
+pub use callbacks::{EngineObserver, Observer, Trash, TrashHost, TrashOutcome};
+pub use engine::{Engine, EngineOptions, MAX_PAGE, page};
+pub use error::MetlaError;
+pub use view::{
+    CandidatePage, CategoryTally, CleanupResult, Confirmations, CoverageSummary, FailedPath,
+    FolderDir, FolderItem, FolderPage, GapCount, GapPlace, KindBytes, Leftover, Overview,
+    RuleTitle, SkipCount, rule_titles,
+};
+
+uniffi::setup_scaffolding!();
