@@ -838,9 +838,10 @@ another user owns it stays `InspectionFailed` (a worktree) or
   rather than triggering a prompt per folder, and marks the analysis
   partial. It never asks for root.
 * `--capture <dir>` renders each main screen, light and dark, to PNG files
-  from the app's own layers and quits; on macOS 26 the parts the window
-  server composes (Liquid Glass: the sidebar, toolbar items, checkbox
-  marks) come out empty, since a picture of them needs screen recording.
+  from the app's own layers (sidebar, title, toolbar and content) and
+  quits; on macOS 26 what the window server composes itself (the Liquid
+  Glass panes and blur, checkbox marks) is left out, since a picture of
+  it needs screen recording.
 
 ## 12. Development safety
 
