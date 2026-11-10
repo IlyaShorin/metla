@@ -1,12 +1,13 @@
 use std::ffi::OsStr;
 use std::fs;
+use std::num::NonZeroU64;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::Path;
 
-use metla_core::domain::{Entry, EntryKind, Errno};
+use metla_core::domain::{Entry, EntryKind, EntryMeta, Errno, Stamp, UnixTime};
 use metla_core::fs::{
-    DirHandle, ListError, list_dir, list_dir_classic, mounts, peak_rss, raise_open_file_limit,
-    raised_open_file_limit, retry_interrupted, volume,
+    Bulk, DirHandle, ListError, decode_bulk, list_dir, list_dir_classic, mounts, peak_rss,
+    raise_open_file_limit, raised_open_file_limit, retry_interrupted, volume,
 };
 
 use crate::support::{Fixture, write_file};
@@ -325,6 +326,169 @@ fn the_bulk_listing_describes_mount_points_and_firmlinks_by_what_they_lead_to() 
         let (bulk, classic) = both(Path::new(system));
         differences(&bulk, &classic);
         assert_eq!(bulk, classic, "{system}");
+    }
+}
+
+/// `VREG`, `VDIR`, `VLNK` and `VFIFO` of `enum vtype`.
+const VREG: u32 = 1;
+const VDIR: u32 = 2;
+const VLNK: u32 = 5;
+const VFIFO: u32 = 7;
+/// `SF_FIRMLINK` and `SF_DATALESS` from `<sys/stat.h>`.
+const SF_FIRMLINK: u32 = 0x0080_0000;
+const SF_DATALESS: u32 = 0x4000_0000;
+
+/// One record as `getattrlistbulk` packs it for the listing.
+struct Packed {
+    /// Common, volume, directory, file and fork attributes returned.
+    returned: [u32; 5],
+    error: u32,
+    device: u32,
+    kind: u32,
+    mtime: [i64; 2],
+    changed: [i64; 2],
+    flags: u32,
+    inode: u64,
+    links: u32,
+    /// A directory's mount status, or anything else's allocated bytes.
+    last: u64,
+}
+
+impl Packed {
+    fn of(kind: u32) -> Packed {
+        Packed {
+            returned: [u32::MAX; 5],
+            error: 0,
+            device: 7,
+            kind,
+            mtime: [1_700_000_000, 5],
+            changed: [1_700_000_100, 250],
+            flags: 0,
+            inode: 42,
+            links: 2,
+            last: 12_288,
+        }
+    }
+
+    fn bytes(&self) -> Vec<u8> {
+        let mut out = vec![0u8; 4];
+        for set in self.returned {
+            out.extend(set.to_ne_bytes());
+        }
+        out.extend(self.error.to_ne_bytes());
+        let reference = out.len();
+        out.extend([0u8; 8]);
+        out.extend(self.device.to_ne_bytes());
+        out.extend(self.kind.to_ne_bytes());
+        for time in self.mtime.into_iter().chain(self.changed) {
+            out.extend(time.to_ne_bytes());
+        }
+        out.extend(self.flags.to_ne_bytes());
+        out.extend(self.inode.to_ne_bytes());
+        out.extend(self.links.to_ne_bytes());
+        match self.kind {
+            VDIR => out.extend((self.last as u32).to_ne_bytes()),
+            _ => out.extend(self.last.to_ne_bytes()),
+        }
+        let name = b"entry\0";
+        let offset = (out.len() - reference) as u32;
+        out[reference..reference + 4].copy_from_slice(&offset.to_ne_bytes());
+        out[reference + 4..reference + 8].copy_from_slice(&(name.len() as u32).to_ne_bytes());
+        out.extend(name);
+        let length = out.len() as u32;
+        out[..4].copy_from_slice(&length.to_ne_bytes());
+        out
+    }
+
+    fn decoded(&self) -> Bulk {
+        decode_bulk(&self.bytes())
+    }
+}
+
+fn described(meta: EntryMeta) -> Bulk {
+    let name = "entry".into();
+    Bulk::Described(Entry { name, meta })
+}
+
+#[test]
+fn a_bulk_record_gives_a_file_its_metadata() {
+    let meta = EntryMeta {
+        kind: EntryKind::File,
+        blocks: 24,
+        links: NonZeroU64::new(2).unwrap(),
+        device: 7,
+        inode: 42,
+        mtime: UnixTime(1_700_000_000),
+        changed: Stamp(1_700_000_100_000_000_250),
+        dataless: false,
+    };
+    assert_eq!(Packed::of(VREG).decoded(), described(meta));
+    let placeholder = Packed {
+        flags: SF_DATALESS,
+        ..Packed::of(VREG)
+    };
+    assert_eq!(
+        placeholder.decoded(),
+        described(EntryMeta {
+            dataless: true,
+            ..meta
+        })
+    );
+    let unlinked = Packed {
+        links: 0,
+        ..Packed::of(VREG)
+    };
+    assert_eq!(
+        unlinked.decoded(),
+        described(EntryMeta {
+            links: NonZeroU64::MIN,
+            ..meta
+        })
+    );
+}
+
+#[test]
+fn a_bulk_record_tells_symlinks_directories_and_other_entries_apart() {
+    let kind = |packed: Packed| match packed.decoded() {
+        Bulk::Described(entry) => (entry.meta.kind, entry.meta.links, entry.meta.blocks),
+        Bulk::AskAgain(_) => panic!("described"),
+    };
+    let two = NonZeroU64::new(2).unwrap();
+    assert_eq!(kind(Packed::of(VLNK)), (EntryKind::Symlink, two, 24));
+    assert_eq!(kind(Packed::of(VFIFO)), (EntryKind::Other, two, 24));
+    let dir = Packed {
+        last: 0,
+        ..Packed::of(VDIR)
+    };
+    assert_eq!(kind(dir), (EntryKind::Dir, NonZeroU64::MIN, 0));
+}
+
+#[test]
+fn what_a_bulk_record_cannot_describe_is_asked_again() {
+    let again = Bulk::AskAgain("entry".into());
+    let failed = Packed {
+        error: libc::EACCES as u32,
+        ..Packed::of(VREG)
+    };
+    let firmlink = Packed {
+        flags: SF_FIRMLINK,
+        ..Packed::of(VDIR)
+    };
+    let mount = Packed {
+        last: u64::from(libc::DIR_MNTSTATUS_MNTPOINT),
+        ..Packed::of(VDIR)
+    };
+    let mut no_id = Packed::of(VREG);
+    no_id.returned[0] &= !libc::ATTR_CMN_FILEID;
+    let mut no_mount_status = Packed {
+        last: 0,
+        ..Packed::of(VDIR)
+    };
+    no_mount_status.returned[2] &= !libc::ATTR_DIR_MOUNTSTATUS;
+    let mut no_size = Packed::of(VREG);
+    no_size.returned[3] &= !libc::ATTR_FILE_DATAALLOCSIZE;
+    for packed in [failed, firmlink, mount, no_id, no_mount_status, no_size] {
+        assert_eq!(packed.decoded(), again);
     }
 }
 

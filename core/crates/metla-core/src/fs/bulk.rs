@@ -4,7 +4,8 @@
 //! what they lead to, and are asked again with `fstatat`, as the classic
 //! listing does: a mount point (the bulk call describes the directory
 //! underneath) and a firmlink (it describes the link, not its target).
-//! So is an entry the bulk call could not describe.
+//! So is an entry the bulk call could not describe. Reading a record is
+//! pure ([`decode_bulk`]); only the listing makes system calls.
 
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
@@ -115,10 +116,32 @@ impl Cursor<'_> {
     }
 }
 
-/// The entry a record describes; `None` for an entry that is gone. A
-/// mount point, a firmlink, or an entry with an attribute the call could
-/// not give is asked with `fstatat`, as the classic listing does.
+/// The entry a record describes; `None` for an entry that is gone.
 fn entry(dir: &DirHandle, record: &[u8]) -> Result<Option<Entry>, ListError> {
+    match decode_bulk(record) {
+        Bulk::Described(entry) => Ok(Some(entry)),
+        Bulk::AskAgain(name) => entry_of(dir, name),
+    }
+}
+
+/// What one record of `getattrlistbulk` says about an entry.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Bulk {
+    /// Everything a listing gives.
+    Described(Entry),
+    /// To be asked with `fstatat`, as the classic listing does: a mount
+    /// point, a firmlink, or an entry with an error of its own or with an
+    /// attribute the call could not give.
+    AskAgain(OsString),
+}
+
+/// Reads one record of the bulk call, as the listing requests it: the
+/// record's length; the returned attribute sets (common, volume,
+/// directory, file, fork); the entry's error; a reference to its name;
+/// device, object type, modification and change times, flags and file id;
+/// then link count and mount status for a directory, or link count and
+/// allocated size for anything else.
+pub fn decode_bulk(record: &[u8]) -> Bulk {
     let mut cursor = Cursor { record, at: 4 };
     let returned = [
         cursor.u32(),
@@ -132,7 +155,7 @@ fn entry(dir: &DirHandle, record: &[u8]) -> Result<Option<Entry>, ListError> {
     let name = name(record, cursor.at);
     cursor.at += 8;
     if error != 0 {
-        return gone(error.cast_signed());
+        return Bulk::AskAgain(name);
     }
     let device = u64::from(cursor.u32());
     let kind = cursor.u32();
@@ -147,7 +170,7 @@ fn entry(dir: &DirHandle, record: &[u8]) -> Result<Option<Entry>, ListError> {
     };
     let link = flags & SF_FIRMLINK != 0;
     if !valid || link || common & COMMON != COMMON {
-        return entry_of(dir, name);
+        return Bulk::AskAgain(name);
     }
     let meta = EntryMeta {
         kind,
@@ -159,7 +182,7 @@ fn entry(dir: &DirHandle, record: &[u8]) -> Result<Option<Entry>, ListError> {
         changed,
         dataless: flags & SF_DATALESS != 0,
     };
-    Ok(Some(Entry { name, meta }))
+    Bulk::Described(Entry { name, meta })
 }
 
 /// A directory's group: valid unless it is a mount point (then the record
@@ -189,15 +212,6 @@ fn file(
         _ => EntryKind::Other,
     };
     (kind, links, blocks, returned & FILES == FILES)
-}
-
-/// An entry the bulk call could not describe: gone is left out, as the
-/// classic listing does; anything else fails the listing.
-fn gone(errno: i32) -> Result<Option<Entry>, ListError> {
-    match ListError::from_errno(errno) {
-        ListError::Gone => Ok(None),
-        other => Err(other),
-    }
 }
 
 /// The name the `attrreference_t` at `at` points at, without its NUL

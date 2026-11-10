@@ -13,6 +13,7 @@ mod remove;
 mod sys;
 mod volume;
 
+pub use bulk::{Bulk, decode_bulk};
 pub use dir::{DirHandle, ListError, entry_at, list_dir, list_dir_classic};
 pub use process::{
     Usage, background_thread, now, peak_rss, raise_open_file_limit, raised_open_file_limit,
