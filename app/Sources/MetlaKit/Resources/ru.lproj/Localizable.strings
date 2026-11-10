@@ -81,6 +81,12 @@
 "overview.restCategories" = "Логи, worktree, временные";
 "overview.other" = "Остальные данные";
 "overview.free" = "Свободно";
+"overview.otherInFolder" = "Другие данные в этой папке";
+"overview.outside" = "Вне этой папки";
+"overview.analysed" = "проанализировано %@";
+"overview.onVolume" = "на томе %1$@, свободно %2$@";
+"overview.found" = "из %@ найденных";
+"overview.rowsNote" = "В строках — что даст очистка отмеченного по умолчанию; всего найдено — там, где это отличается.";
 "overview.scanning" = "Сканирование… Числа растут по мере подсчёта папок.";
 "overview.partialTitle" = "Анализ неполный.";
 "overview.partialLowerBound" = "Размеры ниже — нижняя оценка.";

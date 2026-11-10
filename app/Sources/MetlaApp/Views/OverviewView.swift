@@ -107,13 +107,22 @@ struct DiskCard: View {
     var body: some View {
         Card {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(disk.name).font(.title3.weight(.semibold))
-                Text(strings.format("overview.used", Format.bytes(disk.used, strings), Format.bytes(disk.total, strings)))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(strings.format("overview.freeOf", Format.bytes(disk.free, strings)))
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(disk.low ? .red : .primary)
+                Text(disk.title).font(.title3.weight(.semibold))
+                    .lineLimit(1).truncationMode(.middle)
+                if disk.folder {
+                    Text(strings.format("overview.analysed", Format.bytes(disk.analysed, strings)))
+                        .font(.title3.weight(.semibold))
+                    Spacer()
+                    Text(strings.format("overview.onVolume", disk.volume, Format.bytes(disk.free, strings)))
+                        .foregroundStyle(disk.low ? .red : .secondary)
+                } else {
+                    Text(strings.format("overview.used", Format.bytes(disk.used, strings), Format.bytes(disk.total, strings)))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(strings.format("overview.freeOf", Format.bytes(disk.free, strings)))
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(disk.low ? .red : .primary)
+                }
             }
             GeometryReader { space in
                 HStack(spacing: 1) {
@@ -167,6 +176,8 @@ struct FreedCard: View {
                 Text(strings.format("overview.toTrash", Format.bytes(data.trashed, strings)))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Text(strings.text("overview.rowsNote"))
+                .font(.caption).foregroundStyle(.secondary)
             ForEach(Array(data.categories.enumerated()), id: \.element.id) { index, part in
                 Button {
                     if let category = part.category {
@@ -176,15 +187,23 @@ struct FreedCard: View {
                     HStack(spacing: 10) {
                         Text(part.name).frame(width: 150, alignment: .leading)
                         ShareBar(share: part.share, tint: Palette.category(index))
-                        Text(Format.bytes(part.bytes, strings))
-                            .monospacedDigit().frame(width: 72, alignment: .trailing)
+                        VStack(alignment: .trailing, spacing: 0) {
+                            Text(Format.bytes(part.bytes, strings)).monospacedDigit()
+                            if let found = part.found {
+                                Text(strings.format("overview.found", Format.bytes(found, strings)))
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(width: 96, alignment: .trailing)
                         Text(part.note ?? "").font(.caption).foregroundStyle(.secondary)
                             .frame(width: 120, alignment: .leading)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(part.name), \(Format.bytes(part.bytes, strings)), \(part.note ?? "")")
+                .accessibilityLabel(
+                    "\(part.name), \(Format.bytes(part.bytes, strings)), \(part.note ?? "")"
+                        + (part.found.map { ", " + strings.format("overview.found", Format.bytes($0, strings)) } ?? ""))
             }
         }
     }

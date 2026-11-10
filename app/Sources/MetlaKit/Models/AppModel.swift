@@ -33,7 +33,7 @@ public final class AppModel {
     public private(set) var overview: Overview?
     public private(set) var largest: [TopFolder] = []
     public private(set) var freshness: Freshness?
-    public private(set) var volumeName = ""
+    public private(set) var volume = VolumeInfo(name: "", isRoot: true)
     public private(set) var now = Date()
     public private(set) var refreshes = 0
     public var screen: Screen = .overview
@@ -61,7 +61,7 @@ public final class AppModel {
             let client = try await EngineClient.open(settings.options, mainThread: mainThread)
             self.client = client
             folders = FoldersModel(root: settings.root, client: client, names: names)
-            volumeName = await Self.volumeName(of: settings.root)
+            volume = await Self.volume(of: settings.root)
             await refresh(Self.everything)
             listen(to: client)
         } catch {
@@ -171,7 +171,7 @@ public final class AppModel {
     /// The Overview's values, once there is a snapshot.
     public var overviewData: OverviewData? {
         overview.map {
-            OverviewData.make($0, largest: largest, volume: volumeName, home: settings.home, names)
+            OverviewData.make($0, largest: largest, volume: volume, home: settings.home, names)
         }
     }
 
@@ -239,10 +239,13 @@ public final class AppModel {
         _ = try? await client?.addExclusion(path)
     }
 
-    /// The volume's name ("Macintosh HD"), read off the main thread.
+    /// The volume `root` is on ("Macintosh HD") and whether `root` is its
+    /// mount point, read off the main thread.
     @concurrent
-    static func volumeName(of root: String) async -> String {
-        let values = try? URL(fileURLWithPath: root).resourceValues(forKeys: [.volumeNameKey])
-        return values?.volumeName ?? root
+    static func volume(of root: String) async -> VolumeInfo {
+        let url = URL(fileURLWithPath: root)
+        let values = try? url.resourceValues(forKeys: [.volumeNameKey, .volumeURLKey])
+        let mount = values?.volume?.standardizedFileURL.path
+        return VolumeInfo(name: values?.volumeName ?? root, isRoot: mount == url.standardizedFileURL.path)
     }
 }

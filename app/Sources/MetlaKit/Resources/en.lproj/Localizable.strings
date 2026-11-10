@@ -81,6 +81,12 @@
 "overview.restCategories" = "Logs, worktrees, temporary";
 "overview.other" = "Other data";
 "overview.free" = "Free";
+"overview.otherInFolder" = "Other data in this folder";
+"overview.outside" = "Outside this folder";
+"overview.analysed" = "%@ analysed";
+"overview.onVolume" = "on %1$@, %2$@ free";
+"overview.found" = "of %@ found";
+"overview.rowsNote" = "Each row: what cleaning its checked items would do; found in all where that differs.";
 "overview.scanning" = "Scanning… The numbers grow as folders are counted.";
 "overview.partialTitle" = "Partial analysis.";
 "overview.partialLowerBound" = "Sizes below are a lower bound.";

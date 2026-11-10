@@ -21,7 +21,13 @@ import Testing
         let status = try #require(model.status)
         #expect(status.tone == .current && status.text.hasPrefix("Updated"))
         #expect(model.failure == nil && !model.scanning)
-        #expect(model.volumeName.isEmpty == false)
+        let disk = try #require(data.disk)
+        #expect(disk.folder && model.volume.isRoot == false, "a fixture is a folder inside a volume")
+        #expect(disk.title.hasSuffix("fixture") && disk.analysed == model.overview?.totals?.bytes)
+        #expect(disk.segments.map(\.name).contains("Outside this folder"))
+        #expect(!disk.volume.isEmpty)
+        let rows = data.categories.reduce(0) { $0 + $1.bytes }
+        #expect(rows == data.freed + data.trashed, "the rows add up to the header")
     }
 
     @Test func aSavedPictureIsShownAtOnceWithItsAge() async throws {
