@@ -78,14 +78,11 @@ impl EngineObserver for Relay {
     }
 }
 
-/// Opens an engine on `place`, its notifications on the receiver;
-/// `manual` opens it without an event stream.
-pub fn open(place: &Place, manual: bool) -> Result<(Engine, Receiver<Changed>), String> {
-    let watching = match manual {
-        true => Watching::Manual,
-        false => Watching::FsEvents {
-            latency: place.latency,
-        },
+/// Opens an engine on `place` following an FSEvents stream (unless its
+/// profile watches nothing), its notifications on the receiver.
+pub fn open(place: &Place) -> Result<(Engine, Receiver<Changed>), String> {
+    let watching = Watching::FsEvents {
+        latency: place.latency,
     };
     let (home, user) = home_and_user(place.home.as_deref())?;
     let config = EngineConfig {
@@ -158,7 +155,7 @@ pub fn spent(before: &Usage, after: &Usage) -> String {
 /// Follows `place` for `limit` (forever without one), printing a line
 /// after every batch; a root without a picture is scanned first.
 pub fn watch(place: &Place, limit: Option<Duration>, out: &mut dyn Write) -> Result<(), String> {
-    let (engine, notes) = open(place, false)?;
+    let (engine, notes) = open(place)?;
     let before = usage();
     let started = Instant::now();
     if engine
@@ -220,11 +217,13 @@ pub fn fixture(root: &Path) -> Result<(), String> {
 pub fn bench_open(place: &Place) -> Result<String, String> {
     let before = usage();
     let started = Instant::now();
+    // Off: nothing is watched or scanned, so only opening and the first
+    // snapshot are timed.
     let quiet = Place {
         profile: PowerProfile::Off,
         ..place.clone()
     };
-    let (engine, _) = open(&quiet, true)?;
+    let (engine, _) = open(&quiet)?;
     let overview = engine.snapshot().map_err(|e| e.to_string())?;
     let elapsed = started.elapsed();
     let dirs = overview.totals.map_or(0, |t| t.dirs);

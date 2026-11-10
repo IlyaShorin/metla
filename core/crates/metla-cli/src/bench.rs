@@ -188,7 +188,7 @@ pub fn bench_refresh(place: &Place) -> Result<String, String> {
 /// The engine on a fixture root, once its first full scan has ended.
 fn scanned(place: &Place) -> Result<Engine, String> {
     fixture(&place.root)?;
-    let (engine, _) = open(place, false)?;
+    let (engine, _) = open(place)?;
     engine.start_scan().map_err(|e| e.to_string())?;
     waited(place.patience, || idle(&engine)).ok_or("the first scan did not end")?;
     Ok(engine)
