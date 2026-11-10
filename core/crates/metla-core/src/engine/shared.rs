@@ -28,7 +28,7 @@ pub struct RunningScan {
 }
 
 /// What the engine is doing, as the scheduler last said.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Status {
     /// The profile the app asked for.
     pub profile: PowerProfile,

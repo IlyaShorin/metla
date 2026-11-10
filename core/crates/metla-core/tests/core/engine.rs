@@ -362,7 +362,6 @@ fn a_folder_lists_its_subdirectories_and_files_largest_first() {
         .collect();
     assert_eq!(names, ["big/", "file", "small/"]);
     assert_eq!(folder.total, 3);
-    assert!(!folder.files_truncated);
     let by_id = engine.children(
         &DirRef::Id(folder.dir.id),
         Page {
@@ -535,4 +534,80 @@ fn an_index_of_another_schema_is_replaced_by_a_new_scan() {
         data.join("index.sqlite").exists(),
         "a file that is not an index is left alone"
     );
+}
+
+#[test]
+fn a_picture_whose_last_scan_was_interrupted_is_scanned_again() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    settled(&engine);
+    drop(engine);
+    let index = place.aux.path("data/index.sqlite");
+    let mut writer = metla_core::index::IndexWriter::open(&index).unwrap();
+    let interrupted = writer.start_scan(metla_core::domain::UnixTime(1)).unwrap();
+    interrupted.send(Vec::new());
+    drop(writer);
+    let again = place.open();
+    assert!(again.snapshot().unwrap().freshness.needs_full_scan);
+    settled(&again);
+    assert_eq!(again.counters().full_scans, 1);
+}
+
+#[test]
+fn after_a_cancel_no_full_scan_starts_until_the_user_asks() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(place.config(PowerProfile::Saver)).unwrap();
+    until(&engine, |e| {
+        e.snapshot().unwrap().freshness.state == EngineState::Paused(PowerProfile::Saver)
+    });
+    engine.cancel_scan();
+    engine.set_power_profile(PowerProfile::Background).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(engine.counters().full_scans, 0, "held after the cancel");
+    assert!(engine.snapshot().unwrap().freshness.needs_full_scan);
+    engine.start_scan().unwrap();
+    settled(&engine);
+    assert_eq!(engine.counters().full_scans, 1);
+}
+
+/// A tree a single thread takes a while to walk.
+fn wide(place: &Place) {
+    for i in 0..2000 {
+        fs::create_dir_all(place.fx.path(&format!("wide/{}/{i}", i % 40))).unwrap();
+    }
+}
+
+fn slow(place: &Place) -> EngineConfig {
+    let mut config = place.config(PowerProfile::Background);
+    config.profiles.background.threads = 1;
+    config
+}
+
+#[test]
+fn switching_off_cancels_the_first_background_scan() {
+    let place = Place::new(HOME);
+    wide(&place);
+    let engine = Engine::open(slow(&place)).unwrap();
+    engine.set_power_profile(PowerProfile::Off).unwrap();
+    until(&engine, |e| {
+        let state = e.snapshot().unwrap().freshness.state;
+        state == EngineState::Off && e.progress().is_none()
+    });
+    let freshness = engine.snapshot().unwrap().freshness;
+    assert_ne!(freshness.picture, Completeness::Complete);
+    assert!(freshness.needs_full_scan);
+}
+
+#[test]
+fn switching_background_analysis_off_cancels_the_first_background_scan() {
+    let place = Place::new(HOME);
+    wide(&place);
+    let engine = Engine::open(slow(&place)).unwrap();
+    engine.set_background(false).unwrap();
+    until(&engine, |e| {
+        let state = e.snapshot().unwrap().freshness.state;
+        state == EngineState::Off && e.progress().is_none()
+    });
+    let freshness = engine.snapshot().unwrap().freshness;
+    assert_ne!(freshness.picture, Completeness::Complete);
 }

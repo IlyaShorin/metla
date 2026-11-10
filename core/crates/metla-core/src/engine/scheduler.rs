@@ -100,10 +100,8 @@ impl Scheduler {
     /// Opening: follow changes from the stored event id when the history
     /// allows it; a full scan is needed without a picture or a history.
     fn start(&mut self) {
-        let has_picture = self.picture().ok().flatten().is_some();
         let resumed = self.watch();
-        self.shared
-            .update(|s| s.needs_full_scan = !has_picture || !resumed);
+        self.shared.update(|s| s.needs_full_scan |= !resumed);
         self.work();
     }
 

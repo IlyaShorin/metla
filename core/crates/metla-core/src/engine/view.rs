@@ -159,8 +159,6 @@ pub struct Folder {
     pub entries: Vec<FolderEntry>,
     /// Entries on every page.
     pub total: usize,
-    /// More files were there than are listed.
-    pub files_truncated: bool,
 }
 
 /// What the engine has done since it opened.

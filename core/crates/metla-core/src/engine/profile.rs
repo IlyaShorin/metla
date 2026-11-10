@@ -7,11 +7,12 @@ use std::time::Duration;
 use crate::watch::Timing;
 
 /// How much CPU and I/O the engine may use.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PowerProfile {
     /// The user is waiting: a scan they asked for.
     Interactive,
     /// On AC power.
+    #[default]
     Background,
     /// On battery or in Low Power Mode.
     Saver,

@@ -51,8 +51,6 @@ use worktrees::Statuses;
 pub const INDEX_FILE: &str = "index.sqlite";
 /// Where the settings are kept in the index.
 const SETTINGS_NOTE: &str = "settings";
-/// The most files a folder listing keeps (the largest).
-pub const FILE_LIMIT: usize = 10_000;
 
 /// What an engine is made for.
 pub struct EngineConfig {
@@ -155,8 +153,10 @@ impl Engine {
             Settings::decode(&String::from_utf8_lossy(&bytes))
         });
         let root = setup(&config.root, ScanRoot::new(&config.root))?;
-        let pictured = reader.read(|snap| Ok(snap.scan()?.and_then(|scan| scan.picture)))?;
-        let has_picture = pictured.is_some_and(|picture| picture.root == root.path());
+        let scan = reader.read(|snap| snap.scan())?;
+        let current = scan.as_ref().is_some_and(|scan| scan.is_current());
+        let pictured = scan.and_then(|scan| scan.picture);
+        let usable = current && pictured.is_some_and(|picture| picture.root == root.path());
         let scope = setup(&config.root, ScanScope::detect(&root))?;
         let rules = Arc::new(RuleSet::new(&config.home, &config.user));
         let cleaner = Cleaner::new(
@@ -183,12 +183,8 @@ impl Engine {
             observer,
             status: Mutex::new(Status {
                 profile: config.profile,
-                pending: 0,
-                watching: false,
-                needs_full_scan: !has_picture,
-                updating: false,
-                cleaning: false,
-                held: false,
+                needs_full_scan: !usable,
+                ..Status::default()
             }),
             scan: Mutex::default(),
             cleanup: Mutex::default(),
@@ -215,7 +211,7 @@ impl Engine {
             stream: None,
             origin: None,
             clock: Instant::now(),
-            manual: 0,
+            manual: u64::MIN,
             next_batch: None,
         };
         let editor = scheduler.writer.editor();
@@ -268,7 +264,6 @@ impl Engine {
                 snap.reclaimable(&recency)?,
             ))
         })?;
-        let current = scan.as_ref().is_some_and(|s| s.is_current());
         let picture = scan.and_then(|s| s.picture).filter(|p| p.root == root);
         let status = *lock(&self.shared.status);
         let completeness = match &picture {
@@ -283,7 +278,7 @@ impl Engine {
             state: self.shared.state(),
             picture: completeness,
             watching: status.watching,
-            needs_full_scan: status.needs_full_scan || !current,
+            needs_full_scan: status.needs_full_scan,
         };
         let space = volume(&root).ok().map(|v| VolumeSpace {
             total: v.total,
@@ -335,8 +330,8 @@ impl Engine {
         self.read(|snap| snap.category_tallies())
     }
 
-    /// A directory's contents, largest first: its subdirectories from the
-    /// picture and its files listed now (at most [`FILE_LIMIT`]).
+    /// One page of a directory's contents, largest first: its
+    /// subdirectories from the picture and its files listed now.
     pub fn children(&self, dir: &DirRef, page: Page) -> Result<Folder, EngineError> {
         let found = self.read(|snap| {
             let found = match dir {
@@ -355,12 +350,12 @@ impl Engine {
 
     /// Starts a full scan with the `Interactive` profile's threads.
     pub fn start_scan(&self) -> Result<(), EngineError> {
-        lock(&self.shared.status).held = false;
         self.send(Command::Scan)
     }
 
     /// Stops a running full scan. With a picture to fall back on, the
-    /// scan is given up; the first scan ends as a partial picture.
+    /// scan is given up; the first scan ends as a partial picture. Either
+    /// way no full scan starts on its own until the user asks for one.
     pub fn cancel_scan(&self) {
         lock(&self.shared.status).held = true;
         if let Some(scan) = lock(&self.shared.scan).as_ref() {
@@ -521,7 +516,7 @@ fn clean_settings(home: &Path, settings: &Settings) -> CleanSettings {
 /// A folder's page: subdirectories and files listed now, largest first.
 fn folder(row: DirRecord, path: PathBuf, children: Vec<DirRecord>, page: Page) -> Folder {
     let listed = DirHandle::open(&path).and_then(|dir| list_dir(&dir));
-    let mut files: Vec<FolderEntry> = listed
+    let files: Vec<FolderEntry> = listed
         .unwrap_or_default()
         .into_iter()
         .filter(|e| e.meta.kind != EntryKind::Dir)
@@ -530,9 +525,6 @@ fn folder(row: DirRecord, path: PathBuf, children: Vec<DirRecord>, page: Page) -
             name: e.name,
         })
         .collect();
-    files.sort_by_key(|file| std::cmp::Reverse(size(file)));
-    let files_truncated = files.len() > FILE_LIMIT;
-    files.truncate(FILE_LIMIT);
     let dirs = children
         .into_iter()
         .map(|row| FolderEntry::Dir(Box::new(row)));
@@ -550,7 +542,6 @@ fn folder(row: DirRecord, path: PathBuf, children: Vec<DirRecord>, page: Page) -
         path,
         entries,
         total,
-        files_truncated,
     }
 }
 

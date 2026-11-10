@@ -127,7 +127,7 @@ impl Stream {
             .map_err(|_| format!("{} holds a NUL byte", root.display()))?;
         let sink: *mut Sink = Box::into_raw(Box::new(Box::new(sink)));
         let context = StreamContext {
-            version: 0,
+            version: CFIndex::default(),
             info: sink.cast(),
             retain: std::ptr::null(),
             release: std::ptr::null(),
