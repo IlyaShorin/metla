@@ -75,7 +75,11 @@ pub enum WorktreeStatus {
         /// `None` for a detached HEAD.
         branch: Option<String>,
     },
-    Blocked(Reasons),
+    /// With the branch Git reported, when it reported one.
+    Blocked {
+        branch: Option<String>,
+        reasons: Reasons,
+    },
 }
 
 impl WorktreeStatus {
@@ -83,11 +87,14 @@ impl WorktreeStatus {
     pub fn new(branch: Option<String>, reasons: BTreeSet<Reason>) -> WorktreeStatus {
         match reasons.is_empty() {
             true => WorktreeStatus::Removable { branch },
-            false => WorktreeStatus::Blocked(Reasons(reasons)),
+            false => WorktreeStatus::Blocked {
+                branch,
+                reasons: Reasons(reasons),
+            },
         }
     }
 
     pub fn blocked(reason: Reason) -> WorktreeStatus {
-        WorktreeStatus::Blocked(Reasons(BTreeSet::from([reason])))
+        WorktreeStatus::new(None, BTreeSet::from([reason]))
     }
 }

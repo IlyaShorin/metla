@@ -48,7 +48,7 @@ fn blocked(
     }
     match inspect(candidate) {
         WorktreeStatus::Removable { .. } => None,
-        WorktreeStatus::Blocked(reasons) => Some(Rejection::Blocked(reasons)),
+        WorktreeStatus::Blocked { reasons, .. } => Some(Rejection::Blocked(reasons)),
     }
 }
 

@@ -89,7 +89,7 @@ impl Actor<'_> {
         let before = survey(&opened.dir, device);
         let path = item.path();
         let status = inspect_worktree(self.git, path, before.newest, self.now, self.worktrees);
-        if let WorktreeStatus::Blocked(reasons) = status {
+        if let WorktreeStatus::Blocked { reasons, .. } = status {
             return (
                 Outcome::Skipped(SkipReason::Blocked(reasons)),
                 Bytes::default(),

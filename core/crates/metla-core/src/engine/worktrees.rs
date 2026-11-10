@@ -80,7 +80,10 @@ impl Statuses {
             Some(WorktreeStatus::Removable { branch }) => Removability::Removable {
                 branch: branch.clone(),
             },
-            Some(WorktreeStatus::Blocked(reasons)) => Removability::Blocked(reasons.clone()),
+            Some(WorktreeStatus::Blocked { branch, reasons }) => Removability::Blocked {
+                branch: branch.clone(),
+                reasons: reasons.clone(),
+            },
         }
     }
 

@@ -826,7 +826,7 @@ fn worktree_statuses_come_with_the_page_once_they_are_computed() {
         matches!(
             listed.as_slice(),
             [Listed {
-                removability: Some(Removability::Blocked(_)),
+                removability: Some(Removability::Blocked { .. }),
                 ..
             }]
         )
@@ -1367,7 +1367,7 @@ fn a_change_below_a_worktree_has_its_status_computed_again() {
     fs::write(place.path("wt/sub/new.txt"), "work").unwrap();
     engine.changed(vec![place.path("wt/sub")]).unwrap();
     until(&engine, |e| {
-        matches!(worktree_status(e), Some(Removability::Blocked(_)))
+        matches!(worktree_status(e), Some(Removability::Blocked { .. }))
     });
 }
 

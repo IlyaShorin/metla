@@ -64,7 +64,7 @@ impl World {
 fn reasons(status: &WorktreeStatus) -> BTreeSet<Reason> {
     match status {
         WorktreeStatus::Removable { .. } => BTreeSet::new(),
-        WorktreeStatus::Blocked(reasons) => reasons.iter().cloned().collect(),
+        WorktreeStatus::Blocked { reasons, .. } => reasons.iter().cloned().collect(),
     }
 }
 
@@ -116,6 +116,18 @@ fn modified_or_staged_tracked_files_are_uncommitted() {
         fs::read_to_string(modified.join("README")).unwrap(),
         "changed\n"
     );
+}
+
+#[test]
+fn a_blocked_worktree_keeps_the_branch_git_reports() {
+    let world = World::new();
+    let wt = world.worktree("modified");
+    fs::write(wt.join("README"), "changed\n").unwrap();
+    let WorktreeStatus::Blocked { branch, reasons } = world.status(&wt) else {
+        panic!("a modified worktree is blocked");
+    };
+    assert_eq!(branch.as_deref(), Some("modified"));
+    assert!(reasons.contains(&Reason::Uncommitted));
 }
 
 #[test]

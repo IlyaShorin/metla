@@ -35,7 +35,7 @@ fn item(candidate: Candidate, warnings: &[Warning]) -> PreviewItem {
 fn blocked(reasons: &[Reason]) -> Rejection {
     let set: BTreeSet<Reason> = reasons.iter().cloned().collect();
     match WorktreeStatus::new(None, set) {
-        WorktreeStatus::Blocked(reasons) => Rejection::Blocked(reasons),
+        WorktreeStatus::Blocked { reasons, .. } => Rejection::Blocked(reasons),
         WorktreeStatus::Removable { .. } => unreachable!(),
     }
 }

@@ -143,7 +143,10 @@ pub enum Removability {
     Removable {
         branch: Option<String>,
     },
-    Blocked(Reasons),
+    Blocked {
+        branch: Option<String>,
+        reasons: Reasons,
+    },
 }
 
 /// A candidate as a list shows it.

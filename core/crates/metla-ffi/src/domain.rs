@@ -72,7 +72,7 @@ uniffi::custom_type!(Reasons, Vec<Reason>, {
     remote,
     lower: |reasons| reasons.iter().cloned().collect(),
     try_lift: |reasons| match WorktreeStatus::new(None, reasons.into_iter().collect()) {
-        WorktreeStatus::Blocked(reasons) => Ok(reasons),
+        WorktreeStatus::Blocked { reasons, .. } => Ok(reasons),
         WorktreeStatus::Removable { .. } => Err(anyhow!("no reason")),
     },
 });
@@ -269,8 +269,13 @@ pub struct Candidate {
 #[uniffi::remote(Enum)]
 pub enum Removability {
     Unknown,
-    Removable { branch: Option<String> },
-    Blocked(Reasons),
+    Removable {
+        branch: Option<String>,
+    },
+    Blocked {
+        branch: Option<String>,
+        reasons: Reasons,
+    },
 }
 
 #[uniffi::remote(Record)]

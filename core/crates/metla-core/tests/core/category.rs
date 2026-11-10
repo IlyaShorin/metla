@@ -244,14 +244,18 @@ fn a_worktree_is_removable_exactly_when_nothing_blocks_it() {
         }
     );
     let reasons = BTreeSet::from([Reason::Untracked, Reason::Locked]);
-    let WorktreeStatus::Blocked(blocked) = WorktreeStatus::new(None, reasons) else {
+    let WorktreeStatus::Blocked {
+        reasons: blocked, ..
+    } = WorktreeStatus::new(None, reasons)
+    else {
         panic!("blocked");
     };
     let listed: Vec<&Reason> = blocked.iter().collect();
     assert_eq!(listed, [&Reason::Untracked, &Reason::Locked]);
     assert!(blocked.contains(&Reason::Locked));
     assert!(!blocked.contains(&Reason::InUse));
-    let WorktreeStatus::Blocked(one) = WorktreeStatus::blocked(Reason::NotListed) else {
+    let WorktreeStatus::Blocked { reasons: one, .. } = WorktreeStatus::blocked(Reason::NotListed)
+    else {
         panic!("blocked");
     };
     assert_eq!(one.iter().collect::<Vec<_>>(), [&Reason::NotListed]);
