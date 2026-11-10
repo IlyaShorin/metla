@@ -12,6 +12,9 @@ use super::totals::TreeTotals;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScanSummary {
     pub root: PathBuf,
+    /// The home directory the rules were compiled for (`None` without
+    /// rules).
+    pub home: Option<PathBuf>,
     pub started: UnixTime,
     pub finished: UnixTime,
     pub elapsed: Duration,

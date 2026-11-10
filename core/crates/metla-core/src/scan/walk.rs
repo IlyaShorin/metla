@@ -8,7 +8,8 @@
 //! Memory and descriptors are bounded by the directories in flight.
 //!
 //! With a rule set, every directory read is classified from its facts
-//! unless it lies inside a candidate. What a directory passes on to its
+//! unless it lies inside a candidate (a linked worktree does not count:
+//! its build output is classified too). What a directory passes on to its
 //! children (its marker entries, whether it is in a repository or a
 //! candidate, its area) travels down the way totals travel up.
 
@@ -330,10 +331,13 @@ impl<'a> Walk<'a> {
             .cloned();
         let in_repo = above.passed.in_repo || has_git;
         let area = rules.map(|rules| rules.area(above.passed.area, path, in_repo, rule.as_ref()));
+        let encloses = rule
+            .as_ref()
+            .is_some_and(|r| !r.category().classifies_within());
         let passed = Passed {
             markers,
             in_repo,
-            in_candidate: above.passed.in_candidate || rule.is_some(),
+            in_candidate: above.passed.in_candidate || encloses,
             area: area.unwrap_or_default(),
         };
         (rule, passed)

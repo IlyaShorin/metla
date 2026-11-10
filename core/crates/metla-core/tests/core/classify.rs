@@ -489,14 +489,6 @@ fn a_linked_worktree_is_found_by_its_git_pointer_file() {
         ),
         (
             &[
-                "wt/.git=gitdir: /r/.git/worktrees/wt\n",
-                "wt/Cargo.toml",
-                "wt/target/",
-            ],
-            &[("wt", "worktree.linked")],
-        ),
-        (
-            &[
                 "sub/.git=gitdir: ../.git/modules/sub\n",
                 "main/.git/worktrees/x/",
                 "nested/.git=gitdir: /r/.git/modules/s/worktrees/w\n",
@@ -852,6 +844,48 @@ fn installed_packages_inside_a_git_managed_tool_are_never_build_output() {
             "build.node-modules".to_owned()
         )])
     );
+}
+
+#[test]
+fn build_output_inside_a_linked_worktree_is_classified_too() {
+    check(&[
+        (
+            &[
+                "wt/.git=gitdir: /r/.git/worktrees/wt\n",
+                "wt/Cargo.toml",
+                "wt/target/",
+                "wt/web/package.json",
+                "wt/web/node_modules/",
+            ],
+            &[
+                ("wt", "worktree.linked"),
+                ("wt/target", "build.cargo-target"),
+                ("wt/web/node_modules", "build.node-modules"),
+            ],
+        ),
+        (
+            &[
+                "~/.codex/worktrees/a1/repo/.git=gitdir: /r/.git/worktrees/repo\n",
+                "~/.codex/worktrees/a1/repo/package.json",
+                "~/.codex/worktrees/a1/repo/node_modules/x/package.json",
+                "~/.codex/worktrees/a1/repo/node_modules/x/node_modules/",
+            ],
+            &[
+                ("~/.codex/worktrees/a1/repo", "worktree.linked"),
+                (
+                    "~/.codex/worktrees/a1/repo/node_modules",
+                    "build.node-modules",
+                ),
+            ],
+        ),
+        (
+            &[
+                "wt/.git=gitdir: /r/.git/worktrees/wt\n",
+                "wt/inner/.git=gitdir: /r/.git/worktrees/inner\n",
+            ],
+            &[("wt", "worktree.linked"), ("wt/inner", "worktree.linked")],
+        ),
+    ]);
 }
 
 #[test]

@@ -4,9 +4,11 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use std::collections::BTreeSet;
+
 use metla_core::domain::{
-    Bytes, Candidate, Category, DirId, Disposal, Exclusion, FileKind, KindTotals, QuickCategory,
-    Recency, RuleId, Tally, UnixTime,
+    Bytes, Candidate, Category, DirId, Disposal, Exclusion, FileKind, KindTotals, Manager,
+    QuickCategory, Reason, Recency, RuleId, Tally, UnixTime, Verdict, WorktreeStatus,
 };
 
 /// ARCHITECTURE.md §3, row by row: disposal and quick-clean category.
@@ -114,6 +116,15 @@ fn a_rule_is_removed_as_its_category_says_except_the_trash_which_is_emptied() {
     );
 }
 
+#[test]
+fn only_a_linked_worktree_lets_its_contents_be_classified() {
+    let within: Vec<Category> = Category::ALL
+        .into_iter()
+        .filter(|c| c.classifies_within())
+        .collect();
+    assert_eq!(within, [Category::GitWorktree]);
+}
+
 const DAY: i64 = 24 * 3600;
 const NOW: UnixTime = UnixTime(1_000 * DAY);
 
@@ -142,18 +153,108 @@ fn recently_active_build_output_and_worktrees_are_not_preselected() {
     let recency = recency();
     let fresh = Some(UnixTime(NOW.0 - 14 * DAY));
     let stale = Some(UnixTime(NOW.0 - 14 * DAY - 1));
-    assert!(!Category::BuildArtifact.preselected(fresh, &recency));
-    assert!(Category::BuildArtifact.preselected(stale, &recency));
-    assert!(!Category::BuildArtifact.preselected(None, &recency));
-    assert!(!Category::GitWorktree.preselected(stale, &recency));
+    assert!(!Category::BuildArtifact.preselected(fresh, &recency, None));
+    assert!(Category::BuildArtifact.preselected(stale, &recency, None));
+    assert!(!Category::BuildArtifact.preselected(None, &recency, None));
+    assert!(!Category::GitWorktree.preselected(stale, &recency, None));
     for category in [
         Category::AppCache,
         Category::DevCache,
         Category::Log,
         Category::Temp,
     ] {
-        assert!(category.preselected(fresh, &recency), "{category:?}");
+        assert!(category.preselected(fresh, &recency, None), "{category:?}");
     }
+}
+
+#[test]
+fn nothing_inside_a_worktree_another_tool_manages_is_preselected() {
+    let recency = recency();
+    let stale = Some(UnixTime(NOW.0 - 100 * DAY));
+    for category in Category::ALL {
+        for manager in [Manager::Codex, Manager::Claude] {
+            assert!(!category.preselected(stale, &recency, Some(manager)));
+        }
+    }
+}
+
+#[test]
+fn codex_and_claude_keep_their_worktrees_in_known_places() {
+    let home = Path::new("/Users/u");
+    let of = |path: &str| Manager::of(Path::new(path), home);
+    assert_eq!(
+        of("/Users/u/.codex/worktrees/a1/repo"),
+        Some(Manager::Codex)
+    );
+    assert_eq!(
+        of("/Users/u/.codex/worktrees/a1/repo/node_modules"),
+        Some(Manager::Codex)
+    );
+    assert_eq!(
+        of("/Users/u/.codex/worktrees"),
+        None,
+        "the directory itself"
+    );
+    assert_eq!(of("/Users/u/.codex/worktreesX/a"), None);
+    assert_eq!(of("/Users/v/.codex/worktrees/a1"), None, "another home");
+    assert_eq!(
+        of("/Users/u/code/r/.claude/worktrees/w"),
+        Some(Manager::Claude)
+    );
+    assert_eq!(
+        of("/r/.claude/worktrees/w/target/debug"),
+        Some(Manager::Claude)
+    );
+    assert_eq!(of("/r/.claude/worktrees"), None, "the directory itself");
+    assert_eq!(of("/r/.claude/settings/w"), None);
+    assert_eq!(of("/r/claude/worktrees/w"), None);
+    assert_eq!(of("/r/worktrees/.claude/w"), None);
+    assert_eq!(of("/Users/u/code/r"), None);
+}
+
+#[test]
+fn only_project_output_waits_for_gits_verdict() {
+    for category in Category::ALL {
+        let needs = category == Category::BuildArtifact;
+        assert_eq!(category.needs_verdict(), needs, "{category:?}");
+        assert!(category.offered(Some(Verdict::Verified)));
+        for verdict in [
+            None,
+            Some(Verdict::NotIgnored),
+            Some(Verdict::HasTrackedFiles),
+            Some(Verdict::Unverifiable),
+        ] {
+            assert_eq!(
+                category.offered(verdict),
+                !needs,
+                "{category:?} {verdict:?}"
+            );
+        }
+    }
+    assert_eq!(Verdict::ALL.len(), 4);
+}
+
+#[test]
+fn a_worktree_is_removable_exactly_when_nothing_blocks_it() {
+    let removable = WorktreeStatus::new(Some("main".into()), BTreeSet::new());
+    assert_eq!(
+        removable,
+        WorktreeStatus::Removable {
+            branch: Some("main".into())
+        }
+    );
+    let reasons = BTreeSet::from([Reason::Untracked, Reason::Locked]);
+    let WorktreeStatus::Blocked(blocked) = WorktreeStatus::new(None, reasons) else {
+        panic!("blocked");
+    };
+    let listed: Vec<&Reason> = blocked.iter().collect();
+    assert_eq!(listed, [&Reason::Untracked, &Reason::Locked]);
+    assert!(blocked.contains(&Reason::Locked));
+    assert!(!blocked.contains(&Reason::InUse));
+    let WorktreeStatus::Blocked(one) = WorktreeStatus::blocked(Reason::NotListed) else {
+        panic!("blocked");
+    };
+    assert_eq!(one.iter().collect::<Vec<_>>(), [&Reason::NotListed]);
 }
 
 #[test]
@@ -167,6 +268,7 @@ fn a_candidate_takes_category_and_disposal_from_its_rule() {
         activity: Some(NOW),
         device: 1,
         inode: 2,
+        managed: None,
         preselected: true,
     };
     assert_eq!(candidate.category(), Category::Temp);

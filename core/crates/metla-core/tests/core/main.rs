@@ -9,6 +9,7 @@ mod domain;
 mod fs;
 mod gitrun;
 mod index;
+mod offered;
 mod porcelain;
 mod repo;
 mod rules;

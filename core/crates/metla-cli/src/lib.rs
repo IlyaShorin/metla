@@ -21,7 +21,7 @@ pub use overview::{
     summary_json, summary_text,
 };
 pub use report::{
-    Listed, ScanReport, VolumeUse, json_string, ls_text, scan_json, scan_text, top_text,
+    Checked, Listed, ScanReport, VolumeUse, json_string, ls_text, scan_json, scan_text, top_text,
 };
 
 /// Runs one command; returns the process exit code (2: usage, 1: failure).

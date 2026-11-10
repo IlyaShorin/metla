@@ -48,16 +48,29 @@ impl ScanRecord {
     }
 }
 
+/// Which picture: directory ids are only meaningful within one, so edits
+/// that name directories say which picture they were read from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PictureId(i64);
+
 /// The directory picture held by the index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Picture {
     pub root: PathBuf,
+    /// The home directory the picture was classified for.
+    pub home: Option<PathBuf>,
     pub started: UnixTime,
     pub finished: UnixTime,
     pub coverage: Coverage,
     /// The scan's bytes by file kind.
     pub kinds: KindTotals,
     scan: i64,
+}
+
+impl Picture {
+    pub fn id(&self) -> PictureId {
+        PictureId(self.scan)
+    }
 }
 
 #[derive(Debug)]

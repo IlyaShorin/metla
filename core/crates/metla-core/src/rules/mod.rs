@@ -15,7 +15,7 @@ mod worktree;
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::domain::{DirFacts, FileKind, RuleId};
 
@@ -34,6 +34,7 @@ pub const PROBE_LIMIT: usize = 2048;
 /// The catalogue compiled for one home directory.
 #[derive(Debug)]
 pub struct RuleSet {
+    home: PathBuf,
     ids: Vec<RuleId>,
     locations: Locations,
     projects: Projects,
@@ -54,6 +55,7 @@ impl RuleSet {
             .map(|name| NamePattern::Exact(name.to_vec()));
         let markers = Names::new(projects.siblings().cloned().chain(required));
         RuleSet {
+            home: home.to_path_buf(),
             ids: rules
                 .iter()
                 .map(|r| RuleId::new(r.category, r.name))
@@ -66,6 +68,11 @@ impl RuleSet {
             markers,
             kinds: Kinds::new(home),
         }
+    }
+
+    /// The home directory the rules were compiled for.
+    pub fn home(&self) -> &Path {
+        &self.home
     }
 
     /// Every rule with its id, in catalogue order.

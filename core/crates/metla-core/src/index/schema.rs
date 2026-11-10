@@ -7,9 +7,12 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use super::IndexError;
 
-/// Version 2 (M2): directory identity and rule ids in `dirs`, the
-/// candidate index, exclusions and bytes by file kind.
-pub const SCHEMA_VERSION: i64 = 2;
+/// Version 3 (M3): Git's verdict on project output in `dirs`, the
+/// directories cleaned since the scan (`stale`), and the home directory
+/// the picture was classified for. Version 2 (M2) added directory
+/// identity and rule ids in `dirs`, the candidate index, exclusions and
+/// bytes by file kind.
+pub const SCHEMA_VERSION: i64 = 3;
 
 const WAL_SIZE_LIMIT: i64 = 32 << 20;
 
@@ -18,7 +21,8 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// One row per directory. `own_*` are NULL for a directory that was not
 /// read; `flags` holds its state (see `codec`); `rule_id` is set for a
-/// candidate.
+/// candidate; `verdict` is Git's verdict on project output, NULL until it
+/// is asked.
 pub fn dirs_table(name: &str) -> String {
     format!(
         "CREATE TABLE {name} (
@@ -34,7 +38,8 @@ pub fn dirs_table(name: &str) -> String {
             flags INTEGER NOT NULL,
             device INTEGER NOT NULL,
             inode INTEGER NOT NULL,
-            rule_id TEXT
+            rule_id TEXT,
+            verdict INTEGER
         );"
     )
 }
@@ -54,7 +59,8 @@ const OTHER_TABLES: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value) WITH
          flags INTEGER NOT NULL
      );
      CREATE TABLE kinds (code INTEGER PRIMARY KEY, bytes INTEGER NOT NULL);
-     CREATE TABLE exclusions (path BLOB PRIMARY KEY) WITHOUT ROWID;";
+     CREATE TABLE exclusions (path BLOB PRIMARY KEY) WITHOUT ROWID;
+     CREATE TABLE stale (dir_id INTEGER PRIMARY KEY);";
 
 /// Opens (creating if needed) an index for writing.
 pub fn open_for_writing(path: &Path) -> Result<Connection, IndexError> {

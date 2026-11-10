@@ -36,6 +36,8 @@ pub struct Freshness {
 pub struct Overview {
     /// `None` until a scan has finished.
     pub freshness: Option<Freshness>,
+    /// What can be freed by default: the preselected candidates.
+    pub reclaimable: Tally,
     pub categories: BTreeMap<Category, Tally>,
     pub rules: BTreeMap<RuleId, Tally>,
 }
@@ -121,14 +123,6 @@ fn candidate_json(c: &Candidate) -> String {
     ])
 }
 
-fn total(categories: &BTreeMap<Category, Tally>) -> Tally {
-    let mut total = Tally::default();
-    for tally in categories.values() {
-        total.merge(tally);
-    }
-    total
-}
-
 fn rules_of(
     rules: &BTreeMap<RuleId, Tally>,
     category: Category,
@@ -145,11 +139,11 @@ pub fn summary_text(shown: &Shown<Overview>) -> String {
         Some(freshness) => freshness_text(&mut out, shown.now, freshness),
         None => line(&mut out, "picture", "none: no scan has finished"),
     }
-    let total = total(&overview.categories);
+    let reclaimable = &overview.reclaimable;
     let freed = format!(
-        "{} in {} candidates (estimate)",
-        bytes(total.bytes),
-        count(total.count)
+        "{} in {} preselected candidates (estimate)",
+        bytes(reclaimable.bytes),
+        count(reclaimable.count)
     );
     line(&mut out, "can be freed", freed);
     for (category, tally) in &overview.categories {
@@ -211,7 +205,7 @@ pub fn summary_json(shown: &Shown<Overview>) -> String {
         .collect();
     json_object(&[
         ("picture", picture),
-        ("total", tally_json(&total(&overview.categories), &[])),
+        ("reclaimable", tally_json(&overview.reclaimable, &[])),
         ("categories", format!("[{}]", categories.join(","))),
     ])
 }

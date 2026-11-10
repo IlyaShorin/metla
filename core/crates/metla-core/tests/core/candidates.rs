@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use metla_core::domain::{
     Bytes, Candidate, Category, DirId, DirRecord, Disposal, Exclusion, FileKind, KindTotals,
-    Recency, RuleId, ScanSummary, Tally, TreeTotals, UnixTime,
+    Recency, RuleId, ScanSummary, Tally, TreeTotals, UnixTime, Verdict,
 };
-use metla_core::index::{IndexError, IndexWriter, Page};
+use metla_core::index::{IndexError, IndexWriter, Page, PictureId, Snapshot};
 
 use crate::index::{read, reader, summary, write, write_summary};
 use crate::support::Fixture;
@@ -69,10 +69,34 @@ fn picture() -> Vec<DirRecord> {
     ]
 }
 
+pub fn picture_id(snap: &Snapshot<'_>) -> Result<PictureId, IndexError> {
+    let picture = snap.scan()?.and_then(|scan| scan.picture);
+    Ok(picture.expect("a picture").id())
+}
+
+/// Stores Git's verdict on every project output not asked about yet.
+pub fn verify(index: &Path, verdict: impl Fn(&Path) -> Verdict) -> bool {
+    let (picture, unverified) = reader(index)
+        .read(|snap| Ok((picture_id(snap)?, snap.unverified()?)))
+        .unwrap();
+    let verdicts = unverified
+        .iter()
+        .map(|(id, path)| (*id, verdict(path)))
+        .collect();
+    let writer = IndexWriter::open(index).unwrap();
+    writer.set_verdicts(picture, verdicts).unwrap()
+}
+
+/// Writes a picture whose project output Git has verified.
+pub fn write_verified(index: &Path, rows: Vec<DirRecord>) {
+    write(index, rows, true);
+    verify(index, |_| Verdict::Verified);
+}
+
 fn indexed() -> (Fixture, PathBuf) {
     let fx = Fixture::new();
     let index = fx.path("index.sqlite");
-    write(&index, picture(), true);
+    write_verified(&index, picture());
     (fx, index)
 }
 
@@ -127,6 +151,7 @@ fn candidates_are_listed_largest_first_with_everything_a_cleanup_needs() {
             activity: at(30),
             device: 7,
             inode: 1004,
+            managed: None,
             preselected: true,
         }
     );
@@ -205,7 +230,7 @@ fn preselection_turns_on_one_second_after_the_recent_age() {
         ),
         read(1, None, "", 0, TreeTotals::directory(UnixTime(0))),
     ];
-    write(&index, rows, true);
+    write_verified(&index, rows);
     let found = candidates(&index, None, ALL);
     assert_eq!((found[0].preselected, found[1].preselected), (false, true));
     let shorter = Recency::new(NOW, Duration::from_secs(14 * 24 * 3600 - 1));
@@ -340,7 +365,7 @@ fn exclusions_are_added_listed_and_removed_idempotently() {
 fn exclusions_survive_a_rescan_and_need_none() {
     let (_fx, index) = indexed();
     exclude(&index, "/synthetic/root/Caches");
-    write(&index, picture(), true);
+    write_verified(&index, picture());
     assert_eq!(visible(&index), ["target", "node_modules", "wt", "ab"]);
 }
 
@@ -414,7 +439,11 @@ fn rule_ids_identity_and_kinds_are_stored_in_a_stable_format() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
+    let verdict: i64 = conn
+        .query_row("SELECT verdict FROM dirs WHERE id = 4", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(verdict, 0, "Verified is stored as 0");
 }
 
 #[test]
@@ -448,16 +477,20 @@ fn an_unknown_rule_id_or_an_invalid_exclusion_is_reported_as_corrupt() {
 }
 
 #[test]
-fn an_index_of_the_first_schema_version_is_rejected() {
-    let fx = Fixture::new();
-    let index = fx.path("old.sqlite");
-    sql(
-        &index,
-        "CREATE TABLE meta (key TEXT PRIMARY KEY, value); \
-         INSERT INTO meta VALUES ('schema_version', 1);",
-    );
-    assert!(matches!(
-        IndexWriter::open(&index),
-        Err(IndexError::UnknownSchema(Some(1)))
-    ));
+fn an_index_of_an_earlier_schema_version_is_rejected() {
+    for old in [1, 2] {
+        let fx = Fixture::new();
+        let index = fx.path("old.sqlite");
+        sql(
+            &index,
+            &format!(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value); \
+                 INSERT INTO meta VALUES ('schema_version', {old});"
+            ),
+        );
+        assert!(matches!(
+            IndexWriter::open(&index),
+            Err(IndexError::UnknownSchema(Some(v))) if v == old
+        ));
+    }
 }

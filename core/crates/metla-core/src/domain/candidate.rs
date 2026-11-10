@@ -4,6 +4,7 @@ use std::time::Duration;
 use super::dir::DirId;
 use super::entry::{Bytes, UnixTime};
 use super::rule::{Category, Disposal, RuleId};
+use super::worktree::Manager;
 
 /// A directory a rule matched and no exclusion hides: the only thing that
 /// can be cleaned.
@@ -20,6 +21,8 @@ pub struct Candidate {
     /// The directory's identity when scanned, for revalidation.
     pub device: u64,
     pub inode: u64,
+    /// The tool that manages the worktree it is or lies in, if any.
+    pub managed: Option<Manager>,
     /// Checked by default in a cleanup selection.
     pub preselected: bool,
 }

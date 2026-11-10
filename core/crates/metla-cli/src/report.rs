@@ -4,7 +4,9 @@ use std::ffi::OsString;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
-use metla_core::domain::{Bytes, Coverage, DirState, Gap, GapKind, ScanSummary, Skip};
+use std::time::Duration;
+
+use metla_core::domain::{Bytes, Coverage, DirState, Gap, GapKind, ScanSummary, Skip, Verdict};
 use metla_core::fs::Volume;
 
 use crate::format::{bytes, count, per_second, seconds, signed_bytes};
@@ -43,9 +45,34 @@ pub struct ScanReport {
     pub peak_rss: Bytes,
     pub index_size: Bytes,
     pub volume: Option<VolumeUse>,
-    /// The scan classified directories.
-    pub rules: bool,
+    /// What Git said about the project output the rules found; `None`
+    /// when the scan did not classify.
+    pub rules: Option<Checked>,
 }
+
+/// What Git said about project output after a scan, and how long asking
+/// took.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Checked {
+    /// Directories per verdict, in the order of `Verdict::ALL`.
+    pub verdicts: [u64; Verdict::ALL.len()],
+    pub elapsed: Duration,
+}
+
+impl Checked {
+    pub fn of(verdicts: &[Verdict], elapsed: Duration) -> Checked {
+        let mut checked = Checked {
+            elapsed,
+            ..Checked::default()
+        };
+        for verdict in verdicts {
+            checked.verdicts[*verdict as usize] += 1;
+        }
+        checked
+    }
+}
+
+const VERDICT_NAMES: [&str; 4] = ["verified", "not ignored", "tracked inside", "unverifiable"];
 
 pub(crate) const GAP_NAMES: [(GapKind, &str); 4] = [
     (GapKind::Denied, "denied"),
@@ -122,9 +149,35 @@ pub fn scan_text(report: &ScanReport) -> String {
     }
     line(&mut out, "peak RSS", bytes(report.peak_rss));
     line(&mut out, "threads", s.threads);
-    line(&mut out, "rules", either(report.rules, "on", "off"));
+    line(
+        &mut out,
+        "rules",
+        either(report.rules.is_some(), "on", "off"),
+    );
+    if let Some(checked) = &report.rules {
+        line(&mut out, "git check", checked_text(checked));
+    }
     line(&mut out, "index", bytes(report.index_size));
     out
+}
+
+fn checked_text(checked: &Checked) -> String {
+    let counts = VERDICT_NAMES.iter().zip(checked.verdicts);
+    let counts: Vec<String> = counts
+        .map(|(name, n)| format!("{} {name}", count(n)))
+        .collect();
+    format!("{} in {}", counts.join(", "), seconds(checked.elapsed))
+}
+
+fn checked_json(checked: &Checked) -> String {
+    let mut fields: Vec<(&str, String)> = VERDICT_NAMES
+        .iter()
+        .zip(checked.verdicts)
+        .map(|(name, n)| (*name, n.to_string()))
+        .collect();
+    let elapsed = format!("{:.3}", checked.elapsed.as_secs_f64());
+    fields.push(("elapsed_seconds", elapsed));
+    json_object(&fields)
 }
 
 pub(crate) fn coverage_text(out: &mut String, coverage: &Coverage) {
@@ -204,7 +257,14 @@ pub fn scan_json(report: &ScanReport) -> String {
             per_second(s.totals.files, s.elapsed).to_string(),
         ),
         ("threads", s.threads.to_string()),
-        ("rules", report.rules.to_string()),
+        ("rules", report.rules.is_some().to_string()),
+        (
+            "git_check",
+            report
+                .rules
+                .as_ref()
+                .map_or("null".to_owned(), checked_json),
+        ),
         ("complete", s.is_complete().to_string()),
         ("gaps", counts_json(&GAP_NAMES, |k| s.coverage.gaps(k))),
         ("skipped", counts_json(&SKIP_NAMES, |k| s.coverage.skips(k))),

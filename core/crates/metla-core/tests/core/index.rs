@@ -84,6 +84,7 @@ pub fn summary(complete: bool) -> ScanSummary {
     }
     ScanSummary {
         root: PathBuf::from(ROOT),
+        home: None,
         started: UnixTime(1_000),
         finished: UnixTime(1_010),
         elapsed: Duration::from_secs(10),

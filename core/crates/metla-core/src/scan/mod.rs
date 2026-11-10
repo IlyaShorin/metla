@@ -159,6 +159,7 @@ pub fn run(
     let (totals, kinds, coverage) = walk.finish();
     Ok(ScanSummary {
         root: options.root.path.clone(),
+        home: options.rules.as_ref().map(|r| r.home().to_path_buf()),
         started,
         finished: now(),
         elapsed: clock.elapsed(),

@@ -3,16 +3,20 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
-use metla_core::domain::{Bytes, Candidate, Category, DirState, EntryKind, Exclusion, Recency};
+use metla_core::domain::{
+    Bytes, Candidate, Category, DirId, DirState, EntryKind, Exclusion, Recency,
+};
 use metla_core::fs::{DirHandle, list_dir, now, peak_rss, volume};
+use metla_core::git::{Git, verify_outputs};
 use metla_core::index::{IndexError, IndexReader, IndexWriter, Page, Snapshot};
 use metla_core::rules::RuleSet;
 use metla_core::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
 
 use crate::args::Edit;
 use crate::overview::{Edited, Freshness, Overview, Shown};
-use crate::report::{Listed, ScanReport, VolumeUse};
+use crate::report::{Checked, Listed, ScanReport, VolumeUse};
 
 /// How many shallow directories the live tree tracks.
 const LIVE_LIMIT: usize = 4096;
@@ -58,18 +62,16 @@ pub fn scan(
     rules: &ScanRules,
     threads: Option<usize>,
 ) -> Result<ScanReport, String> {
-    let root = ScanRoot::new(root).map_err(|e| format!("{}: {e}", root.display()))?;
-    let scope = ScanScope::detect(&root).map_err(|e| e.to_string())?;
-    let threads = threads.unwrap_or_else(|| default_threads(cores()));
-    let mut options = ScanOptions::new(root, scope).threads(threads);
-    if rules.enabled {
-        options = options.rules(Arc::new(rule_set(rules.home.as_deref())?));
-    }
+    let options = options(root, rules, threads)?;
     let mut writer = IndexWriter::open(index).map_err(|e| e.to_string())?;
     let session = writer.start_scan(now()).map_err(|e| e.to_string())?;
     let control = ScanControl::new(LIVE_LIMIT);
     let summary = run(&options, &control, &|rows| session.send(rows)).map_err(|e| e.to_string())?;
     session.finish(&summary).map_err(|e| e.to_string())?;
+    let checked = match rules.enabled {
+        true => Some(verify(index, &writer)?),
+        false => None,
+    };
     let volume = volume(&summary.root)
         .ok()
         .and_then(|v| VolumeUse::of(&v, &summary.root));
@@ -77,9 +79,39 @@ pub fn scan(
         volume,
         peak_rss: peak_rss(),
         index_size: index_size(index),
-        rules: rules.enabled,
+        rules: checked,
         summary,
     })
+}
+
+/// What and how to scan.
+fn options(root: &Path, rules: &ScanRules, threads: Option<usize>) -> Result<ScanOptions, String> {
+    let root = ScanRoot::new(root).map_err(|e| format!("{}: {e}", root.display()))?;
+    let scope = ScanScope::detect(&root).map_err(|e| e.to_string())?;
+    let threads = threads.unwrap_or_else(|| default_threads(cores()));
+    let options = ScanOptions::new(root, scope).threads(threads);
+    match rules.enabled {
+        true => Ok(options.rules(Arc::new(rule_set(rules.home.as_deref())?))),
+        false => Ok(options),
+    }
+}
+
+/// Asks Git about the project output of the picture just written and
+/// stores its verdicts: only verified output is offered.
+fn verify(index: &Path, writer: &IndexWriter) -> Result<Checked, String> {
+    let clock = Instant::now();
+    let (picture, unverified) = read(index, |snap| {
+        let picture = snap.scan()?.and_then(|scan| scan.picture);
+        Ok((picture.map(|p| p.id()), snap.unverified()?))
+    })?;
+    let picture = picture.ok_or("the scan left no picture")?;
+    let (ids, paths): (Vec<DirId>, Vec<PathBuf>) = unverified.into_iter().unzip();
+    let verdicts = verify_outputs(&Git::system(), &paths);
+    let stored = ids.into_iter().zip(verdicts.iter().copied()).collect();
+    writer
+        .set_verdicts(picture, stored)
+        .map_err(|e| e.to_string())?;
+    Ok(Checked::of(&verdicts, clock.elapsed()))
 }
 
 /// The index file and its write-ahead log.
@@ -183,6 +215,8 @@ pub fn candidates(
 
 /// What can be cleaned, what the disk holds, and how fresh the picture is.
 pub fn summary(index: &Path) -> Result<Shown<Overview>, String> {
+    let now = now();
+    let recency = Recency::new(now, Recency::DEFAULT_AGE);
     let overview = read(index, |snap| {
         let scan = snap.scan()?;
         let freshness = scan.as_ref().and_then(|scan| {
@@ -197,12 +231,13 @@ pub fn summary(index: &Path) -> Result<Shown<Overview>, String> {
         });
         Ok(Overview {
             freshness,
+            reclaimable: snap.reclaimable(&recency)?,
             categories: snap.category_tallies()?,
             rules: snap.rule_tallies()?,
         })
     })?;
     Ok(Shown {
-        now: now(),
+        now,
         data: overview,
     })
 }

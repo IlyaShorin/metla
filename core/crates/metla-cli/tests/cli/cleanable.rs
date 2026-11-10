@@ -1,9 +1,11 @@
 //! End to end: scan a synthetic home and repository with the rules, then
 //! ask what can be cleaned, keep something, and ask again.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use metla_core::git::Git;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -28,19 +30,36 @@ impl Fixture {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, vec![1; len]).unwrap();
         }
-        fs::create_dir(tree.join("repo/.git")).unwrap();
-        Fixture {
+        fs::write(tree.join("repo/.gitignore"), "target/\n").unwrap();
+        let fixture = Fixture {
             _dir: dir,
             index: base.join("index.sqlite"),
             tree,
-        }
+        };
+        fixture.git(&["init", "-q", "-b", "main"]);
+        fixture
+    }
+
+    /// Runs Git in `repo`, without the user's configuration.
+    fn git(&self, args: &[&str]) {
+        let git = Git::system()
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        let output = git.run(&self.path("repo"), &args, &[]).unwrap();
+        assert_eq!(
+            output.code,
+            0,
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn path(&self, relative: &str) -> PathBuf {
         self.tree.join(relative)
     }
 
-    fn scan(&self, extra: &[&str]) {
+    fn scan(&self, extra: &[&str]) -> String {
         let mut args = vec![
             "scan".into(),
             "--root".into(),
@@ -49,8 +68,9 @@ impl Fixture {
             p(&self.index),
         ];
         args.extend(extra.iter().map(OsString::from));
-        let (code, _, err) = cli(&args);
+        let (code, out, err) = cli(&args);
         assert_eq!((code, err.as_str()), (0, ""));
+        out
     }
 
     fn ask(&self, command: &str, extra: &[&str]) -> String {
@@ -136,14 +156,43 @@ fn the_summary_totals_categories_rules_and_kinds() {
     let fx = Fixture::new();
     fx.scan(&["--home", &home_flag(&fx)]);
     let out = fx.ask("summary", &[]);
-    assert!(out.contains("in 3 candidates (estimate)\n"), "{out}");
+    assert!(
+        out.contains(" in 2 preselected candidates (estimate)\n"),
+        "fresh build output is not counted: {out}"
+    );
     assert!(out.contains("\n    build.cargo-target "));
     assert!(out.contains("\n    dev-cache.npm "));
     assert!(out.contains("\ndata types\n"));
     assert!(out.contains("coverage     complete\n"));
     let json = fx.ask("summary", &["--json"]);
-    assert!(json.contains("\"total\":{\"count\":3,"));
+    assert!(json.contains("\"reclaimable\":{\"count\":2,"), "{json}");
     assert!(json.contains("\"current\":true,\"coverage\":\"complete\""));
+}
+
+#[test]
+fn project_output_is_offered_only_when_git_ignores_it_and_tracks_nothing_inside() {
+    let fx = Fixture::new();
+    let out = fx.scan(&["--home", &home_flag(&fx)]);
+    let line = out.lines().find(|l| l.starts_with("git check")).unwrap();
+    assert!(
+        line.starts_with(
+            "git check    1 verified, 0 not ignored, 0 tracked inside, 0 unverifiable in "
+        ),
+        "{line}"
+    );
+    fx.git(&["add", "-f", "target/out"]);
+    let out = fx.scan(&["--home", &home_flag(&fx)]);
+    assert!(
+        out.contains(
+            "git check    0 verified, 0 not ignored, 1 tracked inside, 0 unverifiable in "
+        ),
+        "{out}"
+    );
+    let rules: Vec<String> = listed(&fx.ask("candidates", &[]))
+        .into_iter()
+        .map(|(r, _)| r)
+        .collect();
+    assert_eq!(rules, ["app-cache.library", "dev-cache.npm"]);
 }
 
 #[test]

@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use metla_cli::{
-    Listed, ScanReport, VolumeUse, bytes, count, default_threads, json_string, ls_text, per_second,
-    scan_json, scan_text, signed_bytes, top_text,
+    Checked, Listed, ScanReport, VolumeUse, bytes, count, default_threads, json_string, ls_text,
+    per_second, scan_json, scan_text, signed_bytes, top_text,
 };
 use metla_core::domain::{
     Bytes, Coverage, DirState, Errno, Gap, GapAt, KindTotals, OwnTotals, ScanSummary, Skip,
-    TreeTotals, UnixTime,
+    TreeTotals, UnixTime, Verdict,
 };
 use metla_core::fs::Volume;
 
@@ -100,6 +100,7 @@ fn report(volume: Option<VolumeUse>) -> ScanReport {
     ScanReport {
         summary: ScanSummary {
             root: PathBuf::from("/r"),
+            home: Some(PathBuf::from("/r/home")),
             started: UnixTime(1),
             finished: UnixTime(3),
             elapsed: Duration::from_secs(2),
@@ -116,8 +117,27 @@ fn report(volume: Option<VolumeUse>) -> ScanReport {
         peak_rss: Bytes(25_000_000),
         index_size: Bytes(4_096),
         volume,
-        rules: true,
+        rules: Some(checked()),
     }
+}
+
+fn checked() -> Checked {
+    let verdicts = [
+        Verdict::Verified,
+        Verdict::NotIgnored,
+        Verdict::Verified,
+        Verdict::Unverifiable,
+        Verdict::HasTrackedFiles,
+        Verdict::Verified,
+    ];
+    Checked::of(&verdicts, Duration::from_millis(1_250))
+}
+
+#[test]
+fn gits_verdicts_are_counted_per_kind() {
+    assert_eq!(checked().verdicts, [3, 1, 1, 1]);
+    assert_eq!(checked().elapsed, Duration::from_millis(1_250));
+    assert_eq!(Checked::of(&[], Duration::ZERO).verdicts, [0; 4]);
 }
 
 #[test]
@@ -140,16 +160,17 @@ volume       total 10.0 kB, available 3.0 kB, used 7.0 kB, unaccounted 500 B
 peak RSS     25.0 MB
 threads      4
 rules        on
+git check    3 verified, 1 not ignored, 1 tracked inside, 1 unverifiable in 1.2 s
 index        4.1 kB
 ";
     assert_eq!(text, expected);
     assert!(!scan_text(&report(None)).contains("\nvolume "));
     let without = ScanReport {
-        rules: false,
+        rules: None,
         ..report(None)
     };
-    assert!(scan_text(&without).contains("\nrules        off\n"));
-    assert!(scan_json(&without).contains("\"rules\":false,"));
+    assert!(scan_text(&without).contains("\nrules        off\nindex "));
+    assert!(scan_json(&without).contains("\"rules\":false,\"git_check\":null,"));
 }
 
 #[test]
@@ -166,7 +187,9 @@ fn the_scan_report_reads_as_json() {
     let expected = concat!(
         "{\"root\":\"/r\",\"directories\":1200,\"files\":3000,\"bytes\":6500,",
         "\"elapsed_seconds\":2.000,\"dirs_per_second\":600,\"files_per_second\":1500,",
-        "\"threads\":4,\"rules\":true,\"complete\":false,",
+        "\"threads\":4,\"rules\":true,",
+        "\"git_check\":{\"verified\":3,\"not ignored\":1,\"tracked inside\":1,",
+        "\"unverifiable\":1,\"elapsed_seconds\":1.250},\"complete\":false,",
         "\"gaps\":{\"denied\":1,\"failed\":1,\"vanished\":0,\"cancelled\":0},",
         "\"skipped\":{\"other volume\":1,\"mount point\":0,\"dataless\":0,\"excluded\":0},",
         "\"top_gaps\":[{\"gap\":\"denied\",\"depth\":1,\"path\":\"/r/locked\"},",

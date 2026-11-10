@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use super::candidate::Recency;
 use super::entry::UnixTime;
+use super::verdict::Verdict;
+use super::worktree::Manager;
 
 /// The kind of a candidate. It decides how the candidate is removed and
 /// whether a hotkey may clean it without a confirmation.
@@ -82,14 +84,41 @@ impl Category {
         }
     }
 
-    /// Whether a candidate is checked by default: not for build output that
-    /// was active recently, never for a worktree (its status decides).
-    pub fn preselected(self, activity: Option<UnixTime>, recency: &Recency) -> bool {
-        match self {
-            Category::BuildArtifact => !recency.is_recent(activity),
-            Category::GitWorktree => false,
-            _ => true,
-        }
+    /// Whether a candidate of the category is offered only with Git's
+    /// verdict: project output, which Git must ignore and must not track.
+    pub fn needs_verdict(self) -> bool {
+        matches!(self, Category::BuildArtifact)
+    }
+
+    /// Whether a candidate of the category with this verdict (`None`: Git
+    /// was not asked) is offered.
+    pub fn offered(self, verdict: Option<Verdict>) -> bool {
+        !self.needs_verdict() || verdict == Some(Verdict::Verified)
+    }
+
+    /// Whether the directories inside a candidate of the category are still
+    /// classified. Only a linked worktree lets them be: most worktrees
+    /// cannot be removed whole, and their build output is offered on its
+    /// own.
+    pub fn classifies_within(self) -> bool {
+        matches!(self, Category::GitWorktree)
+    }
+
+    /// Whether a candidate is checked by default: never inside (or as) a
+    /// worktree another tool manages, not for build output that was active
+    /// recently, never for a worktree (its status decides).
+    pub fn preselected(
+        self,
+        activity: Option<UnixTime>,
+        recency: &Recency,
+        managed: Option<Manager>,
+    ) -> bool {
+        managed.is_none()
+            && match self {
+                Category::BuildArtifact => !recency.is_recent(activity),
+                Category::GitWorktree => false,
+                _ => true,
+            }
     }
 }
 

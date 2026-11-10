@@ -1,19 +1,20 @@
-//! The single writer: a thread that owns the read-write connection. Scans
-//! and exclusion edits are commands to it, applied in the order sent.
+//! The single writer: a thread that owns the read-write connection. Scans,
+//! exclusion edits, Git's verdicts and cleaned directories are commands to
+//! it, applied in the order sent.
 
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, Params, params};
 
-use super::IndexError;
 use super::codec::{
     COLUMNS, gap_code, gap_flags, id_bits, int, kind_code, name_bytes, path_bytes, skip_code,
-    state_columns,
+    state_columns, verdict_code,
 };
 use super::schema::{DIRS_INDEXES, dirs_table, open_for_writing};
-use crate::domain::{DirRecord, Exclusion, ScanSummary, UnixTime};
+use super::{IndexError, PictureId};
+use crate::domain::{DirId, DirRecord, Exclusion, ScanSummary, UnixTime, Verdict};
 
 /// Batches waiting for the writer; senders block when it falls behind.
 const QUEUE_DEPTH: usize = 16;
@@ -26,6 +27,8 @@ enum Command {
     Finish(Box<ScanSummary>, Reply<()>),
     Exclude(Exclusion, Reply<bool>),
     Include(Exclusion, Reply<bool>),
+    Verdicts(PictureId, Vec<(DirId, Verdict)>, Reply<bool>),
+    Cleaned(PictureId, Vec<DirId>, Reply<bool>),
 }
 
 /// The only writer of an index. Dropping it stops its thread after the
@@ -67,6 +70,28 @@ impl IndexWriter {
     /// Drops an exclusion. False when there was none.
     pub fn include(&self, exclusion: &Exclusion) -> Result<bool, IndexError> {
         self.ask(|reply| Command::Include(exclusion.clone(), reply))
+    }
+
+    /// Stores Git's verdicts on project output of the picture `picture`.
+    /// False, and nothing stored, when another picture has replaced it.
+    pub fn set_verdicts(
+        &self,
+        picture: PictureId,
+        verdicts: Vec<(DirId, Verdict)>,
+    ) -> Result<bool, IndexError> {
+        self.ask(|reply| Command::Verdicts(picture, verdicts, reply))
+    }
+
+    /// Records that the directories `cleaned` of the picture `picture` were
+    /// cleaned: until the next scan they and everything below them are no
+    /// longer offered. False, and nothing stored, when another picture has
+    /// replaced it.
+    pub fn mark_cleaned(
+        &self,
+        picture: PictureId,
+        cleaned: Vec<DirId>,
+    ) -> Result<bool, IndexError> {
+        self.ask(|reply| Command::Cleaned(picture, cleaned, reply))
     }
 
     fn ask<T>(&self, command: impl FnOnce(Reply<T>) -> Command) -> Result<T, IndexError> {
@@ -138,6 +163,14 @@ impl Server {
             }
             Command::Include(exclusion, reply) => {
                 answer(reply, edit(&self.conn, INCLUDE, &exclusion))
+            }
+            Command::Verdicts(picture, verdicts, reply) => {
+                let rows = verdicts.iter().map(|(id, v)| (id.0, verdict_code(*v)));
+                answer(reply, mark(&self.conn, picture, SET_VERDICT, rows))
+            }
+            Command::Cleaned(picture, cleaned, reply) => {
+                let rows = cleaned.iter().map(|id| [id.0]);
+                answer(reply, mark(&self.conn, picture, CLEANED, rows))
             }
         }
     }
@@ -226,7 +259,8 @@ fn swap(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexError> {
     let tx = conn.unchecked_transaction()?;
     tx.execute_batch(
         "DROP TABLE dirs; ALTER TABLE dirs_next RENAME TO dirs;
-         DELETE FROM coverage_counts; DELETE FROM coverage_gaps; DELETE FROM kinds;",
+         DELETE FROM coverage_counts; DELETE FROM coverage_gaps; DELETE FROM kinds;
+         DELETE FROM stale; DELETE FROM meta WHERE key = 'picture_home';",
     )?;
     tx.execute_batch(DIRS_INDEXES)?;
     write_coverage(&tx, summary)?;
@@ -243,6 +277,9 @@ fn write_picture(conn: &Connection, summary: &ScanSummary) -> Result<(), IndexEr
         [],
     )?;
     set_meta(conn, "picture_root", path_bytes(&summary.root))?;
+    if let Some(home) = &summary.home {
+        set_meta(conn, "picture_home", path_bytes(home))?;
+    }
     set_meta(conn, "picture_started", summary.started.0)?;
     set_meta(conn, "picture_finished", summary.finished.0)?;
     set_meta(conn, "gap_limit", int(summary.coverage.limit() as u64))
@@ -291,4 +328,36 @@ const INCLUDE: &str = "DELETE FROM exclusions WHERE path = ?1";
 fn edit(conn: &Connection, sql: &str, exclusion: &Exclusion) -> Result<bool, IndexError> {
     let changed = conn.execute(sql, [path_bytes(exclusion.path())])?;
     Ok(changed == 1)
+}
+
+const SET_VERDICT: &str = "UPDATE dirs SET verdict = ?2 WHERE id = ?1";
+const CLEANED: &str = "INSERT OR IGNORE INTO stale (dir_id) VALUES (?1)";
+
+/// Runs `sql` once per row of parameters, in one transaction, when
+/// `picture` is still the index's picture; true when it was.
+fn mark<P: Params>(
+    conn: &Connection,
+    picture: PictureId,
+    sql: &str,
+    rows: impl Iterator<Item = P>,
+) -> Result<bool, IndexError> {
+    let tx = conn.unchecked_transaction()?;
+    let current: Option<i64> = tx
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'picture_seq'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if current != Some(picture.0) {
+        return Ok(false);
+    }
+    {
+        let mut statement = tx.prepare(sql)?;
+        for row in rows {
+            statement.execute(row)?;
+        }
+    }
+    tx.commit()?;
+    Ok(true)
 }

@@ -8,12 +8,14 @@ use std::path::{Path, PathBuf};
 use rusqlite::types::FromSql;
 use rusqlite::{Connection, OptionalExtension, Params, Statement, params};
 
-use super::codec::{COLUMNS, Row, count, gap, gap_kind, int, kind, path_from, skip};
+use super::codec::{
+    CANDIDATE_COLUMNS, COLUMNS, Row, count, gap, gap_kind, int, kind, path_from, skip, verdict,
+};
 use super::schema::open_for_reading;
 use super::{IndexError, Picture, ScanRecord};
 use crate::domain::{
     Bytes, Candidate, Category, Coverage, DirId, DirRecord, Exclusion, GapAt, GapKind, KindTotals,
-    Recency, RuleId, Skip, Tally, UnixTime,
+    Manager, Recency, RuleId, Skip, Tally, UnixTime, Verdict,
 };
 
 /// Stored gap counts and skip counts.
@@ -56,14 +58,17 @@ struct Found {
     row: DirRecord,
     rule: RuleId,
     path: PathBuf,
+    managed: Option<Manager>,
 }
 
 impl Found {
     fn candidate(self, recency: &Recency) -> Candidate {
         let activity = self.row.tree.newest;
+        let category = self.rule.category();
         Candidate {
             id: self.row.id,
-            preselected: self.rule.category().preselected(activity, recency),
+            preselected: category.preselected(activity, recency, self.managed),
+            managed: self.managed,
             path: self.path,
             rule: self.rule,
             bytes: self.row.tree.bytes,
@@ -72,6 +77,35 @@ impl Found {
             device: self.row.device,
             inode: self.row.inode,
         }
+    }
+}
+
+/// What decides whether a candidate row is offered: Git's verdict where
+/// one is needed, the user's exclusions, and the directories cleaned since
+/// the scan.
+struct Offer {
+    exclusions: Vec<Exclusion>,
+    cleaned: Vec<PathBuf>,
+    home: Option<PathBuf>,
+}
+
+impl Offer {
+    /// The row as a candidate, unless it is not offered.
+    fn found(&self, row: DirRecord, verdict: Option<Verdict>, path: PathBuf) -> Option<Found> {
+        let rule = row.rule.clone()?;
+        let offered = rule.category().offered(verdict)
+            && !hides(&self.exclusions, &path)
+            && !self.cleaned.iter().any(|cleaned| path.starts_with(cleaned));
+        let managed = self
+            .home
+            .as_deref()
+            .and_then(|home| Manager::of(&path, home));
+        offered.then_some(Found {
+            row,
+            rule,
+            path,
+            managed,
+        })
     }
 }
 
@@ -156,7 +190,7 @@ impl Snapshot<'_> {
             .collect()
     }
 
-    /// Candidates no exclusion hides, counted per rule.
+    /// Candidates offered (see [`Snapshot::candidates`]), counted per rule.
     pub fn rule_tallies(&self) -> Result<BTreeMap<RuleId, Tally>, IndexError> {
         let mut tallies = BTreeMap::<RuleId, Tally>::new();
         for found in self.visible(None)? {
@@ -168,8 +202,10 @@ impl Snapshot<'_> {
         Ok(tallies)
     }
 
-    /// Candidates no exclusion hides, counted per category; every category
-    /// is present.
+    /// Candidates offered, counted per category; every category is
+    /// present. Candidates may lie inside a worktree candidate, so the
+    /// categories do not add up to what can be freed: see
+    /// [`Snapshot::reclaimable`].
     pub fn category_tallies(&self) -> Result<BTreeMap<Category, Tally>, IndexError> {
         let mut tallies: BTreeMap<Category, Tally> =
             Category::ALL.map(|c| (c, Tally::default())).into();
@@ -179,8 +215,44 @@ impl Snapshot<'_> {
         Ok(tallies)
     }
 
-    /// One page of the candidates of `category` (of every category when
-    /// `None`) that no exclusion hides, largest first.
+    /// What can be freed by default: the preselected candidates. Worktrees
+    /// are never preselected, so nothing is counted twice.
+    pub fn reclaimable(&self, recency: &Recency) -> Result<Tally, IndexError> {
+        let mut tally = Tally::default();
+        let found = self
+            .visible(None)?
+            .into_iter()
+            .map(|f| f.candidate(recency));
+        for candidate in found.filter(|c| c.preselected) {
+            tally.add(candidate.bytes);
+        }
+        Ok(tally)
+    }
+
+    /// Project output Git has not been asked about yet, with its path.
+    pub fn unverified(&self) -> Result<Vec<(DirId, PathBuf)>, IndexError> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM dirs INDEXED BY dirs_candidates
+             WHERE rule_id IS NOT NULL AND verdict IS NULL ORDER BY id"
+        );
+        let mut lineage = self.lineage()?;
+        let mut unverified = Vec::new();
+        for row in self.records(&sql, [])? {
+            let needs = row
+                .rule
+                .as_ref()
+                .is_some_and(|r| r.category().needs_verdict());
+            if needs {
+                unverified.push((row.id, lineage.path(row.id)?.unwrap_or_default()));
+            }
+        }
+        Ok(unverified)
+    }
+
+    /// One page of the offered candidates of `category` (of every category
+    /// when `None`), largest first. A candidate is offered unless an
+    /// exclusion hides it, it lies in a directory cleaned since the scan,
+    /// or it is project output Git has not verified.
     pub fn candidates(
         &self,
         category: Option<Category>,
@@ -192,38 +264,53 @@ impl Snapshot<'_> {
         Ok(page.map(|found| found.candidate(recency)).collect())
     }
 
-    /// The candidate with this id, unless it is not one or an exclusion
-    /// hides it.
+    /// The candidate with this id, if it is one and is offered.
     pub fn candidate(&self, id: DirId, recency: &Recency) -> Result<Option<Candidate>, IndexError> {
-        let row = self.by_id(id)?;
-        let Some((row, rule)) = row.and_then(|row| Some((row.clone(), row.rule?))) else {
-            return Ok(None);
-        };
-        let path = self.path_of(id)?.unwrap_or_default();
-        let found = Found { row, rule, path };
-        let hidden = hides(&self.exclusions()?, &found.path);
-        Ok((!hidden).then(|| found.candidate(recency)))
+        let sql = format!("SELECT {CANDIDATE_COLUMNS} FROM dirs WHERE id = ?1");
+        let offer = self.offer()?;
+        let mut lineage = self.lineage()?;
+        let mut found = None;
+        for (row, verdict) in self.candidate_rows(&sql, [id.0])? {
+            let path = lineage.path(row.id)?.unwrap_or_default();
+            found = offer.found(row, verdict, path);
+        }
+        Ok(found.map(|found| found.candidate(recency)))
     }
 
-    /// The candidates of `category` (all when `None`) that no exclusion
-    /// hides, largest first. Reads only candidate rows.
+    /// The offered candidates of `category` (all when `None`), largest
+    /// first. Reads only candidate rows.
     fn visible(&self, category: Option<Category>) -> Result<Vec<Found>, IndexError> {
-        let exclusions = self.exclusions()?;
         let sql = format!(
-            "SELECT {COLUMNS} FROM dirs INDEXED BY dirs_candidates
+            "SELECT {CANDIDATE_COLUMNS} FROM dirs INDEXED BY dirs_candidates
              WHERE rule_id IS NOT NULL ORDER BY tree_bytes DESC, id"
         );
-        let rows = self.records(&sql, [])?.into_iter();
-        let rows = rows.filter_map(|row| Some((row.rule.clone()?, row)));
+        let offer = self.offer()?;
+        let rows = self.candidate_rows(&sql, [])?.into_iter();
+        let of_category = |row: &DirRecord| {
+            let rule = row.rule.as_ref().map(RuleId::category);
+            category.is_none_or(|c| rule == Some(c))
+        };
         let mut lineage = self.lineage()?;
         let mut found = Vec::new();
-        for (rule, row) in rows.filter(|(rule, _)| category.is_none_or(|c| rule.category() == c)) {
+        for (row, verdict) in rows.filter(|(row, _)| of_category(row)) {
             let path = lineage.path(row.id)?.unwrap_or_default();
-            if !hides(&exclusions, &path) {
-                found.push(Found { row, rule, path });
-            }
+            found.extend(offer.found(row, verdict, path));
         }
         Ok(found)
+    }
+
+    fn offer(&self) -> Result<Offer, IndexError> {
+        let mut lineage = self.lineage()?;
+        let ids = self.query("SELECT dir_id FROM stale ORDER BY dir_id", |r| r.get(0))?;
+        let mut cleaned = Vec::new();
+        for id in ids {
+            cleaned.extend(lineage.path(DirId(id))?);
+        }
+        Ok(Offer {
+            exclusions: self.exclusions()?,
+            cleaned,
+            home: self.picture_home()?,
+        })
     }
 
     fn lineage(&self) -> Result<Lineage<'_>, IndexError> {
@@ -233,11 +320,6 @@ impl Snapshot<'_> {
                 .prepare("SELECT parent_id, name FROM dirs WHERE id = ?1")?,
             root: self.picture_root()?.unwrap_or_default(),
         })
-    }
-
-    fn by_id(&self, id: DirId) -> Result<Option<DirRecord>, IndexError> {
-        let sql = format!("SELECT {COLUMNS} FROM dirs WHERE id = ?1");
-        Ok(self.records(&sql, [id.0])?.pop())
     }
 
     fn child(&self, parent: DirId, name: &OsStr) -> Result<Option<DirRecord>, IndexError> {
@@ -255,6 +337,20 @@ impl Snapshot<'_> {
         rows.into_iter().map(Row::record).collect()
     }
 
+    fn candidate_rows(
+        &self,
+        sql: &str,
+        params: impl Params,
+    ) -> Result<Vec<(DirRecord, Option<Verdict>)>, IndexError> {
+        let mut statement = self.conn.prepare(sql)?;
+        let rows = statement
+            .query_map(params, Row::with_verdict)?
+            .collect::<Result<Vec<_>, _>>()?;
+        let rows = rows.into_iter();
+        rows.map(|(row, code)| Ok((row.record()?, verdict(code)?)))
+            .collect()
+    }
+
     fn meta<T: FromSql>(&self, key: &str) -> Result<Option<T>, IndexError> {
         Ok(self
             .conn
@@ -266,12 +362,17 @@ impl Snapshot<'_> {
         Ok(self.meta::<Vec<u8>>("picture_root")?.map(path_from))
     }
 
+    fn picture_home(&self) -> Result<Option<PathBuf>, IndexError> {
+        Ok(self.meta::<Vec<u8>>("picture_home")?.map(path_from))
+    }
+
     fn picture(&self) -> Result<Option<Picture>, IndexError> {
         let Some(scan) = self.meta::<i64>("picture_seq")? else {
             return Ok(None);
         };
         Ok(Some(Picture {
             root: self.picture_root()?.unwrap_or_default(),
+            home: self.picture_home()?,
             started: UnixTime(self.meta("picture_started")?.unwrap_or_default()),
             finished: UnixTime(self.meta("picture_finished")?.unwrap_or_default()),
             coverage: self.coverage()?,

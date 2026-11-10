@@ -48,6 +48,7 @@ fn candidate(
         activity: activity.map(|ago| UnixTime(NOW.0 - ago)),
         device: 1,
         inode: 2,
+        managed: None,
         preselected,
     }
 }
@@ -126,6 +127,7 @@ fn overview(freshness: Option<Freshness>) -> Shown<Overview> {
         now: NOW,
         data: Overview {
             freshness,
+            reclaimable: tally(3, 3_005_000),
             categories,
             rules,
         },
@@ -159,7 +161,7 @@ coverage     partial
 gaps         1 denied, 0 failed, 0 vanished, 0 cancelled
 skipped      0 other volume, 0 mount point, 0 dataless, 0 excluded
   gap        denied  /r/locked
-can be freed 3.0 MB in 4 candidates (estimate)
+can be freed 3.0 MB in 3 preselected candidates (estimate)
   app-cache                         3.0 MB        2
     app-cache.library               3.0 MB        2  permanently
   dev-cache                            0 B        0
@@ -199,7 +201,7 @@ fn the_summary_reads_as_json() {
         "\"skipped\":{\"other volume\":0,\"mount point\":0,\"dataless\":0,\"excluded\":0},",
         "\"kinds\":{\"applications\":0,\"developer\":0,\"media\":7000000,\"documents\":0,",
         "\"archives\":0,\"system\":12000,\"other\":0}},",
-        "\"total\":{\"count\":4,\"bytes\":3045000},",
+        "\"reclaimable\":{\"count\":3,\"bytes\":3005000},",
         "\"categories\":[",
         "{\"count\":2,\"bytes\":3000000,\"category\":\"app-cache\",\"rules\":[",
         "{\"count\":2,\"bytes\":3000000,\"rule\":\"app-cache.library\",\"disposal\":\"permanently\"}]},",

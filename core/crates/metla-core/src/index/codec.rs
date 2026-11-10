@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use super::IndexError;
 use crate::domain::{
     Bytes, DirId, DirRecord, DirState, Errno, FileKind, Gap, GapKind, OwnTotals, RuleId, Skip,
-    TreeTotals, UnixTime,
+    TreeTotals, UnixTime, Verdict,
 };
 
 const READ: i64 = 0;
@@ -46,6 +46,16 @@ pub fn kind_code(kind: FileKind) -> i64 {
 
 pub fn kind(code: i64) -> Result<FileKind, IndexError> {
     value_in(&FileKind::ALL, 0, code).ok_or_else(|| corrupt("kind code", code))
+}
+
+/// Verdicts are stored as 0, 1, ... in the order of `Verdict::ALL`.
+pub fn verdict_code(verdict: Verdict) -> i64 {
+    code_in(&Verdict::ALL, 0, &verdict)
+}
+
+pub fn verdict(code: Option<i64>) -> Result<Option<Verdict>, IndexError> {
+    code.map(|code| value_in(&Verdict::ALL, 0, code).ok_or_else(|| corrupt("verdict", code)))
+        .transpose()
 }
 
 pub fn rule(id: Option<String>) -> Result<Option<RuleId>, IndexError> {
@@ -147,6 +157,10 @@ pub fn path_from(bytes: Vec<u8>) -> PathBuf {
 pub const COLUMNS: &str = "id, parent_id, name, own_bytes, own_files, \
      tree_bytes, tree_files, tree_dirs, tree_mtime, flags, device, inode, rule_id";
 
+/// [`COLUMNS`] and then the verdict, for candidate rows.
+pub const CANDIDATE_COLUMNS: &str = "id, parent_id, name, own_bytes, own_files, \
+     tree_bytes, tree_files, tree_dirs, tree_mtime, flags, device, inode, rule_id, verdict";
+
 /// The stored columns of a row, in the order of [`COLUMNS`], before they
 /// are interpreted.
 type Columns = (
@@ -172,6 +186,11 @@ impl Row {
     /// Reads a row selected with [`COLUMNS`].
     pub fn from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         Ok(Row(row.try_into()?))
+    }
+
+    /// Reads a row selected with [`CANDIDATE_COLUMNS`] and its verdict.
+    pub fn with_verdict(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Row, Option<i64>)> {
+        Ok((Row::from_sql(row)?, row.get("verdict")?))
     }
 
     pub fn record(self) -> Result<DirRecord, IndexError> {
