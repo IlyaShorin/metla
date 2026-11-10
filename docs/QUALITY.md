@@ -86,16 +86,17 @@ code is held to this instead (`scripts/quality-swift.sh`):
   a debug build that makes a blocking engine call on the main thread
   (tested).
 
-**Swift numbers at M6** (`scripts/quality-swift.sh` at f760fcd, on a
-machine running two mutation gates): 0 diagnostics in the strict build;
-70 tests in 13 suites passed (the scenario test counts its four runs as
-one); line coverage per gated file: Power, RefreshPacer, Format,
-StatusLine 100 %, OverviewData 98.4 %, Hotkeys 97.1 %, SettingsModels
-96.6 %, CategoryModel 96.3 %, Names 95.6 %, AppModel 94.2 %, ReportModel
-92.5 %, MenuBarSummary 92.0 %, CleanupModel 89.5 %, Scenarios 88.8 %,
-FoldersModel 87.9 %, Strings 87.1 %, PreviewModel 86.4 %; not gated:
-EngineClient 94.6 %, LaunchSettings 76.6 %, MainThreadGuard 66.7 %;
-MetlaKit in all 87.8 % of lines.
+**Swift numbers at M6** (`scripts/quality-swift.sh` on the final tree,
+42cb5a0 and later, with a mutation gate running beside it): 0
+diagnostics in the strict build; 70 tests in 13 suites passed (the
+scenario test counts its four runs as one); line coverage per gated
+file: Power, RefreshPacer, Format, StatusLine 100 %, OverviewData
+98.4 %, Hotkeys 97.1 %, SettingsModels 96.6 %, CategoryModel 96.3 %,
+Names 95.6 %, AppModel 93.6 %, ReportModel 92.5 %, MenuBarSummary
+92.0 %, CleanupModel 89.5 %, Scenarios 88.8 %, FoldersModel 87.9 %,
+Strings 87.1 %, PreviewModel 86.4 %; not gated: EngineClient 94.6 %,
+LaunchSettings 76.6 %, MainThreadGuard 66.7 %; MetlaKit in all 87.6 %
+of lines.
 
 Not covered by any gate: `MetlaApp` (the SwiftUI views and the AppKit
 glue: the Carbon hotkey adapter, the HUD panel, the IOKit power monitor,
