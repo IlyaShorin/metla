@@ -1328,7 +1328,7 @@ fn worktree_status(engine: &Engine) -> Option<Removability> {
 }
 
 #[test]
-fn an_engine_opened_on_a_saved_picture_computes_the_worktree_statuses() {
+fn an_engine_opened_on_a_saved_picture_computes_the_worktree_statuses_when_asked() {
     let place = Place::new(&[]);
     let git_ = isolated(&place.aux);
     let repo = pushed_repository(&place.fx, &git_);
@@ -1429,12 +1429,40 @@ fn worktree_statuses_are_computed_in_the_background_two_at_a_time() {
     assert_eq!(calls(&log), (12, 2), "one call each, two at a time");
 }
 
+/// Opening a saved picture and reading the Overview start no Git
+/// process: statuses are computed when the worktree list is first asked
+/// for, once per picture.
+#[test]
+fn worktree_statuses_wait_until_the_worktree_list_is_asked_for() {
+    let (place, config, log) = slow_git_place();
+    let engine = Engine::open(config).unwrap();
+    settled(&engine);
+    drop(engine);
+    let config = EngineConfig {
+        git: metla_core::git::Git::new(place.aux.path("slow-git")),
+        ..place.config(PowerProfile::Background)
+    };
+    let engine = Engine::open(config).unwrap();
+    engine.snapshot().unwrap();
+    engine.largest_folders(6).unwrap();
+    engine.candidates(Some(Category::AppCache), ALL).unwrap();
+    settled(&engine);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(calls(&log).0, 0, "no Git process before the list");
+    engine.candidates(Some(Category::GitWorktree), ALL).unwrap();
+    engine.candidates(Some(Category::GitWorktree), ALL).unwrap();
+    within(&engine, Duration::from_secs(60), |_| calls(&log).0 == 12);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(calls(&log).0, 12, "asked twice, computed once");
+}
+
 #[test]
 fn a_batch_has_only_the_worktrees_it_changed_or_lies_in_inspected_again() {
     let (place, config, log) = slow_git_place();
     fs::create_dir(place.path("wts/wt05/deep")).unwrap();
     let engine = Engine::open(config).unwrap();
     settled(&engine);
+    engine.candidates(Some(Category::GitWorktree), ALL).unwrap();
     let log = log.as_path();
     let started = |n: usize| move |_: &Engine| calls(log).0 == n;
     within(&engine, Duration::from_secs(60), started(12));
@@ -1458,6 +1486,7 @@ fn closing_the_engine_abandons_the_statuses_still_to_compute() {
     let (_place, config, log) = slow_git_place();
     let engine = Engine::open(config).unwrap();
     settled(&engine);
+    engine.candidates(Some(Category::GitWorktree), ALL).unwrap();
     drop(engine);
     let (started, _) = calls(&log);
     assert!(

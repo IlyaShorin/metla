@@ -543,7 +543,8 @@ one thing at a time:
   rescanned shallowly;
 * after each of these: Git's verdicts on project output that has none
   yet (the only rows without one are new or re-read), worktree statuses
-  where something changed, the stored event id, and a notification.
+  where something changed (once their list was asked for), the stored
+  event id, and a notification.
   After a batch or a cleanup's rescans both passes look only at what it
   wrote: the candidate rows a rescan wrote (`Refreshed::Applied`) and
   the worktrees holding a rescanned directory (`Snapshot::enclosing`);
@@ -577,12 +578,16 @@ due, and no full scan starts on its own until the user starts one
 (which forgets the failure), so a full disk never makes the engine scan
 again and again. `EngineConfig::index_limit` caps the index file.
 
-Worktree statuses for lists are computed after a scan and after changes
-below a worktree on a worker thread, two Git calls at a time from
-threads at the priority of the profile in force (background priority
-where the profile throttles, as Saver does), abandoned when a newer request comes or the engine closes, kept
-per picture and served with the candidate page (`Removability::{Unknown,
-Removable, Blocked}`). They are for display only: a preview and an
+Worktree statuses for lists are computed when a page holding a
+worktree is first asked for (once per picture: opening the engine and
+reading the Overview start no Git process), and after that again only
+for the worktrees a batch or a cleanup changed or lies in; on a worker
+thread, two Git calls at a time from threads at the priority of the
+profile in force (background priority where the profile throttles, as
+Saver does), abandoned when a newer request comes or the engine closes,
+kept per picture and served with the candidate page
+(`Removability::{Unknown, Removable, Blocked}`, a blocked one with the
+branch Git reported). They are for display only: a preview and an
 execution compute them again.
 
 Settings (background analysis, battery behaviour, ages, hotkey mode,

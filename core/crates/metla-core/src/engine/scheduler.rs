@@ -20,7 +20,7 @@ use crate::domain::{
     RescanTask,
 };
 use crate::fs::now;
-use crate::git::{WorktreeSettings, verify_outputs};
+use crate::git::verify_outputs;
 use crate::index::{IndexError, IndexReader, IndexWriter, Page, PictureId, Snapshot};
 use crate::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
 use crate::watch::{Coalescer, Event, Flags, Stream, current_event_id, resume_after, volume_uuid};
@@ -31,7 +31,7 @@ const LIVE_LIMIT: usize = 4096;
 pub const EVENTS_NOTE: &str = "events";
 
 /// Every candidate.
-const ALL: Page = Page {
+pub const ALL: Page = Page {
     offset: 0,
     limit: usize::MAX,
 };
@@ -109,11 +109,9 @@ impl Scheduler {
 
     /// Opening: follow changes from the stored event id when the history
     /// allows it; a full scan is needed without a picture or a history.
-    /// The saved picture's worktree statuses are computed in the
-    /// background, since no scan may come to compute them.
+    /// No worktree status is computed until the list is asked for.
     fn start(&mut self) {
         self.watch();
-        self.worktrees(None);
         self.work();
     }
 
@@ -270,7 +268,7 @@ impl Scheduler {
             c.batches += 1;
             c.tasks += tasks.len() as u64;
         });
-        self.after_change(Some(&written));
+        self.after_change(&written);
         let pending = self.coalescer.pending() as u64;
         self.shared.update(|s| {
             s.pending = pending;
@@ -316,11 +314,11 @@ impl Scheduler {
         }
     }
 
-    /// After the picture changed (`None`: a full scan wrote all of it):
-    /// Git's verdicts on new project output, worktree statuses where the
-    /// change was, and the observer.
-    fn after_change(&mut self, written: Option<&Written>) {
-        self.verify(written.map(|w| w.candidates.as_slice()));
+    /// After a batch or a cleanup changed the picture: Git's verdicts on
+    /// new project output, worktree statuses where the change was, and
+    /// the observer.
+    fn after_change(&mut self, written: &Written) {
+        self.verify(Some(&written.candidates));
         self.worktrees(written);
         self.shared.notify(Changed::Picture);
     }
@@ -349,29 +347,16 @@ impl Scheduler {
     }
 
     /// Recomputes, in the background, the statuses of the worktrees a
-    /// change wrote or happened in (all of them for `None`).
-    fn worktrees(&mut self, written: Option<&Written>) {
-        let recency = Recency::new(now(), lock(&self.shared.settings).recent_age);
+    /// change wrote or happened in, when their list was asked for.
+    fn worktrees(&mut self, written: &Written) {
+        let recency = self.shared.recency();
         let read = self.reader.read(|snap| {
             let picture = snap.scan()?.and_then(|scan| scan.picture).map(|p| p.id());
-            let worktrees = match written {
-                Some(written) => written.worktrees(snap, &recency)?,
-                None => snap.candidates(Some(Category::GitWorktree), ALL, &recency)?,
-            };
-            Ok((picture, worktrees))
+            Ok((picture, written.worktrees(snap, &recency)?))
         });
-        let Ok((Some(picture), chosen)) = read else {
-            return;
-        };
-        if chosen.is_empty() {
-            return;
+        if let Ok((Some(picture), chosen)) = read {
+            self.shared.compute_statuses(picture, chosen);
         }
-        let settings = WorktreeSettings {
-            home: self.shared.home.clone(),
-            stale_after: lock(&self.shared.settings).stale_after,
-        };
-        let priority = self.shared.profile().priority();
-        (self.shared.statuses).compute(picture, chosen, now(), settings, priority);
     }
 
     /// A full scan with the user's threads (`interactive`) or the
@@ -397,7 +382,6 @@ impl Scheduler {
         let finished = scanned.unwrap_or_default();
         if finished {
             self.verify(None);
-            self.worktrees(None);
             self.mark_events();
         }
         *lock(&self.shared.scan) = None;
@@ -410,7 +394,7 @@ impl Scheduler {
     }
 
     fn quick(&mut self, categories: &[QuickCategory]) {
-        let recency = Recency::new(now(), lock(&self.shared.settings).recent_age);
+        let recency = self.shared.recency();
         let offered = self
             .reader
             .read(|snap| snap.candidates(None, ALL, &recency));
@@ -479,7 +463,7 @@ impl Scheduler {
         for parent in parents {
             self.apply(&RescanTask::Shallow(parent), &options, &mut written);
         }
-        self.after_change(Some(&written));
+        self.after_change(&written);
     }
 }
 

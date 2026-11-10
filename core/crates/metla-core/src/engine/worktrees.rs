@@ -1,9 +1,11 @@
 //! Worktree statuses for lists. On the real disk there are hundreds of
 //! linked worktrees and each costs three Git calls, so they are computed
-//! in the background after a scan — two at a time, at the priority of the
-//! profile in force (background priority where it throttles), abandoned
-//! when a newer request comes — kept per picture, and served with the
-//! candidate page. They are for display only: a preview
+//! only when the worktree list is first asked for — in the background,
+//! two at a time, at the priority of the profile in force (background
+//! priority where it throttles), abandoned when a newer request comes —
+//! kept per picture, again only for the worktrees a change touched, and
+//! served with the candidate page. Opening the engine and reading the
+//! Overview start no Git process. They are for display only: a preview
 //! and an execution compute a worktree's status again.
 
 use std::collections::BTreeMap;
@@ -24,7 +26,7 @@ const CHUNK: usize = 8;
 /// Git calls at a time.
 const AT_ONCE: usize = 2;
 
-/// Statuses computed for one picture.
+/// Statuses computed for one picture: the one whose list was asked for.
 #[derive(Default)]
 struct Known {
     picture: Option<PictureId>,
@@ -87,10 +89,25 @@ impl Statuses {
         }
     }
 
+    /// The worktree list of `picture` is asked for: true the first time,
+    /// when its statuses must be computed; the old picture's are
+    /// forgotten.
+    pub fn ask(&self, picture: PictureId) -> bool {
+        let mut known = lock(&self.known);
+        let first = known.picture != Some(picture);
+        if first {
+            *known = Known {
+                picture: Some(picture),
+                by_dir: BTreeMap::new(),
+            };
+        }
+        first
+    }
+
     /// Computes the statuses of `worktrees` of `picture` again, in the
-    /// background, its Git calls made from threads at `priority`. A
-    /// request for another picture forgets the old one's; an earlier
-    /// request still running is abandoned.
+    /// background, its Git calls made from threads at `priority`; nothing
+    /// when the list of `picture` was never asked for. An earlier request
+    /// still running is abandoned.
     pub fn compute(
         &self,
         picture: PictureId,
@@ -102,10 +119,7 @@ impl Statuses {
         {
             let mut known = lock(&self.known);
             if known.picture != Some(picture) {
-                *known = Known {
-                    picture: Some(picture),
-                    by_dir: BTreeMap::new(),
-                };
+                return;
             }
             for worktree in &worktrees {
                 known.by_dir.remove(&worktree.id);

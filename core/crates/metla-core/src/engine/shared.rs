@@ -9,8 +9,10 @@ use super::settings::Settings;
 use super::view::{Changed, Counters, EngineObserver, EngineState, Failure};
 use super::worktrees::Statuses;
 use crate::clean::{CleanControl, CleanError, Cleaner, TrashHost};
-use crate::domain::CleanupReport;
-use crate::git::Git;
+use crate::domain::{Candidate, CleanupReport, Recency};
+use crate::fs::now;
+use crate::git::{Git, WorktreeSettings};
+use crate::index::PictureId;
 use crate::rules::RuleSet;
 use crate::scan::ScanControl;
 
@@ -150,6 +152,26 @@ impl Shared {
     }
 
     /// Cancels a full scan the user did not ask for.
+    /// What is recent now, by the settings.
+    pub fn recency(&self) -> Recency {
+        Recency::new(now(), lock(&self.settings).recent_age)
+    }
+
+    /// Computes the statuses of `worktrees` of `picture` in the
+    /// background, with the settings and at the priority in force, when
+    /// the list of `picture` was asked for.
+    pub fn compute_statuses(&self, picture: PictureId, worktrees: Vec<Candidate>) {
+        if worktrees.is_empty() {
+            return;
+        }
+        let settings = WorktreeSettings {
+            home: self.home.clone(),
+            stale_after: lock(&self.settings).stale_after,
+        };
+        let priority = self.profile().priority();
+        (self.statuses).compute(picture, worktrees, now(), settings, priority);
+    }
+
     pub fn cancel_background_scan(&self) {
         let scan = lock(&self.scan);
         if let Some(scan) = scan.as_ref().filter(|scan| !scan.interactive) {

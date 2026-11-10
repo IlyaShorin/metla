@@ -31,7 +31,7 @@ use crate::domain::{
 use crate::fs::{now, volume};
 use crate::git::{Git, WorktreeSettings};
 use crate::index::{
-    IndexEditor, IndexError, IndexReader, IndexWriter, Order, Page, Picture, Snapshot,
+    IndexEditor, IndexError, IndexReader, IndexWriter, Order, Page, Picture, PictureId, Snapshot,
 };
 use crate::rules::RuleSet;
 use crate::scan::{ScanRoot, ScanScope};
@@ -47,7 +47,7 @@ pub use view::{
     Folder, FolderEntry, Freshness, Listed, Overview, Removability, TopFolder, VolumeSpace,
 };
 
-use scheduler::{Command, Scheduler, resumable};
+use scheduler::{ALL, Command, Scheduler, resumable};
 use shared::{Shared, Status, lock};
 use worktrees::Statuses;
 
@@ -328,7 +328,7 @@ impl Engine {
     }
 
     fn recency(&self) -> Recency {
-        Recency::new(now(), lock(&self.shared.settings).recent_age)
+        self.shared.recency()
     }
 
     /// Everything the Overview shows, from the saved picture.
@@ -421,6 +421,10 @@ impl Engine {
                 snap.candidate_page(category, order, page, &recency)?,
             ))
         })?;
+        let worktrees = found.iter().any(|c| c.category() == Category::GitWorktree);
+        if let Some(picture) = picture.filter(|_| worktrees) {
+            self.ask_statuses(picture)?;
+        }
         let listed = found.into_iter().map(|candidate| {
             let worktree = candidate.category() == Category::GitWorktree;
             let removability = picture
@@ -435,6 +439,18 @@ impl Engine {
             listed: listed.collect(),
             total,
         })
+    }
+
+    /// The first time the worktree list of `picture` is asked for, its
+    /// statuses are computed in the background.
+    fn ask_statuses(&self, picture: PictureId) -> Result<(), EngineError> {
+        if !self.shared.statuses.ask(picture) {
+            return Ok(());
+        }
+        let recency = self.recency();
+        let all = self.read(|snap| snap.candidates(Some(Category::GitWorktree), ALL, &recency))?;
+        self.shared.compute_statuses(picture, all);
+        Ok(())
     }
 
     /// The Overview's largest folders: the `limit` largest that hold none
