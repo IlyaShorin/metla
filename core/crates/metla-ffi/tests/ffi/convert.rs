@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use metla_core::clean::{self, CleanError};
 use metla_core::domain::{
-    Bytes, Category, CleanupReport, Confirmation, Coverage, DirId, DirRecord, DirState, Disposal,
-    Errno, FileKind, Gap, GapAt, GapKind, ItemReport, KindTotals, Leftovers, Outcome, OwnTotals,
-    Passed, PreviewId, Reclaimable, RuleId, Separate, Skip, SkipReason, Stamp, Tally, TreeTotals,
-    UnixTime,
+    Bytes, Candidate, Category, CleanupPreview, CleanupReport, Confirmation, Coverage, DirId,
+    DirRecord, DirState, Disposal, Errno, FileKind, Gap, GapAt, GapKind, ItemReport, KindTotals,
+    Leftovers, Manager, Outcome, OwnTotals, Passed, PreviewId, PreviewItem, Reclaimable, RuleId,
+    Separate, Skip, SkipReason, Stamp, Tally, TreeTotals, UnixTime,
 };
 use metla_core::engine::{
     self, Changed, Completeness, EngineError, EngineObserver as _, EngineState, Folder,
@@ -310,6 +310,57 @@ fn confirmations_and_reports_cross_in_both_shapes() {
     );
     let refused = CleanupResult::from(Err(CleanError::UnknownPreview(PreviewId(9))));
     assert!(matches!(refused, CleanupResult::NotRun { reason } if !reason.is_empty()));
+}
+
+fn preview_item(id: i64, rule: &str, managed: Option<Manager>) -> PreviewItem {
+    PreviewItem {
+        candidate: Candidate {
+            id: DirId(id),
+            path: PathBuf::from(format!("/r/{id}")),
+            rule: RuleId::parse(rule).unwrap(),
+            bytes: Bytes(10),
+            files: 1,
+            activity: None,
+            device: 1,
+            inode: id as u64,
+            managed,
+            preselected: managed.is_none(),
+        },
+        warnings: Vec::new(),
+    }
+}
+
+/// What executing a preview would act on, as the core decides it: the
+/// quick group with the preview, a separate group when confirmed, an item
+/// in a managed worktree only when confirmed by itself.
+#[test]
+fn a_confirmation_covers_what_the_core_says_it_covers() {
+    let preview = CleanupPreview {
+        id: PreviewId(1),
+        items: vec![
+            preview_item(1, "app-cache.library", None),
+            preview_item(2, "log.user-library", None),
+            preview_item(3, "build.cargo-target", Some(Manager::Codex)),
+            preview_item(4, "temp.trash", None),
+        ],
+        rejected: Vec::new(),
+    };
+    let covered = |groups: Vec<Separate>, items: Vec<DirId>| {
+        metla_ffi::covered(preview.clone(), Confirmations { groups, items })
+    };
+    assert_eq!(covered(vec![], vec![]), [DirId(1)]);
+    assert_eq!(
+        covered(vec![Separate::MoveToTrash], vec![]),
+        [DirId(1), DirId(2)]
+    );
+    assert_eq!(covered(vec![], vec![DirId(3)]), [DirId(1), DirId(3)]);
+    assert_eq!(
+        covered(
+            vec![Separate::EmptyTrash, Separate::MoveToTrash],
+            vec![DirId(3)]
+        ),
+        [DirId(1), DirId(2), DirId(3), DirId(4)]
+    );
 }
 
 fn metla_ffi_leftover(leftovers: Leftovers) -> metla_ffi::Leftover {

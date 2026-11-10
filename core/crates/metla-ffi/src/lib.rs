@@ -26,7 +26,7 @@ pub use error::MetlaError;
 pub use view::{
     CandidatePage, CategoryTally, CleanupResult, Confirmations, CoverageSummary, EngineSettings,
     FailedPath, FolderDir, FolderItem, FolderPage, GapCount, GapPlace, KindBytes, Leftover,
-    Overview, ReportTotals, RuleTitle, SkipCount, group_of, rule_titles,
+    Overview, ReportTotals, RuleTitle, SkipCount, covered, group_of, rule_titles,
 };
 
 uniffi::setup_scaffolding!();

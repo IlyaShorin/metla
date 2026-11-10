@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use metla_core::clean::CleanError;
 use metla_core::domain::{
-    Bytes, Category, CleanupReport, Confirmation, Coverage, DirId, DirRecord, DirState, Disposal,
-    Errno, FileKind, GapKind, Group, KindTotals, Leftovers, QuickCategory, Reclaimable, RuleId,
-    Separate, Skip, Tally, TreeTotals,
+    Bytes, Category, CleanupPreview, CleanupReport, Confirmation, Coverage, DirId, DirRecord,
+    DirState, Disposal, Errno, FileKind, GapKind, Group, KindTotals, Leftovers, QuickCategory,
+    Reclaimable, RuleId, Separate, Skip, Tally, TreeTotals,
 };
 use metla_core::engine::{
     self, CandidatePage as Page, Folder, FolderEntry, Freshness, HotkeyMode, Listed, PowerProfile,
@@ -402,6 +402,18 @@ impl From<EngineSettings> for Settings {
             quick: settings.quick.into_iter().collect(),
         }
     }
+}
+
+/// The items of `preview` that `confirmed` covers, in the preview's
+/// order: what executing it with that confirmation would act on.
+#[uniffi::export]
+pub fn covered(preview: CleanupPreview, confirmed: Confirmations) -> Vec<DirId> {
+    let confirmation = Confirmation::from(confirmed);
+    let items = preview
+        .items
+        .iter()
+        .filter(|item| confirmation.covers(item));
+    items.map(|item| item.candidate.id).collect()
 }
 
 /// How a preview item with the rule `rule` is confirmed: with the
