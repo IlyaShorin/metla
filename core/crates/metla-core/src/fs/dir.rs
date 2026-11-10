@@ -57,6 +57,30 @@ impl DirHandle {
         stat_of(&self.0)
     }
 
+    /// The directory once more, on a descriptor of its own.
+    pub fn reopen(&self) -> Result<DirHandle, ListError> {
+        self.open_at(OsStr::new("."), OPEN_DIR)
+    }
+
+    /// The metadata of the entry `name`, without following a symlink.
+    pub fn entry(&self, name: &OsStr) -> Result<EntryMeta, ListError> {
+        self.stat_entry(name)
+    }
+
+    /// Removes the entry `name`: unlinks a file, a symlink (never its
+    /// target) or another non-directory, or removes an empty directory.
+    pub fn remove(&self, name: &OsStr, kind: EntryKind) -> Result<(), Errno> {
+        let flags = match kind {
+            EntryKind::Dir => libc::AT_REMOVEDIR,
+            _ => 0,
+        };
+        let name = c_name(name).map_err(Errno)?;
+        // SAFETY: the descriptor is open and `name` is NUL-terminated.
+        checked(|| unsafe { libc::unlinkat(self.0.as_raw_fd(), name.as_ptr(), flags) })
+            .map(|_| ())
+            .map_err(Errno)
+    }
+
     /// At most `limit` bytes from the start of the regular file `name` in
     /// this directory. Used only for tiny files a rule inspects (a `.git`
     /// pointer file, a `CACHEDIR.TAG`).

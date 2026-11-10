@@ -11,6 +11,8 @@ mod gitrun;
 mod index;
 mod offered;
 mod porcelain;
+mod preview;
+mod remove;
 mod repo;
 mod rules;
 mod scan;

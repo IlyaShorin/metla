@@ -406,7 +406,7 @@ const PIECE: usize = 400;
 
 /// A chain `x/x/x/...` of `depth` directories below `base`, built in
 /// pieces short enough for `PATH_MAX` and moved into each other.
-fn deep_chain(base: &Path, depth: usize) -> PathBuf {
+pub fn deep_chain(base: &Path, depth: usize) -> PathBuf {
     let mut built: Option<PathBuf> = None;
     for piece in 0..depth / PIECE {
         let top = base.join(format!("piece{piece}"));
