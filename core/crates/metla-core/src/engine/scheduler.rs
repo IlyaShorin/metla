@@ -208,10 +208,7 @@ impl Scheduler {
     /// What is due: a full scan the profile allows, then one batch.
     fn work(&mut self) {
         let profile = self.shared.profile();
-        let status = *lock(&self.shared.status);
-        if status.needs_full_scan && !status.held && profile.full_scans {
-            self.full_scan(false);
-        }
+        self.full_scan_if_due(&profile);
         let waiting = self
             .next_batch
             .map(|next| next.saturating_duration_since(Instant::now()));
@@ -246,8 +243,15 @@ impl Scheduler {
             s.pending = pending;
             s.needs_full_scan |= full;
         });
-        let held = lock(&self.shared.status).held;
-        if full && !held && self.shared.profile().full_scans {
+        let now = self.shared.profile();
+        self.full_scan_if_due(&now);
+    }
+
+    /// The engine's own full scan, when one is needed, not held, and the
+    /// profile allows it.
+    fn full_scan_if_due(&mut self, profile: &Profile) {
+        let status = *lock(&self.shared.status);
+        if status.needs_full_scan && !status.held && profile.full_scans {
             self.full_scan(false);
         }
     }

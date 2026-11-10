@@ -221,8 +221,10 @@ fn a_reported_change_is_applied_once_it_settles() {
     engine.changed(vec![caches]).unwrap();
     settled(&engine);
     assert!(!offered(&engine, &place).contains("home/Library/Caches/org.other.tool"));
-    assert_eq!(engine.counters().full_scans, 1);
-    assert!(engine.counters().tasks >= 2);
+    let counters = engine.counters();
+    assert_eq!(counters.full_scans, 1);
+    assert!(counters.tasks >= 2);
+    assert!(counters.wakeups >= 2, "a turn for each report");
 }
 
 #[test]
