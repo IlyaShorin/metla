@@ -147,17 +147,8 @@ pub fn bench_churn(
     stop.store(true, Ordering::Release);
     let churned = churner.join().map_err(|_| "the churn failed")?;
     let ended = Instant::now();
-    // FSEvents hands events over in order but late, so an engine idle
-    // right after the churn may still have the churn's last events to
-    // come. A directory made now, once the picture holds it, shows that
-    // every earlier event has been handed over.
     let sentinel = place.root.join("churn-ended");
-    fs::create_dir_all(&sentinel).map_err(|e| e.to_string())?;
-    if look {
-        engine.set_attention(true).map_err(|e| e.to_string())?;
-    }
-    let seen = || in_picture(&engine, &sentinel);
-    let quiet = waited(place.patience, || seen() && idle(&engine)).ok_or("never idle")?;
+    let quiet = quiet_after_churn(&engine, place, &sentinel, look)?;
     let after = (engine.counters(), usage());
     let right = exactly_right(place)?;
     let _ = fs::remove_dir(&sentinel);
@@ -221,6 +212,25 @@ fn scanned(place: &Place) -> Result<Engine, String> {
     let ours = || engine.counters().full_scans > scans && idle(&engine);
     waited(place.patience, ours).ok_or("the first scan did not end")?;
     Ok(engine)
+}
+
+/// How long after a churn the engine is quiet, looked at from the end
+/// of the churn when `look`. FSEvents hands events over in order but
+/// late, so an engine idle right after the churn may still have the
+/// churn's last events to come: `sentinel`, a directory made now, once
+/// the picture holds it, shows that every earlier event was handed over.
+fn quiet_after_churn(
+    engine: &Engine,
+    place: &Place,
+    sentinel: &Path,
+    look: bool,
+) -> Result<Duration, String> {
+    fs::create_dir_all(sentinel).map_err(|e| e.to_string())?;
+    if look {
+        engine.set_attention(true).map_err(|e| e.to_string())?;
+    }
+    let quiet = || in_picture(engine, sentinel) && idle(engine);
+    waited(place.patience, quiet).ok_or_else(|| "never idle".to_owned())
 }
 
 /// No entries: only a directory's own totals are read.
