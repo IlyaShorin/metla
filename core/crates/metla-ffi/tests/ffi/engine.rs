@@ -264,7 +264,7 @@ fn a_quick_clean_takes_caches_only_and_reports() {
     assert_eq!(engine.last_report(), None);
     engine.quick_clean(vec![QuickCategory::AppCache]).unwrap();
     until(|| engine.last_report().is_some());
-    let Some(CleanupResult::Done { report }) = engine.last_report() else {
+    let Some(CleanupResult::Done { report, .. }) = engine.last_report() else {
         panic!("{:?}", engine.last_report());
     };
     assert_eq!(report.items.len(), 2);
@@ -294,7 +294,7 @@ fn a_confirmed_preview_moves_logs_through_the_apps_trash() {
     };
     engine.execute_confirmed(preview.id, confirmed).unwrap();
     until(|| engine.last_report().is_some());
-    let Some(CleanupResult::Done { report }) = engine.last_report() else {
+    let Some(CleanupResult::Done { report, .. }) = engine.last_report() else {
         panic!("{:?}", engine.last_report());
     };
     let refused = &report.items[0].outcome;

@@ -297,14 +297,45 @@ impl From<Leftovers> for Leftover {
 /// The last cleanup: its report, or why it did not run.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum CleanupResult {
-    Done { report: CleanupReport },
-    NotRun { reason: String },
+    Done {
+        report: CleanupReport,
+        totals: ReportTotals,
+    },
+    NotRun {
+        reason: String,
+    },
+}
+
+/// A report's three numbers and what went to the Trash, as the core sums
+/// them: found and removed are sums over the items, freed the measured
+/// change in free space (negative when it fell; at most `i64`'s range).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ReportTotals {
+    pub found: Bytes,
+    pub removed: Bytes,
+    pub moved_to_trash: Bytes,
+    pub freed: i64,
+}
+
+impl From<&CleanupReport> for ReportTotals {
+    fn from(report: &CleanupReport) -> ReportTotals {
+        let freed = report.freed().clamp(i64::MIN.into(), i64::MAX.into());
+        ReportTotals {
+            found: report.found(),
+            removed: report.removed(),
+            moved_to_trash: report.moved_to_trash(),
+            freed: i64::try_from(freed).unwrap_or_default(),
+        }
+    }
 }
 
 impl From<Result<CleanupReport, CleanError>> for CleanupResult {
     fn from(result: Result<CleanupReport, CleanError>) -> CleanupResult {
         match result {
-            Ok(report) => CleanupResult::Done { report },
+            Ok(report) => CleanupResult::Done {
+                totals: ReportTotals::from(&report),
+                report,
+            },
             Err(error) => CleanupResult::NotRun {
                 reason: error.to_string(),
             },

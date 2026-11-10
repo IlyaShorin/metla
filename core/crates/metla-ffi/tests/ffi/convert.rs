@@ -8,8 +8,9 @@ use std::sync::Arc;
 use metla_core::clean::{self, CleanError};
 use metla_core::domain::{
     Bytes, Category, CleanupReport, Confirmation, Coverage, DirId, DirRecord, DirState, Disposal,
-    Errno, FileKind, Gap, GapAt, GapKind, KindTotals, Leftovers, OwnTotals, Passed, PreviewId,
-    Reclaimable, RuleId, Separate, Skip, Stamp, Tally, TreeTotals, UnixTime,
+    Errno, FileKind, Gap, GapAt, GapKind, ItemReport, KindTotals, Leftovers, Outcome, OwnTotals,
+    Passed, PreviewId, Reclaimable, RuleId, Separate, Skip, SkipReason, Stamp, Tally, TreeTotals,
+    UnixTime,
 };
 use metla_core::engine::{
     self, Changed, Completeness, EngineError, EngineObserver as _, EngineState, Folder,
@@ -18,7 +19,8 @@ use metla_core::engine::{
 use metla_core::index::IndexError;
 use metla_ffi::{
     CandidatePage, CleanupResult, Confirmations, CoverageSummary, FailedPath, FolderItem,
-    FolderPage, MAX_PAGE, MetlaError, Overview, TrashHost, TrashOutcome, page, rule_titles,
+    FolderPage, MAX_PAGE, MetlaError, Overview, ReportTotals, TrashHost, TrashOutcome, page,
+    rule_titles,
 };
 
 use crate::support::Told;
@@ -264,15 +266,47 @@ fn confirmations_and_reports_cross_in_both_shapes() {
     );
     assert_eq!(leftover.mounts, [PathBuf::from("/r/m")]);
     assert!(leftover.cancelled);
+    let item = |found: u64, removed: u64, outcome: Outcome| ItemReport {
+        candidate: DirId(1),
+        path: PathBuf::from("/r/x"),
+        rule: RuleId::parse("log.user-library").unwrap(),
+        found: Bytes(found),
+        removed: Bytes(removed),
+        outcome,
+    };
     let report = CleanupReport {
         preview: PreviewId(3),
-        items: Vec::new(),
-        free_before: Bytes(1),
-        free_after: Bytes(2),
+        items: vec![
+            item(100, 90, Outcome::Removed),
+            item(50, 0, Outcome::MovedToTrash),
+            item(7, 0, Outcome::Skipped(SkipReason::NotConfirmed)),
+        ],
+        free_before: Bytes(1000),
+        free_after: Bytes(400),
+    };
+    let totals = ReportTotals {
+        found: Bytes(157),
+        removed: Bytes(90),
+        moved_to_trash: Bytes(50),
+        freed: -600,
     };
     assert_eq!(
         CleanupResult::from(Ok(report.clone())),
-        CleanupResult::Done { report }
+        CleanupResult::Done { report, totals }
+    );
+    let huge = CleanupReport {
+        preview: PreviewId(4),
+        items: Vec::new(),
+        free_before: Bytes(0),
+        free_after: Bytes(u64::MAX),
+    };
+    let CleanupResult::Done { totals, .. } = CleanupResult::from(Ok(huge)) else {
+        panic!("done");
+    };
+    assert_eq!(
+        totals.freed,
+        i64::MAX,
+        "measured beyond i64: the most it can say"
     );
     let refused = CleanupResult::from(Err(CleanError::UnknownPreview(PreviewId(9))));
     assert!(matches!(refused, CleanupResult::NotRun { reason } if !reason.is_empty()));
