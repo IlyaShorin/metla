@@ -629,8 +629,9 @@ therefore wait up to a latency plus a pause before it is applied, and
 **Attention.** `Engine::set_attention(true)` says someone looks (the
 app's window or panel is visible): changes are followed as
 `Interactive` follows them (its latency, settle times, batches and
-threads), what waits is due at once (`Coalescer::expedite`), and the
-pause is forgotten; full scans the engine starts on its own still
+threads), what waits is due at once (`Coalescer::expedite`, which also
+forgets how far busy directories had backed off, so changes that come
+in afterwards settle for the base time), and the pause is forgotten; full scans the engine starts on its own still
 follow the power profile. `set_attention(false)` returns to the power
 profile. Attention watches nothing that `Off` leaves alone.
 

@@ -414,3 +414,67 @@ engine is asked anything, and the first picture after one read of the
 index (0.1 s, `bench open`). Not measured: the app on the full disk
 (every app run in M5 uses a fixture), its memory over hours, and the
 worktree status pass at launch on the full disk from inside the app.
+
+## M6: opening without Git, looking at the picture
+
+**Conditions.** Same machine and disk (about 97 % full). Release build
+of `metla-cli` at 66877a2 (the measured code is that of b3662d7 for
+opening and of 42195b9 for `--look`). Read-only on `/`, no Full Disk
+Access, not root; data directories on the RAM disk, deleted afterwards.
+Busier than M5: a full mutation gate ran on two workers, and after a
+full-disk incident on the RAM disk `fseventsd` itself used a whole core
+and handed events over seconds late. One picture of `/` made with
+`watch --root / --profile interactive` (200 s: one full scan of
+2,238,911 directories; CPU 27.4 s user + 582.9 s system; index
+292.7 MB).
+
+**Opening.** M5 computed every linked worktree's status when the
+engine opened on a saved picture: about 38 s of CPU in Git processes at
+every launch (a 60 s `watch` of the saved picture cost 39 s). M6
+computes statuses only when the worktree list is first asked for
+(b3662d7; a test with a Git that logs its calls pins that opening and
+`snapshot()` start none).
+
+| measurement (whole process, Git included, `/usr/bin/time -l`) | M5 (d73b7fd) | M6 |
+|---|---:|---:|
+| `bench open` (open + first snapshot), three runs | — ¹ | 0.16 / 0.50 / 0.22 s wall, 0.04 s user + 0.02 s system each, 22.2 MB |
+| `watch --profile background --seconds 60` on the saved picture | 39 s of CPU | 0.57 s user + 0.64 s system = 1.2 s, 23.1 MB |
+
+¹ Not measured this way in M5: `bench open` exits right after the
+snapshot, before a background status pass would have spent much; the
+60 s `watch` shows what an opening cost. The status
+pass now runs when the app first shows the worktree table, as before
+two Git calls at a time at the profile's priority.
+
+**Looking at the picture.** `set_attention(true)` (the app's window or
+panel opens) makes what waits due at once. Two measurements:
+
+* *What waits.* A change reported to an engine on a fixture
+  (`Watching::Manual`, so fseventsd's delay is not in it) while the
+  Background profile holds it (settle 30 s, pause 60 s); 2 s later
+  `set_attention(true)`: the picture was current after 3 to 4 ms, five
+  rounds of five (a probe program against metla-core at 42cb5a0, not in
+  the repository; release build).
+* *After a churn, on real FSEvents.* `bench churn --seconds 120 --files
+  250 --profile background --look` on a fixture: the picture exactly
+  right 30.9 s after the churn ended at 42195b9, and 30.8 s at 42cb5a0
+  (after `expedite` forgets the busy directories' back-off; one run
+  each). Both runs had fseventsd at a full core, handing the churn's
+  events over seconds late and dropping some: the engine did 2 full
+  scans of the fixture, and a full rescan's wait, like any other, backs
+  off with each late event up to Interactive's cap of 30 s, which is
+  what the 30.8 s is. Without attention (M5) the same picture was right
+  after 180 s.
+
+| run | files created + deleted | churn CPU | engine batches / rescans / full scans | events | engine CPU | right after the churn |
+|---|---:|---:|---:|---:|---:|---:|
+| M5 d73b7fd, not looked at | 325,250 + 325,250 | 39.0 s | 2 / 2 / 1 | 652,015 | 3.6 s | 180.1 s |
+| 42195b9, looked at | 305,750 + 305,750 | 39.0 s | 17 / 109 / 2 | 570,655 | 2.1 s | 30.9 s |
+| 42cb5a0, looked at | 301,000 + 301,000 | 39.1 s | 2 / 2 / 2 | 556,509 | 1.8 s | 30.8 s |
+
+So a change that waits when someone looks shows at once; a churn that
+fseventsd itself is still delivering shows once it has been delivered
+and has settled, within Interactive's 30 s cap. The bench now waits
+for a directory made after the churn to appear before it calls the
+engine quiet (66877a2): with fseventsd late, being idle right after the
+churn did not mean that the churn's events had arrived.
