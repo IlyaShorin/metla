@@ -501,6 +501,9 @@ fn a_cleanup_runs_on_the_engine_and_the_picture_follows_it() {
     settled(&engine);
     let before = engine.snapshot().unwrap().totals.unwrap();
     let listed = engine.candidates(None, ALL).unwrap();
+    let totals = engine.category_totals().unwrap();
+    let counts: Vec<u64> = Category::ALL.iter().map(|c| totals[c].count).collect();
+    assert_eq!(counts, [1, 0, 0, 1, 0, 0], "an app cache and a log");
     let ids: Vec<DirId> = listed.iter().map(|l| l.candidate.id).collect();
     let preview = engine.preview(&ids).unwrap();
     assert_eq!(preview.items.len(), 2);

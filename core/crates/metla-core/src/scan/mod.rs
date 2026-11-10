@@ -139,10 +139,6 @@ impl ScanOptions {
         &self.root
     }
 
-    pub fn scope(&self) -> &ScanScope {
-        &self.scope
-    }
-
     /// What the root inherits from the unread directories above it.
     pub fn root_inherits(&self) -> Inherited {
         Walk::root_inherited(self)
