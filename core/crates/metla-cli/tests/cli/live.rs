@@ -273,6 +273,14 @@ fn watch_scans_a_new_root_and_prints_every_batch() {
 }
 
 #[test]
+fn bench_open_without_a_picture_counts_no_directories() {
+    let bed = Bed::new();
+    let (code, opened, err) = bed.run("bench open");
+    assert_eq!((code, err.as_str()), (0, ""), "{opened}");
+    assert!(opened.contains(" for 0 directories; "), "{opened}");
+}
+
+#[test]
 fn bench_churn_follows_the_churn_and_ends_exactly_right() {
     let bed = Bed::new();
     let (code, out, err) = bed.run("bench churn --seconds 1 --files 20");
