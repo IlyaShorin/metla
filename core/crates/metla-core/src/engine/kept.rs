@@ -176,6 +176,25 @@ fn reason_field(reason: &Reason) -> Vec<u8> {
     }
 }
 
+/// A flag written as `0` or `1`.
+fn flag(fields: &mut Fields) -> Option<bool> {
+    match fields.text()?.as_str() {
+        "0" => Some(false),
+        "1" => Some(true),
+        _ => None,
+    }
+}
+
+/// A count, then that many paths each with its errno.
+fn failed_paths(fields: &mut Fields) -> Option<Vec<(PathBuf, Errno)>> {
+    let count: usize = fields.number()?;
+    let mut first = Vec::with_capacity(count.min(Leftovers::FIRST));
+    for _ in 0..count {
+        first.push((fields.path()?, Errno(fields.number()?)));
+    }
+    Some(first)
+}
+
 /// A line's fields, read one after another.
 struct Fields(std::vec::IntoIter<Vec<u8>>);
 
@@ -226,13 +245,21 @@ fn item(line: &[u8]) -> Option<ItemReport> {
 }
 
 fn outcome(fields: &mut Fields) -> Option<Outcome> {
-    let outcome = match fields.text()?.as_str() {
+    let tag = fields.text()?;
+    match tag.as_str() {
+        "skipped" => skip(fields).map(Outcome::Skipped),
+        "partial" => leftovers(fields).map(Outcome::Partial),
+        _ => plain(&tag, fields),
+    }
+}
+
+/// An outcome that carries at most a message.
+fn plain(tag: &str, fields: &mut Fields) -> Option<Outcome> {
+    let outcome = match tag {
         "removed" => Outcome::Removed,
         "gone" => Outcome::AlreadyGone,
         "trash" => Outcome::MovedToTrash,
         "failed" => Outcome::Failed(fields.text()?),
-        "skipped" => return Some(Outcome::Skipped(skip(fields)?)),
-        "partial" => return Some(Outcome::Partial(leftovers(fields)?)),
         _ => return None,
     };
     fields.end().map(|()| outcome)
@@ -266,16 +293,8 @@ fn blocked(fields: &mut Fields) -> Option<SkipReason> {
 
 fn leftovers(fields: &mut Fields) -> Option<Leftovers> {
     let failures = fields.number()?;
-    let cancelled = match fields.text()?.as_str() {
-        "0" => false,
-        "1" => true,
-        _ => return None,
-    };
-    let count: usize = fields.number()?;
-    let mut first = Vec::new();
-    for _ in 0..count {
-        first.push((fields.path()?, Errno(fields.number()?)));
-    }
+    let cancelled = flag(fields)?;
+    let first = failed_paths(fields)?;
     let mounts = std::iter::from_fn(|| fields.path()).collect();
     Some(Leftovers {
         failures,
