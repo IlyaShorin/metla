@@ -15,8 +15,9 @@ Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 * **Respect the dependency rule** in ARCHITECTURE.md §2. `domain` and
   `rules` stay pure.
 * **Make illegal states unrepresentable** rather than checking for them.
-* No `unsafe` outside `fs` and `watch`'s system adapters; every `unsafe`
-  block states its invariant. No `#[allow]` to silence a lint without a
+* No `unsafe` outside `fs` and `watch::sys` (the FSEvents adapter, which
+  holds every foreign declaration of the watcher); every `unsafe` block
+  states its invariant. No `#[allow]` to silence a lint without a
   reason next to it.
 
 ## Commits
@@ -28,8 +29,14 @@ body says why, what changed and how it was proved (test names, tool output).
 
 ```
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/quality.sh        # crapper, dryer, mutator
+cargo test -p metla-core --test core -- --ignored   # slow: real FSEvents latency
+scripts/quality.sh        # all of the above once, then crapper, dryer, mutator
 ```
+
+Tests that wait for real FSEvents latency are `#[ignore]`d so the suite
+the mutator runs for every mutant stays fast; `scripts/quality.sh` runs
+them once. The fast suite drives the stream with a flush and the engine
+with millisecond settle times instead.
 
 Every function has CRAP below 10, no duplication scores 0.8 or higher, no
 mutation site is uncovered and no mutant survives. The tools live at

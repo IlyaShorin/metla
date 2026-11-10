@@ -44,11 +44,23 @@
 | **Live tree** | The directories at most three levels below the root, with counters that grow while a scan runs, for showing progress. Bounded in size. |
 | **Directory facts** | What the walker knows about a directory it has just read: its path, its entries, the parent's and grandparent's marker entries, whether it is inside a Git repository, and its probes. The input of the classifier. |
 | **Unaccounted** | Used space on the scanned volume that the scan did not find: used (total − available) minus the scanned tree size. Includes other volumes of the container, snapshots, purgeable space and gaps; negative when clones are counted twice. |
-| **Freshness** | When the index was last fully scanned and last updated, and how many changes are pending. |
+| **Freshness** | When the picture was last fully scanned and last updated, how many changes are pending, what the engine is doing, whether the picture is complete, whether changes are followed and whether a full scan is needed. The UI reads it; it never guesses. |
+| **Engine** | The one long-lived object that owns the index, answers from the saved picture at once, and keeps the picture fresh: full scans, rescans and cleanups run on its scheduler, one at a time. |
+| **Scheduler** | The engine's one thread that changes the picture. It sleeps until a command comes or the coalescer's next task is due; it never polls. |
+| **Wake-up** | One turn of the scheduler: a command, a batch of events or a deadline. An idle engine has none. |
 | **Coalescer** | The pure state machine that turns file-system events into a bounded set of due rescan tasks. |
-| **Settle time** | How long a directory must be quiet before it is rescanned. Grows while the directory keeps changing. |
-| **Rescan task** | A request to re-read one directory (*shallow*) or a whole subtree (*recursive*). |
-| **Power profile** | `Interactive`, `Background`, `Saver` or `Off`: how much CPU and I/O the engine may use. |
+| **Settle time** | How long a directory must be quiet before it is rescanned. Grows while the directory keeps changing, up to the *cap*; nothing waits longer than one cap. |
+| **Batch** | The due tasks the coalescer hands out at once (at most the profile's batch size), applied one after another, deepest first. |
+| **Rescan task** | A request to re-read one directory (*shallow*), a whole subtree (*recursive*), or the whole root (*full*). |
+| **Shallow rescan** | Re-reading one directory and comparing it with what the picture holds: unchanged subdirectories keep their stored subtrees, new or changed ones are walked. |
+| **Origin** | Where a walk starts: the scan root, or one directory of a picture, which inherits from the stored rows above it what an unbroken walk would have handed down. |
+| **Passed down** | What a read directory hands to the classification of the directories below it: its marker entries, whether it is in a repository or in a candidate, and its area. Stored in its row. |
+| **Change stamp** | A directory's ctime in nanoseconds. It moves with every change of the directory's entries, permissions or owner; an unchanged stamp means an unchanged directory. |
+| **In-place update** | Applying one rescan to the picture in one transaction; the totals above, the bytes by kind and the coverage are recomputed from the rows. |
+| **Event history** | The FSEvents record of changes on a volume, with ids and a UUID. The engine stores the id after which nothing is pending; a restart resumes there when the UUID is the same and the id is not ahead. Otherwise the history is *lost* and a full scan is needed. |
+| **Hold** | After the user cancels a scan, the engine starts no full scan on its own until the user starts one. |
+| **Removability** | What a list shows about a worktree: unknown (not computed yet), removable, or blocked with the reasons. For display only. |
+| **Power profile** | `Interactive`, `Background`, `Saver` or `Off`: how many threads, how long changes settle, how big a batch, the pause between batches, whether the engine may start a full scan on its own and at what priority. One table. |
 | **Worktree status** | The result of inspecting a linked Git worktree with stock Git commands: removable, or blocked for at least one reason (uncommitted, untracked, unpushed, locked, prunable, an operation in progress, in use, managed by another tool, not listed, inspection failed). |
 | **Managed worktree** | A worktree owned by another tool: Codex Desktop (`~/.codex/worktrees/…`) or Claude Code (`…/.claude/worktrees/…`). Shown, never removed; its build output is never preselected and is cleaned only when confirmed by itself. |
 | **Cleaned directory** | A directory a cleanup acted on since the last scan; the index offers nothing at or below it until the next scan. |

@@ -63,10 +63,15 @@ from the engine, called off the main thread.
 The rule is one table in `core/crates/metla-core/tests/core/architecture.rs`,
 which fails when a module's source refers to a module (`crate::x`, grouped
 imports, or `super::` climbing out of the module) the table does not allow.
-Until `engine` exists, `metla-cli` calls `scan`, `index`, `rules`, `fs`,
-`git` and `clean` directly; that is the one temporary exception. `clean`
-does not read the index: its caller passes the candidates, the exclusions
-in force and the time in, and records the outcome in the index itself.
+`metla-cli` reaches past the engine only for low-level commands kept for
+measurement and inspection (`scan`, `top`, `ls`, `candidates`, `summary`,
+`exclude`) and for `clean`, which still orchestrates a fixture cleanup
+itself; `watch` and `bench` run the engine. `clean` does not read the
+index: its caller passes the candidates, the exclusions in force and the
+time in, and records the outcome in the index itself. The `watch` module
+is split: the coalescer and the resume decision are pure and use
+`domain` only; `watch::sys` holds every foreign declaration of the
+FSEvents stream.
 
 ## 3. Domain model
 
@@ -137,11 +142,16 @@ item not covered is `Skipped(NotConfirmed)`.
 
 Other core types: `Candidate` (id, path, rule, size, file count, activity,
 device and inode for revalidation, the managing tool if any, preselected),
-`Verdict` (Git's word on project output), `Exclusion` (an absolute
+`Verdict` (Git's word on project output), `Reclaimable` (what cleaning
+the preselected candidates would free, and what it would only move to
+the Trash), `Exclusion` (an absolute
 path; `hides(path)` is the one place exclusion semantics live), `FileKind`
 and `KindTotals` (bytes per kind for a whole scan),
-`ScanState`, `Coverage` (what the analysis could not see), `Freshness`
-(when the picture was last true), `WorktreeStatus` (`Removable { branch }`
+`Coverage` (what the analysis could not see), `Passed` (what a read
+directory hands down to the classification below it), `Stamp` (an
+inode's change time in nanoseconds), `RescanTask` (`Shallow(dir)`,
+`Recursive(dir)`, `Full`), `Rescanned` (one rescan's rows and removals),
+`WorktreeStatus` (`Removable { branch }`
 or `Blocked(Reasons)`, never both, the reasons never empty),
 `CleanupPreview` (id, items with warnings, rejected candidates with the
 reason), `Outcome` (`Removed`, `Partial(Leftovers)`, `Skipped(SkipReason)`,
@@ -241,6 +251,23 @@ file whose `schema_version` is not 2 (an M1 index included), or that has
 no Metla metadata, fails with `IndexError::UnknownSchema` instead of
 misreading it; the CLI's indexes are disposable and are rebuilt by a scan.
 
+Schema version 4 (M4) keeps in each row what its directory needs to be
+rescanned on its own: `mtime` and `changed` (the directory's own
+modification time and ctime in nanoseconds, as listed in its parent),
+`own_mtime` (its newest file), `kinds` (its own bytes per file kind:
+for every kind with bytes, a code byte and the bytes as LEB128), and
+what it hands down to the classification below it — `flags` bit 8 in a
+repository, bit 9 in a candidate, bits 10-11 its area, and `markers`
+(the marker names, each followed by a NUL byte). Both blobs are NULL
+when empty. It adds the partial index `dirs_unread` on the rows that
+were not read, and `meta` keys `next_id` (ids are never given out twice
+within a picture), `picture_updated` (the last in-place update) and
+notes (`note:<key>`, the engine's own records: the last applied event
+id with the volume's FSEvents UUID, the settings), kept apart from the
+index's keys. An index of another schema version is replaced by the
+engine (it holds nothing a scan cannot make again); a file that is not
+an index is refused.
+
 Schema version 3 (M3) adds `dirs.verdict` (Git's verdict on project
 output: 0 `Verified`, 1 `NotIgnored`, 2 `HasTrackedFiles`, 3
 `Unverifiable`; NULL until Git was asked), the `stale` table and the
@@ -254,8 +281,9 @@ when a preview is made and again before removal.
   for a directory that was not read. `flags` holds the directory's state:
   0 when read, a gap code (1 denied, 2 failed, 3 vanished, 4 cancelled) or a
   skip code (16 other volume, 17 mount point, 18 dataless, 19 excluded) in
-  the low byte, and for a failure its errno above it. The codes are part of
-  the file format and are pinned by a test.
+  the low byte, for a failure its errno above it, and for a read
+  directory what it hands down (above). The codes and blobs are part of
+  the file format and are pinned by tests.
 * **Atomic replacement.** `IndexWriter::start_scan` creates a staging table
   `dirs_next` and increments `scan_seq` in one committed transaction before
   any row is written. Rows arrive in batches over a bounded channel and are
@@ -291,9 +319,28 @@ when a preview is made and again before removal.
 * **After a cleanup** the caller records every item whose outcome may
   have changed the disk (anything but `Skipped`) with `mark_cleaned`; the
   index stops offering those directories and everything below them until
-  the next scan replaces the picture. Ancestors' totals are left as they
-  were until then (M4's incremental rescans will refresh them); this is the
-  simplest option that never advertises a removed candidate.
+  they are rescanned. The engine then rescans each cleaned item's parent
+  shallowly: the cleaned child's stamp moved (or it is gone), so it is
+  walked again, its row replaced and its `stale` mark dropped, and every
+  total above it is recomputed.
+* **In-place updates.** `IndexEditor::apply(picture, Rescanned, now)`
+  applies one rescan in one transaction, guarded by the picture id:
+  rows of the subtrees that went are deleted (with their cleaned marks;
+  the subtree is walked through `dirs_by_parent` and each row looked up
+  by id, never by scanning the table),
+  re-read rows replace the row with their id, new rows are inserted;
+  then the tree totals of every directory above the rescanned one are
+  recomputed from its own totals and its children's (a maximum such as
+  the newest time cannot be updated by a difference), the bytes by kind
+  are adjusted by the removed and added rows' own kinds, and the
+  coverage is counted again from the unread rows (`dirs_unread`; a gap's
+  depth and path from its parent links). New rows have no verdict.
+* **One writer, several handles.** `IndexWriter` keeps the scan session;
+  its `IndexEditor` (cloneable) sends edits from other threads to the
+  same writer thread: in-place updates, exclusions, verdicts, cleaned
+  directories, notes. Dropping the writer stops the thread; editors
+  then get `WriterGone`. `ScanWriter::abandon` drops a scan's staging
+  table and makes the picture current again.
 
 ## 6. Scanning
 
@@ -350,41 +397,171 @@ How the walk is built (M1):
   summary. The scan root inherits the area of the directories above it but
   not their repository or candidate status.
 * System calls that fail with `EINTR` (`open`, `openat`, `fstatat`,
-  `fstat`, `readdir`, `read`) are repeated instead of turning the
-  directory into a gap.
+  `fstat`, `readdir`, `read`, `getattrlistbulk`) are repeated instead of
+  turning the directory into a gap.
+
+M4 changes:
+
+* **Listing with `getattrlistbulk`.** A directory is listed with
+  `getattrlistbulk` (name, error, device, type, modification and change
+  time, flags, file id; link count and mount status for directories;
+  link count and allocated data size for everything else), packed with
+  `FSOPT_PACK_INVAL_ATTRS` and read by the returned attribute set. A
+  mount point (the call describes the directory underneath), a firmlink
+  (it describes the link, not its target) and an entry with an attribute
+  the call could not give are asked with `fstatat`, exactly as before; a
+  file system without the call (`ENOTSUP`) is listed with `readdir` and
+  `fstatat`, which stays available (`ScanOptions::classic`, `scan
+  --classic`) for comparison. A directory's own link count is not used
+  and is one in both listings. Tests compare both listings field by
+  field on synthetic trees and on `/` and `/Volumes`.
+* **Origins.** A walk starts at an origin: the scan root, or one
+  directory of a picture, which inherits from the stored rows above it
+  what an unbroken walk would have handed down (`scan::Inherited`: its
+  parent's `Passed` and its grandparent's markers). The root's times are
+  read (`lstat`) when each scan starts.
+* **Rescans.** `scan::rescan(target)` opens the target from the root
+  down without following a symlink and reads its metadata as listed in
+  its parent; a target that is no longer a directory there is reported,
+  and its parent is rescanned instead. A *recursive* rescan walks the
+  subtree again (the target keeps its id; everything below gets new
+  ids). A *shallow* rescan re-reads the directory and compares it with
+  its stored row and children: if it now hands down something else (its
+  rule, markers, repository, candidate or area changed) every child is
+  walked again; otherwise a child that is the same directory (device,
+  inode) with the same change stamp and modification time, read or
+  skipped for the same reason as before, keeps its stored subtree, and
+  only new, replaced, unread or changed children are walked. The change
+  stamp (ctime, nanoseconds) moves with every change of a directory's
+  entries, permissions or owner, so a permission change is seen even
+  when the event names only the parent, and changes within one second
+  are not missed. A rescan's rows are held in memory until they are
+  written in one transaction; a recursive rescan of more than
+  `MAX_SUBTREE` (100,000) directories, or of the root, is a full scan
+  instead.
+* **Throttling.** `ScanOptions::throttled` runs the scan threads at
+  background priority (`PRIO_DARWIN_BG`: CPU and I/O yield to everything
+  else).
 
 ## 7. Watching and incremental refresh
 
-* One FSEvents stream on the root, directory granularity, with a latency of
-  a few seconds. The last processed event id and the volume UUID are stored
-  in `meta`. On the next launch the stream resumes from that id, so changes
-  made while Metla was not running are replayed instead of rescanning.
-* The **coalescer** is a pure state machine: events in, due rescan tasks
-  out. It
-  * merges events per directory and drops children of a recursive task;
-  * waits for a directory to be quiet (*settle time*) and backs off when a
-    directory keeps changing, with a maximum latency, so an active build is
-    not rescanned continuously;
-  * collapses many dirty siblings into one recursive task and, past a hard
-    cap, into "needs full rescan" — its memory is bounded;
-  * turns `MustScanSubDirs`, dropped-event flags, id wrap and a changed
-    volume UUID into the corresponding recursive or full rescans.
-* The engine processes due tasks in budgeted slices and yields between them.
-* A shallow rescan re-reads one directory and applies the delta to its
-  ancestors. Added subdirectories are walked; removed ones are deleted.
-* Metla ignores events under its own data directory.
+* **The stream** (`watch::sys`, every FFI declaration of the module):
+  one FSEvents stream on the root, directory granularity, `WatchRoot`,
+  not `NoDefer`, a latency of about a second, delivered on a serial
+  dispatch queue of its own. On `/` an event in a firmlinked area is
+  reported by its path under `/`, which is why the coalescer may ignore
+  the firmlink targets inside `/System/Volumes/Data` that the scan scope
+  excludes.
+* **Resuming.** After every batch the engine stores the id after which
+  nothing is pending (`Coalescer::settled`, or the id the stream started
+  after when no event came) with the volume's FSEvents UUID, as an index
+  note. On opening, and whenever watching starts again, the stream
+  starts after that id when `watch::resume_after` allows it: the same
+  UUID, and an id not ahead of the current one. Otherwise — or without a
+  picture, or when the picture's latest scan never finished — the engine
+  needs a full scan, and says so in the first snapshot.
+* **The coalescer** is a pure state machine (`watch::Coalescer`): events
+  `{ path, flags, id }` at a time passed in, due `RescanTask`s out. It
+  * keeps events per directory; a change is due after a *settle time* of
+    quiet; each later event (events handed over together count once)
+    restarts the wait and multiplies the settle time by the factor, up to
+    the cap, and nothing waits longer than one cap after its first event,
+    so a directory that never stops changing is rescanned once per cap; a
+    directory rescanned less than a cap ago starts from its last settle
+    time multiplied again (remembered for as many directories as are
+    tracked);
+  * makes `MustScanSubDirs` a recursive task, which absorbs everything
+    below it; turns more than `collapse` changed children of one
+    directory into one recursive task for it; past `max_dirs` tracked
+    directories collapses the deepest into their parents; a recursive
+    task at the root, lost events (`UserDropped`, `KernelDropped`),
+    wrapped ids and a changed root are one full rescan, which replaces
+    the rest;
+  * re-reads the directory holding a mount point when a volume is
+    mounted or unmounted;
+  * drops events outside the root, inside the engine's data directory
+    and inside the scope's excluded paths;
+  * hands out at most a batch of due tasks at a time, deepest first, and
+    says when the next one is due (`next_deadline`); `Off` forgets
+    everything and hands out nothing.
+* **Applying a task** (`engine::refresh`): the task's directory is found
+  in the picture (one the picture does not have yet is found by a
+  shallow rescan of its nearest ancestor that it has; one that was not
+  read is walked whole), rescanned with what the picture says about it,
+  and the change applied in one transaction. Applying the tasks produced
+  by any sequence of changes leaves exactly what a full scan of the
+  changed tree writes — rows, totals, bytes by kind, coverage and
+  candidates (a seeded property test). Events inside ignored paths are
+  the exception, by design.
+
+### The engine
+
+`engine::Engine::open(EngineConfig { root, home, user, data_dir, git,
+production, trash, watching, profiles, profile })` opens (or replaces)
+the index in `data_dir` and answers `snapshot()` at once from the saved
+picture. API calls read through a connection of their own and return at
+once; everything that changes the picture runs on one scheduler thread,
+one thing at a time:
+
+* full scans: the user's (`start_scan`) with the `Interactive` profile's
+  threads, the engine's own when it needs one and the profile allows
+  it; a cancelled scan with a picture to fall back on is given up (the
+  picture stays current), the first one becomes a partial picture; after
+  the user cancels, no full scan starts on its own until the user starts
+  one;
+* batches of due tasks, the profile's pause apart; a task that needs a
+  full scan makes one;
+* cleanups (`execute_confirmed`, `quick_clean`): nothing else runs
+  meanwhile; then the cleaned directories are marked and their parents
+  rescanned shallowly;
+* after each of these: Git's verdicts on project output that has none
+  yet (the only rows without one are new or re-read), worktree statuses
+  where something changed, the stored event id, and a notification.
+
+The scheduler sleeps on its command channel until the coalescer's next
+deadline; with nothing due it does not wake up (`Counters::wakeups`).
+The observer is told what changed (`Changed::{Picture, Activity,
+Worktrees, Cleanup, Settings, Exclusions}`), never the data.
+
+`snapshot()` answers the Overview; `freshness()` only how fresh the
+picture is (it reads no candidate), for a status line that follows
+every batch. `Freshness` is explicit: the last full scan, the last update, pending
+changes, `EngineState` (`Idle`, `Scanning { progress, interactive }`,
+`Updating { pending }`, `Cleaning`, `Paused(profile)` when a needed full
+scan waits for the profile, `Off`), the picture's completeness
+(`Missing`, `Partial`, `Complete`), whether changes are followed, and
+whether a full scan is needed; `is_current()` holds only when all of
+them say so.
+
+Worktree statuses for lists are computed after a scan and after changes
+below a worktree on a background-priority thread, two Git calls at a
+time, abandoned when a newer request comes or the engine closes, kept
+per picture and served with the candidate page (`Removability::{Unknown,
+Removable, Blocked}`). They are for display only: a preview and an
+execution compute them again.
+
+Settings (background analysis, battery behaviour, ages, hotkey mode,
+quick categories) are kept as an index note, one `key=value` line each.
 
 ### Power profiles
 
-| Profile       | When                              | Threads | Priority                | Tick / settle |
-|---------------|-----------------------------------|---------|-------------------------|---------------|
-| `Interactive` | user pressed Scan                 | cores−2 | user-initiated          | n/a           |
-| `Background`  | on AC power                       | 2       | utility                 | short         |
-| `Saver`       | on battery or Low Power Mode      | 1       | background, throttled I/O | long        |
-| `Off`         | background analysis disabled      | 0       | —                       | no watching   |
+One table, `Profiles::standard(cores)`; the app picks the profile from
+the power state, the engine owns what each means. The thread counts
+come from the thread sweep in PERFORMANCE.md.
 
-The Swift side observes power state and tells the engine; the engine owns
-what each profile means.
+| Profile       | Threads | Settle / cap | Batch | Tracked dirs | Pause  | Starts full scans | Priority |
+|---------------|---------|--------------|-------|--------------|--------|-------------------|----------|
+| `Interactive` | cores−2, at most 8 | 1 s / 30 s | 256 | 4,096   | none   | yes               | normal   |
+| `Background`  | 2       | 2 s / 60 s   | 64    | 4,096        | 0.1 s  | yes               | normal   |
+| `Saver`       | 1       | 10 s / 300 s | 16    | 1,024        | 1 s    | no (`Paused`)     | background, throttled I/O |
+| `Off`         | 0       | —            | —     | —            | —      | no                | — (nothing is watched) |
+
+Every profile multiplies the settle time by 2 per event and collapses
+more than 32 changed children. `Off` stops watching at once and cancels
+a full scan the engine started on its own (never the user's); turning
+it on again resumes the stored history or asks for a full scan. With
+background analysis switched off in the settings the profile in force
+is `Off`.
 
 ## 8. Rules
 
@@ -570,6 +747,11 @@ another user owns it stays `InspectionFailed` (a worktree) or
   <dir>` builds one.
 * The app honours `METLA_ROOT` and `METLA_DATA_DIR` so it can be driven
   against a fixture with a separate index.
+* The engine can run on the real root for measurements (scan, watch,
+  snapshot): without the `Production` capability its cleaner refuses a
+  root without the fixture marker, and the CLI's engine moves nothing to
+  the Trash. `bench churn` and `bench refresh` write only into a root
+  marked as a fixture.
 * Scanning the real disk is read-only; real paths never go into the
   repository, test fixtures or screenshots.
 

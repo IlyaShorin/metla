@@ -159,3 +159,156 @@ called directly rather than through the `/usr/bin/git` shim, with
   chain took 5.8 s at 1,600 levels, 0.5 s at 800, 0.03 s at 400), whether
   or not the ancestors' descriptors are held open. Real trees are rarely
   more than a few dozen levels deep.
+
+## M4: getattrlistbulk, thread sweep, index growth
+
+**Conditions.** Same machine (Apple M3 Pro, 6 + 6 cores, 36 GB), macOS
+26.6.2, the disk 99 % full (about 1.5 GB available). Release build of
+`metla-cli` at 0dfcd14, `scan --root / --index <RAM disk> --json` with
+the rules for the user's home, read-only, no Full Disk Access, not
+root. Indexes on the RAM disk, deleted afterwards. Warm cache (the
+disk had been scanned minutes before). The machine was **not** idle:
+the 1-minute load average was 7 to 10 during the runs (a music player's
+renderer at about 100 % of a core, fseventsd up to 160 %, the window
+server about 50 %); runs alternate between the two listings so that
+load falls on both, and the spread between equal runs is shown.
+
+| | classic, run 1 | bulk, run 1 | classic, run 2 | bulk, run 2 | bulk, run 3 |
+|---|---:|---:|---:|---:|---:|
+| threads | 10 | 10 | 10 | 10 | 10 |
+| scan wall time | 121.2 s | 88.5 s | 113.1 s | 103.7 s | 109.6 s |
+| process wall time (with index swap and Git pass) | 132.6 s | 98.8 s | 123.6 s | 117.7 s | 122.8 s |
+| CPU user / system | 27.3 / 551.6 s | 16.4 / 338.2 s | 23.4 / 466.5 s | 20.0 / 408.9 s | 22.0 / 464.4 s |
+| directories | 2,230,875 | 2,233,400 | 2,230,876 | 2,233,399 | 2,233,400 |
+| files | 12,864,915 | 12,874,708 | 12,864,904 | 12,874,648 | 12,874,662 |
+| scanned (allocated) | 449.56 GB | 453.17 GB | 449.56 GB | 453.17 GB | 453.18 GB |
+| denied gaps | 409 | 495 | 409 | 495 | 495 |
+| peak RSS | 135.2 MB | 136.0 MB | 133.2 MB | 135.6 MB | 130.4 MB |
+| index file after the run | 292.6 MB | 292.2 MB | 292.2 MB | 508.8 MB | 509.4 MB |
+
+* **Speed.** With getattrlistbulk the scan's wall time fell from 117.2 s
+  (mean of the two classic runs) to 100.6 s (mean of three bulk runs),
+  −14 %, and the process's CPU time (scan, index swap and Git pass) from
+  534 s to 423 s, −21 % (system time 509 s to 404 s, user time 25.3 s to
+  19.5 s). The best bulk run (88.5 s, −25 %)
+  came while the load was lowest; with this much other load the means
+  are the fairer figure. The walk stays bound by the kernel: system time
+  is still about 20 times user time.
+* **The two listings on the real disk.** They agree on synthetic trees
+  and on `/` and `/Volumes` entry by entry (tests), and two runs of each
+  agree with each other here, but they differ from each other in one
+  way: 32 directories that `lstat` refuses (EPERM; protected locations,
+  without Full Disk Access), in 17 parents. The classic listing fails
+  its whole parent on such an entry, so those 17 parents become denied
+  gaps and nothing below them is counted; getattrlistbulk describes the
+  entry, so the bulk scan reads the 17 parents (2,525 more directories,
+  9,800 more files, 3.6 GB more) and records the 32 protected
+  directories as denied gaps instead. The 32 refused `lstat`s and their
+  17 parents were counted read-only with a script outside the repository
+  (no paths kept); that the classic scans recorded exactly those parents
+  as gaps is inferred from the code, not read from their indexes, which
+  were already deleted. The counts fit: 409 − 17 + 32 = 424, and the
+  other 71 of the 495 denied directories lie below the 17 parents, where
+  the classic scans never reached. The bulk result is the more complete
+  one.
+* **Index growth.** Three consecutive scans into one index file: 292.2,
+  508.8 and 509.4 MB. A scan writes its rows into a staging table while
+  the old picture stays readable, so the file holds two pictures once;
+  the third scan reuses the second's free pages. Growth is bounded at
+  about 1.75 times one picture; in-place updates reuse free pages as
+  well. No change was made.
+
+**Thread sweep** (bulk listing, same conditions, one run each):
+
+| threads | 2 | 4 | 6 | 8 | 10 (mean of 3) |
+|---|---:|---:|---:|---:|---:|
+| scan wall time | 223.1 s | 130.6 s | 115.5 s | 104.5 s | 100.6 s |
+| CPU user + system (process) | 215.6 s | 236.2 s | 312.7 s | 360.8 s | 423.3 s |
+| peak RSS | 127.9 MB | 126.6 MB | 130.3 MB | 131.3 MB | 134.0 MB |
+
+* Past 6 threads the scan gains little (115.5 → 100.6 s) and burns much
+  more CPU (313 → 423 s): threads wait on each other in the kernel.
+  **Interactive** therefore uses `min(cores − 2, 8)` threads: 8 here,
+  104.5 s, 15 % less CPU than 10 for 4 % more time. **Background** keeps
+  2 threads: the cheapest scan in CPU (216 s), at the cost of time
+  (223 s), which a background scan can afford; **Saver** keeps 1.
+
+## M4: the engine
+
+**Conditions.** Same machine, macOS and load as above (load average 4.5
+to 9). Release build of `metla-cli` (commit given per row), FSEvents
+latency 1 s, the standard profile table. The engine's index of `/` is
+the third bulk scan's index copied into a data directory on the RAM
+disk (deleted afterwards). Read-only on `/`; churn and refresh write
+only inside a fixture (`fixture create`) on the RAM disk, with the
+engine's data directory beside it.
+
+**Opening.** `bench open`: opening the engine on the saved picture of
+the full disk (2,233,400 directories) and reading the first snapshot
+(totals, categories, what can be freed, kinds, coverage, freshness):
+0.19 s wall, 0.12 s CPU, peak RSS 21.2 MB (0dfcd14); 0.2 s and
+23.7 MB at 64afccd. No scan runs: the snapshot comes from the index.
+
+**Idle.** `watch --root / --profile background --seconds 600`: the
+engine follows the whole disk for ten minutes of ordinary desktop use
+(a music player, a browser, chat and editor windows, this work's own
+file edits; not quiet), resuming from the event id an earlier run
+stored, so no full scan runs. Wake-ups are the scheduler's turns.
+
+| build | events | rescans (batches) | full scans | wake-ups | CPU user + system | peak RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| 0dfcd14 | 3,858 | 937 (465) | 0 | 974 | 64.5 + 39.6 s = 104.1 s (17 % of a core) | 54.1 MB |
+| 64afccd | 13,162 | 1,122 (519) | 0 | 1,372 | 9.0 + 8.6 s = 17.6 s (2.9 % of a core) | 51.3 MB |
+
+The first run was too expensive. A sample of the process (`sample`,
+45 s) showed the index writer reading the whole table of 2.2 million
+rows for every rescan that removed a subtree: SQLite planned the
+subtree query as a scan of `dirs` probing the recursive CTE. With
+`CROSS JOIN` (walk the subtree, look each row up) the writer's share
+fell from 2,215 samples to 70, and the second run, with three times as
+many events, cost a sixth of the CPU. What remains is spread over
+re-reading directories (`getattrlistbulk`), reading the candidates for
+worktree statuses and Git's verdicts after each batch, and Git itself
+for worktrees under changed paths (its own processes, not counted
+above). The RSS is the page cache of the index and the rescans' rows.
+
+**Churn.** `bench churn --seconds 120 --files 250` on a fixture: a
+thread creates 250 files in one of 16 directories, then removes the
+directory with its files, every 50 ms or so, while the engine follows
+the fixture (Background profile); then it waits until the engine is
+idle and compares its picture with a fresh full scan.
+
+| build | files created + deleted | churn CPU | engine batches / rescans / full scans | events | engine CPU | idle after the churn | picture |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 0dfcd14 | 330,000 + 330,000 | 38.7 s | 31 / 37 / 0 | 662,670 | 4.5 s | 59.8 s | exactly right |
+| 64afccd | 326,500 + 326,500 | 38.4 s | 16 / 21 / 1 | 654,537 | 3.1 s | 60.0 s | exactly right |
+
+Engine CPU is the process's CPU minus the churn thread's. The back-off
+holds the busy directories for up to one cap (60 s in Background), so
+the picture is right a cap after the churn ends. In the second run the
+engine made one full scan of the fixture; which event or task asked
+for it was not recorded (lost-event flags under 650,000 events are the
+likely cause, a collapse into the root the other possibility). The first run's figure includes the bench polling a full
+snapshot every 20 ms; the second polls only the freshness.
+
+**Latency of a small change.** `bench refresh`: a 1 MB file written
+into one directory of a fixture, three times, each after the engine is
+idle; the time until the root's total shows it.
+
+| profile (settle / cap) | first | second | third |
+|---|---:|---:|---:|
+| Interactive (1 s / 30 s) | 1.3 s | 2.0 s | 5.0 s |
+| Background (2 s / 60 s) | 2.4 s | 5.0 s | 9.0 s (8.0 s at 0dfcd14) |
+| Saver (10 s / 300 s) | 10.7 s | 20.0 s | 41.0 s |
+
+The first change shows after about the FSEvents latency plus the
+settle time. The same directory changing again within a cap of its
+last rescan starts from its last settle time multiplied again, so the
+second and third show later: that is the back-off, which keeps a
+directory that keeps changing from being rescanned often.
+
+**Not measured.** Wake-ups are counted as the scheduler's turns (each
+command, event batch or deadline), not as CPU wake-ups of the whole
+process; cold-cache scans (no `purge` without root); the app's own
+cost (M5); a Saver run on battery (profiles were set by hand, on AC
+power); idle with a quiet desktop (the desktop was busy throughout).
