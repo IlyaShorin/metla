@@ -524,6 +524,10 @@ one thing at a time:
 * after each of these: Git's verdicts on project output that has none
   yet (the only rows without one are new or re-read), worktree statuses
   where something changed, the stored event id, and a notification.
+  After a batch or a cleanup's rescans both passes look only at what it
+  wrote: the candidate rows a rescan wrote (`Refreshed::Applied`) and
+  the worktrees holding a rescanned directory (`Snapshot::enclosing`);
+  only a full scan has them look at every row.
 
 The scheduler sleeps on its command channel until the coalescer's next
 deadline; with nothing due it does not wake up (`Counters::wakeups`).

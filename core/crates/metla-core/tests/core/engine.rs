@@ -1026,6 +1026,30 @@ fn worktree_statuses_are_computed_in_the_background_two_at_a_time() {
 }
 
 #[test]
+fn a_batch_has_only_the_worktrees_it_changed_or_lies_in_inspected_again() {
+    let (place, config, log) = slow_git_place();
+    fs::create_dir(place.path("wts/wt05/deep")).unwrap();
+    let engine = Engine::open(config).unwrap();
+    settled(&engine);
+    let log = log.as_path();
+    let started = |n: usize| move |_: &Engine| calls(log).0 == n;
+    within(&engine, Duration::from_secs(60), started(12));
+    let quiet = |engine: &Engine| {
+        settled(engine);
+        std::thread::sleep(Duration::from_millis(400));
+    };
+    engine.changed(vec![place.path("wts")]).unwrap();
+    quiet(&engine);
+    assert_eq!(calls(log).0, 12, "beside them: none inspected again");
+    engine.changed(vec![place.path("wts/wt03")]).unwrap();
+    within(&engine, Duration::from_secs(10), started(13));
+    engine.changed(vec![place.path("wts/wt05/deep")]).unwrap();
+    within(&engine, Duration::from_secs(10), started(14));
+    quiet(&engine);
+    assert_eq!(calls(log).0, 14, "one worktree each");
+}
+
+#[test]
 fn closing_the_engine_abandons_the_statuses_still_to_compute() {
     let (_place, config, log) = slow_git_place();
     let engine = Engine::open(config).unwrap();

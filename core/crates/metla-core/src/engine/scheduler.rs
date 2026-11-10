@@ -16,11 +16,12 @@ use super::shared::{RunningScan, Shared, lock};
 use super::view::Changed;
 use crate::clean::{CleanControl, CleanError, Context};
 use crate::domain::{
-    Candidate, Category, CleanupReport, Confirmation, PreviewId, QuickCategory, Recency, RescanTask,
+    Candidate, Category, CleanupReport, Confirmation, DirId, PreviewId, QuickCategory, Recency,
+    RescanTask,
 };
 use crate::fs::now;
 use crate::git::{WorktreeSettings, verify_outputs};
-use crate::index::{IndexError, IndexReader, IndexWriter, Page, PictureId};
+use crate::index::{IndexError, IndexReader, IndexWriter, Page, PictureId, Snapshot};
 use crate::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
 use crate::watch::{Coalescer, Event, Flags, Stream, current_event_id, resume_after, volume_uuid};
 
@@ -258,16 +259,15 @@ impl Scheduler {
     fn batch(&mut self, tasks: &[RescanTask], profile: &Profile) {
         let options = self.options(profile);
         let mut full = false;
-        let mut touched = Vec::new();
+        let mut written = Written::default();
         for task in tasks {
-            full |= !self.apply(task, &options);
-            touched.extend(task_path(task));
+            full |= !self.apply(task, &options, &mut written);
         }
         self.shared.count(|c| {
             c.batches += 1;
             c.tasks += tasks.len() as u64;
         });
-        self.after_change(&touched);
+        self.after_change(Some(&written));
         let pending = self.coalescer.pending() as u64;
         self.shared.update(|s| {
             s.pending = pending;
@@ -286,8 +286,9 @@ impl Scheduler {
         }
     }
 
-    /// Applies one task; false when only a full scan will do.
-    fn apply(&mut self, task: &RescanTask, options: &ScanOptions) -> bool {
+    /// Applies one task and notes what it wrote; false when only a full
+    /// scan will do.
+    fn apply(&mut self, task: &RescanTask, options: &ScanOptions, written: &mut Written) -> bool {
         let control = ScanControl::new(usize::MIN);
         let done = refresh(
             task,
@@ -297,22 +298,35 @@ impl Scheduler {
             &control,
             now(),
         );
-        matches!(done, Ok(Refreshed::Applied))
+        written.dirs.extend(task_path(task));
+        match done {
+            Ok(Refreshed::Applied { candidates }) => {
+                written.candidates.extend(candidates);
+                true
+            }
+            _ => false,
+        }
     }
 
-    /// After the picture changed below `touched`: Git's verdicts on new
-    /// project output, worktree statuses there, and the observer.
-    fn after_change(&mut self, touched: &[PathBuf]) {
-        self.verify();
-        self.worktrees(Some(touched));
+    /// After the picture changed (`None`: a full scan wrote all of it):
+    /// Git's verdicts on new project output, worktree statuses where the
+    /// change was, and the observer.
+    fn after_change(&mut self, written: Option<&Written>) {
+        self.verify(written.map(|w| w.candidates.as_slice()));
+        self.worktrees(written);
         self.shared.notify(Changed::Picture);
     }
 
-    /// Asks Git about the project output that has no verdict yet.
-    fn verify(&mut self) {
+    /// Asks Git about the project output that has no verdict yet, among
+    /// the rows `among` when given.
+    fn verify(&mut self, among: Option<&[DirId]>) {
         let read = self.reader.read(|snap| {
             let picture = snap.scan()?.and_then(|scan| scan.picture).map(|p| p.id());
-            Ok((picture, snap.unverified()?))
+            let unverified = match among {
+                Some(ids) => snap.unverified_among(ids)?,
+                None => snap.unverified()?,
+            };
+            Ok((picture, unverified))
         });
         let Ok((Some(picture), unverified)) = read else {
             return;
@@ -326,25 +340,21 @@ impl Scheduler {
         let _ = self.writer.set_verdicts(picture, stored);
     }
 
-    /// Recomputes, in the background, the statuses of the worktrees that
-    /// hold or lie below a touched path (all of them for `None`).
-    fn worktrees(&mut self, touched: Option<&[PathBuf]>) {
+    /// Recomputes, in the background, the statuses of the worktrees a
+    /// change wrote or happened in (all of them for `None`).
+    fn worktrees(&mut self, written: Option<&Written>) {
         let recency = Recency::new(now(), lock(&self.shared.settings).recent_age);
         let read = self.reader.read(|snap| {
             let picture = snap.scan()?.and_then(|scan| scan.picture).map(|p| p.id());
-            let worktrees = snap.candidates(Some(Category::GitWorktree), ALL, &recency)?;
+            let worktrees = match written {
+                Some(written) => written.worktrees(snap, &recency)?,
+                None => snap.candidates(Some(Category::GitWorktree), ALL, &recency)?,
+            };
             Ok((picture, worktrees))
         });
-        let Ok((Some(picture), worktrees)) = read else {
+        let Ok((Some(picture), chosen)) = read else {
             return;
         };
-        let related = |c: &Candidate| {
-            touched.is_none_or(|paths| {
-                let related = |p: &PathBuf| p.starts_with(&c.path) || c.path.starts_with(p);
-                paths.iter().any(related)
-            })
-        };
-        let chosen: Vec<Candidate> = worktrees.into_iter().filter(related).collect();
         if chosen.is_empty() {
             return;
         }
@@ -376,7 +386,7 @@ impl Scheduler {
         let finished = scan_into(&mut self.writer, &options, &control, had_picture);
         let finished = finished.unwrap_or_default();
         if finished {
-            self.verify();
+            self.verify(None);
             self.worktrees(None);
             self.mark_events();
         }
@@ -455,12 +465,35 @@ impl Scheduler {
             .filter_map(|item| item.path.parent().map(Path::to_path_buf))
             .collect();
         let options = self.options(&self.shared.profiles.interactive);
-        let mut touched = Vec::new();
+        let mut written = Written::default();
         for parent in parents {
-            self.apply(&RescanTask::Shallow(parent.clone()), &options);
-            touched.push(parent);
+            self.apply(&RescanTask::Shallow(parent), &options, &mut written);
         }
-        self.after_change(&touched);
+        self.after_change(Some(&written));
+    }
+}
+
+/// What a batch, or the rescans after a cleanup, wrote: the candidate
+/// rows and the directories rescanned.
+#[derive(Default)]
+struct Written {
+    candidates: Vec<DirId>,
+    dirs: Vec<PathBuf>,
+}
+
+impl Written {
+    /// The offered worktrees it wrote or that hold a rescanned directory.
+    fn worktrees(
+        &self,
+        snap: &Snapshot<'_>,
+        recency: &Recency,
+    ) -> Result<Vec<Candidate>, IndexError> {
+        let mut ids: BTreeSet<DirId> = self.candidates.iter().copied().collect();
+        for dir in &self.dirs {
+            ids.extend(snap.enclosing(dir)?);
+        }
+        let ids: Vec<DirId> = ids.into_iter().collect();
+        snap.offered_among(Some(Category::GitWorktree), &ids, recency)
     }
 }
 

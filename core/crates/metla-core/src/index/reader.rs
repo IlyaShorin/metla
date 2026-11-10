@@ -287,9 +287,25 @@ impl Snapshot<'_> {
             "SELECT {COLUMNS} FROM dirs INDEXED BY dirs_candidates
              WHERE rule_id IS NOT NULL AND verdict IS NULL ORDER BY id"
         );
+        let rows = self.records(&sql, [])?;
+        self.needing_verdict(rows)
+    }
+
+    /// [`Snapshot::unverified`] among the directories `ids` only.
+    pub fn unverified_among(&self, ids: &[DirId]) -> Result<Vec<(DirId, PathBuf)>, IndexError> {
+        let sql = format!("SELECT {COLUMNS} FROM dirs WHERE id = ?1 AND verdict IS NULL");
+        let mut rows = Vec::new();
+        for id in ids {
+            rows.extend(self.records(&sql, [id.0])?);
+        }
+        self.needing_verdict(rows)
+    }
+
+    /// The project output among `rows`, with its path.
+    fn needing_verdict(&self, rows: Vec<DirRecord>) -> Result<Vec<(DirId, PathBuf)>, IndexError> {
         let mut lineage = self.lineage()?;
         let mut unverified = Vec::new();
-        for row in self.records(&sql, [])? {
+        for row in rows {
             let needs = row
                 .rule
                 .as_ref()
@@ -299,6 +315,18 @@ impl Snapshot<'_> {
             }
         }
         Ok(unverified)
+    }
+
+    /// The directories holding `path`: the nearest one the picture has
+    /// and every one above it, deepest first.
+    pub fn enclosing(&self, path: &Path) -> Result<Vec<DirId>, IndexError> {
+        let mut ids = Vec::new();
+        let mut next = self.nearest(path)?.map(|(_, row)| row.id);
+        while let Some(id) = next {
+            ids.push(id);
+            next = self.record(id)?.and_then(|row| row.parent);
+        }
+        Ok(ids)
     }
 
     /// One page of the offered candidates of `category` (of every category
@@ -318,15 +346,31 @@ impl Snapshot<'_> {
 
     /// The candidate with this id, if it is one and is offered.
     pub fn candidate(&self, id: DirId, recency: &Recency) -> Result<Option<Candidate>, IndexError> {
+        Ok(self.offered_among(None, &[id], recency)?.pop())
+    }
+
+    /// The offered candidates of `category` (any when `None`) among the
+    /// directories `ids`, in that order.
+    pub fn offered_among(
+        &self,
+        category: Option<Category>,
+        ids: &[DirId],
+        recency: &Recency,
+    ) -> Result<Vec<Candidate>, IndexError> {
         let sql = format!("SELECT {CANDIDATE_COLUMNS} FROM dirs WHERE id = ?1");
         let offer = self.offer()?;
         let mut lineage = self.lineage()?;
-        let mut found = None;
-        for (row, verdict) in self.candidate_rows(&sql, [id.0])? {
-            let path = lineage.path(row.id)?.unwrap_or_default();
-            found = offer.found(row, verdict, path);
+        let mut found = Vec::new();
+        for id in ids {
+            for (row, verdict) in self.candidate_rows(&sql, [id.0])? {
+                if !of_category(&row, category) {
+                    continue;
+                }
+                let path = lineage.path(row.id)?.unwrap_or_default();
+                found.extend(offer.found(row, verdict, path));
+            }
         }
-        Ok(found.map(|found| found.candidate(recency)))
+        Ok(found.into_iter().map(|f| f.candidate(recency)).collect())
     }
 
     /// The offered candidates of `category` (all when `None`), largest
@@ -338,13 +382,9 @@ impl Snapshot<'_> {
         );
         let offer = self.offer()?;
         let rows = self.candidate_rows(&sql, [])?.into_iter();
-        let of_category = |row: &DirRecord| {
-            let rule = row.rule.as_ref().map(RuleId::category);
-            category.is_none_or(|c| rule == Some(c))
-        };
         let mut lineage = self.lineage()?;
         let mut found = Vec::new();
-        for (row, verdict) in rows.filter(|(row, _)| of_category(row)) {
+        for (row, verdict) in rows.filter(|(row, _)| of_category(row, category)) {
             let path = lineage.path(row.id)?.unwrap_or_default();
             found.extend(offer.found(row, verdict, path));
         }
@@ -492,4 +532,10 @@ impl Snapshot<'_> {
 /// Whether any exclusion hides a candidate at `path`.
 fn hides(exclusions: &[Exclusion], path: &Path) -> bool {
     exclusions.iter().any(|exclusion| exclusion.hides(path))
+}
+
+/// Whether the row is a candidate of `category` (of any when `None`).
+fn of_category(row: &DirRecord, category: Option<Category>) -> bool {
+    let rule = row.rule.as_ref().map(RuleId::category);
+    category.is_none_or(|c| rule == Some(c))
 }

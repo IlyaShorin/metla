@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::domain::{DirRecord, DirState, RescanTask, Rescanned, UnixTime};
+use crate::domain::{DirId, DirRecord, DirState, RescanTask, Rescanned, UnixTime};
 use crate::index::{IndexError, IndexReader, IndexWriter, PictureId, Snapshot};
 use crate::scan::{Inherited, ScanControl, ScanError, ScanOptions, Stored, Target, rescan};
 
@@ -13,10 +13,12 @@ use crate::scan::{Inherited, ScanControl, ScanError, ScanOptions, Stored, Target
 pub const MAX_SUBTREE: u64 = 100_000;
 
 /// What applying a task did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refreshed {
-    /// The picture is up to date for it.
-    Applied,
+    /// The picture is up to date for it. `candidates` are the rows with a
+    /// rule it wrote (new or read again): the only ones Git and the
+    /// worktree statuses may need to look at again.
+    Applied { candidates: Vec<DirId> },
     /// There is no picture of this root to bring up to date.
     NoPicture,
     /// Only a full scan brings the picture up to date.
@@ -45,7 +47,7 @@ impl From<ScanError> for RefreshError {
 struct Plan {
     picture: PictureId,
     target: Target,
-    next_id: crate::domain::DirId,
+    next_id: DirId,
     /// Directories in the subtree, as last seen.
     size: u64,
 }
@@ -117,9 +119,11 @@ impl Attempt<'_> {
     }
 
     fn write(&self, picture: PictureId, change: Rescanned) -> Result<Step, RefreshError> {
+        let candidates = change.rows.iter().filter(|row| row.rule.is_some());
+        let candidates = candidates.map(|row| row.id).collect();
         let applied = self.writer.apply(picture, change, self.now)?;
         Ok(Step::Done(match applied {
-            true => Refreshed::Applied,
+            true => Refreshed::Applied { candidates },
             false => Refreshed::NoPicture,
         }))
     }
@@ -181,7 +185,7 @@ fn target(
 
 /// What the directory `parent` hands down to its children: what it passed
 /// on, and its own parent's markers.
-fn inherited(snap: &Snapshot<'_>, parent: crate::domain::DirId) -> Result<Inherited, IndexError> {
+fn inherited(snap: &Snapshot<'_>, parent: DirId) -> Result<Inherited, IndexError> {
     let missing = || IndexError::Corrupt(format!("directory {} has no row", parent.0));
     let row: DirRecord = snap.record(parent)?.ok_or_else(missing)?;
     let grandparent = match row.parent {

@@ -410,7 +410,11 @@ fn a_cleaned_directory_is_offered_again_once_its_parent_is_rescanned() {
     let task = RescanTask::Recursive(cache.parent().unwrap().to_path_buf());
     let control = ScanControl::new(0);
     let done = refresh(&task, &options, &mut reader, &writer, &control, UnixTime(7)).unwrap();
-    assert_eq!(done, Refreshed::Applied);
+    let Refreshed::Applied { candidates } = done else {
+        panic!("{done:?}");
+    };
+    let cache_row = reader.read(|snap| snap.dir(&cache)).unwrap().unwrap();
+    assert_eq!(candidates, [cache_row.id], "the one candidate it wrote");
     assert_eq!(offered(&mut reader), 1, "the kept, emptied cache directory");
     let stale: i64 = rusqlite::Connection::open(&index)
         .unwrap()
@@ -468,7 +472,7 @@ fn a_vanished_directory_makes_its_parent_the_one_rescanned_shallowly() {
     let task = RescanTask::Shallow(fx.path("a/b"));
     let control = ScanControl::new(0);
     let done = refresh(&task, &options, &mut reader, &writer, &control, UnixTime(3)).unwrap();
-    assert_eq!(done, Refreshed::Applied);
+    assert_eq!(done, Refreshed::Applied { candidates: vec![] });
     assert_eq!(*reads.0.lock().unwrap(), [fx.path("a")], "not a/x");
     assert_eq!(reader.read(|snap| snap.dir(&fx.path("a/b"))).unwrap(), None);
 }
@@ -476,7 +480,7 @@ fn a_vanished_directory_makes_its_parent_the_one_rescanned_shallowly() {
 #[test]
 fn a_subtree_larger_than_the_limit_is_scanned_again_whole() {
     for (dirs, expected) in [
-        (MAX_SUBTREE, Refreshed::Applied),
+        (MAX_SUBTREE, Refreshed::Applied { candidates: vec![] }),
         (MAX_SUBTREE + 1, Refreshed::NeedsFullScan),
     ] {
         let fx = Fixture::new();

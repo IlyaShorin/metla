@@ -402,7 +402,7 @@ fn equivalent(seed: u64, steps: usize, every: usize) {
                 let control = ScanControl::new(0);
                 let done = refresh(&task, &options, &mut reader, &writer, &control, UnixTime(5));
                 match done.unwrap_or_else(|e| panic!("seed {seed}: {task:?}: {e:?}")) {
-                    Refreshed::Applied => {}
+                    Refreshed::Applied { .. } => {}
                     Refreshed::NeedsFullScan => full_scan(&options, &mut writer),
                     Refreshed::NoPicture => panic!("seed {seed}: no picture"),
                 }
@@ -468,7 +468,7 @@ fn a_task_for_the_root_or_a_full_rescan_needs_a_full_scan() {
         &control,
         UnixTime(5),
     );
-    assert_eq!(applied.unwrap(), Refreshed::Applied);
+    assert!(matches!(applied.unwrap(), Refreshed::Applied { .. }));
     let updated = reader.read(|snap| snap.scan()).unwrap().unwrap();
     assert_eq!(updated.picture.unwrap().updated, Some(UnixTime(5)));
 }
