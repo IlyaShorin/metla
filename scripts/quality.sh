@@ -18,6 +18,10 @@
 #   MUTATOR_WORKERS          parallel mutants per file (default 2: every
 #                            worker builds its own copy of the crates)
 #   MUTATOR_TIMEOUT_SECONDS  the shortest mutant timeout (default 90)
+#   DISK_FLOOR_MB            the least free space (default 300) the volume of
+#                            TMPDIR must have before the mutator, before each
+#                            file and after it; below it the run stops with
+#                            exit 3: a full disk is not a result
 #   MUTATOR_TIMEOUT_FACTOR   mutant timeout / baseline time; by default
 #                            max(3, ceil(MUTATOR_TIMEOUT_SECONDS / baseline)),
 #                            the baseline being one warm run of the crate's
@@ -50,6 +54,18 @@ mutator="${MUTATOR:-$ub_tools/mutator/mutator}"
 workers="${MUTATOR_WORKERS:-2}"
 timeout_floor="${MUTATOR_TIMEOUT_SECONDS:-90}"
 
+source "$repo/scripts/disk-guard.sh"
+disk_floor="${DISK_FLOOR_MB:-300}"
+scratch="${TMPDIR:-/tmp}"
+disk_full=()
+
+# A full disk makes test runs fail, and the mutator counts every failing
+# run as a kill: say so loudly, and no verdict of this run counts.
+full() {
+    disk_full+=("$1")
+    echo "DISK FULL: $1 - no result of this run is valid"
+}
+
 crap_limit=10
 stable_runs="${STABLE_RUNS:-5}"
 dry_limit=0.8
@@ -70,6 +86,9 @@ section() {
 for tool in "$crapper" "$dryer" "$mutator"; do
     [[ -x "$tool" ]] || { echo "missing tool: $tool"; exit 2; }
 done
+
+section "disk guard (its own tests)"
+"$repo/scripts/disk-guard-test.sh" || fail "disk guard tests"
 
 section "cargo fmt --check"
 (cd core && cargo fmt --check) || fail "cargo fmt"
@@ -100,6 +119,11 @@ for run in $(seq 1 "$stable_runs"); do
         fail "stability run $run: ${names:-cargo test exited $code}"
     fi
 done
+
+# A test that failed of a full disk is not a failing test.
+while IFS= read -r log; do
+    full "a full disk in $(basename "$log")"
+done < <(full_disk_logs "$log_dir"/test.txt "$log_dir"/slow.txt "$log_dir"/stable-*.txt)
 
 section "crapper (CRAP < $crap_limit)"
 "$crapper" core >"$log_dir/crap.txt" 2>&1 || fail "crapper run"
@@ -147,6 +171,8 @@ PY
 [[ -s "$log_dir/dry.txt" ]] && grep -A2 "^DUPLICATE" "$log_dir/dry.txt"
 
 section "mutator (no survivors, no uncovered sites)"
+space_ok "$scratch" "$disk_floor" \
+    || full "$(free_mb "$scratch") MB free on the volume of $scratch before the mutator (floor $disk_floor MB)"
 mutate_all=()
 [[ "${MUTATE_ALL:-0}" == "1" ]] && mutate_all=(--mutate-all)
 
@@ -177,6 +203,10 @@ done
 
 total_sites=0
 while IFS= read -r file; do
+    if [[ ${#disk_full[@]} -gt 0 ]] || ! space_ok "$scratch" "$disk_floor"; then
+        [[ ${#disk_full[@]} -gt 0 ]] || full "$(free_mb "$scratch") MB free before $file (floor $disk_floor MB)"
+        break
+    fi
     out="$log_dir/mutate-$(echo "$file" | tr '/' '_').txt"
     trace="$log_dir/trace-$(echo "$file" | tr '/' '_').txt"
     crate=$(echo "$file" | cut -d/ -f3)
@@ -201,8 +231,18 @@ done < <(find core/crates/*/src -name '*.rs' | sort)
 echo "mutation sites analysed: $total_sites"
 [[ $total_sites -gt 0 ]] || fail "mutator found no sites"
 rm -rf "$repo/target/mutation-workers"
+space_ok "$scratch" "$disk_floor" \
+    || full "$(free_mb "$scratch") MB free on the volume of $scratch after the mutator (floor $disk_floor MB)"
+while IFS= read -r log; do
+    full "a full disk in $(basename "$log")"
+done < <(full_disk_logs "$log_dir"/mutate-*.txt)
 
 section "result"
+if [[ ${#disk_full[@]} -gt 0 ]]; then
+    printf 'disk full: %s\n' "${disk_full[@]}"
+    echo "the disk was full: rerun when it has room; no verdict of this run counts"
+    exit 3
+fi
 if [[ ${#failed[@]} -gt 0 ]]; then
     printf 'failed: %s\n' "${failed[@]}"
     exit 1

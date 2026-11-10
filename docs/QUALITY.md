@@ -33,7 +33,16 @@ synthetic trees and indexes there.
   many mutants of each file were killed by that timeout. A run is
   differential: survivors and the sites of functions whose text changed
   run again, the rest keep their verdict from the last run
-  (`MUTATE_ALL=1` runs everything).
+  (`MUTATE_ALL=1` runs everything);
+* **a full disk is not a result**: a test run that dies of `ENOSPC`
+  fails, and the mutator counts every failing run as a kill. Before the
+  mutator, before each file and after it, the volume of `TMPDIR` must
+  have at least 300 MB free (`DISK_FLOOR_MB`), and the per-file mutator
+  logs and the test logs must show no full-disk signature (`No space
+  left on device`, `Errno 28`, `os error 28`, `ENOSPC`, the index's
+  `NoSpace`); otherwise the run stops, says `DISK FULL` and exits 3
+  (`scripts/disk-guard.sh`, tested by `scripts/disk-guard-test.sh`,
+  which the script runs first).
 
 `metla-ffi` is Rust and gets all of the above. Code that UniFFI's macros
 generate is not in the sources the tools read, so it is not measured;
