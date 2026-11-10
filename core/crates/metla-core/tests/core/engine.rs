@@ -242,7 +242,7 @@ fn a_storm_of_changes_ends_in_few_rescans() {
 }
 
 #[test]
-fn off_stops_watching_and_applies_nothing_until_it_is_on_again() {
+fn off_stops_watching_and_applies_nothing_until_it_is_on_again_without_rescanning() {
     let place = Place::new(HOME);
     let engine = place.open();
     settled(&engine);
@@ -259,6 +259,7 @@ fn off_stops_watching_and_applies_nothing_until_it_is_on_again() {
     engine.set_power_profile(PowerProfile::Background).unwrap();
     until(&engine, |e| e.snapshot().unwrap().freshness.watching);
     settled(&engine);
+    assert_eq!(engine.counters().full_scans, 1, "nothing was lost");
 }
 
 #[test]
@@ -311,7 +312,39 @@ fn exclusions_hide_candidates_at_once_and_are_kept() {
 }
 
 #[test]
+fn the_power_profiles_are_the_documented_table() {
+    let table = Profiles::standard(12);
+    let rows = [
+        (table.interactive, 10, 1, 30, 256, 4096, 0, true, false),
+        (table.background, 2, 2, 60, 64, 4096, 100, true, false),
+        (table.saver, 1, 10, 300, 16, 1024, 1000, false, true),
+    ];
+    for (profile, threads, settle, cap, batch, max_dirs, pause, full, throttled) in rows {
+        let timing = profile.timing.unwrap();
+        assert_eq!(profile.threads, threads);
+        assert_eq!(timing.settle, Duration::from_secs(settle));
+        assert_eq!((timing.factor, timing.collapse), (2, 32));
+        assert_eq!(timing.cap, Duration::from_secs(cap));
+        assert_eq!((timing.batch, timing.max_dirs), (batch, max_dirs));
+        assert_eq!(profile.pause, Duration::from_millis(pause));
+        assert_eq!((profile.full_scans, profile.throttled), (full, throttled));
+    }
+    assert_eq!(Profiles::standard(2).interactive.threads, 1, "never none");
+    let off = table.of(PowerProfile::Off);
+    assert_eq!((off.threads, off.timing, off.full_scans), (0, None, false));
+    assert_eq!(table.of(PowerProfile::Saver), table.saver);
+    assert_eq!(table.of(PowerProfile::Interactive), table.interactive);
+    assert_eq!(PowerProfile::default(), PowerProfile::Background);
+}
+
+#[test]
 fn settings_are_kept_and_switching_background_analysis_off_stops_watching() {
+    let defaults = Settings::default();
+    assert!(defaults.background && defaults.reduce_on_battery);
+    assert_eq!(defaults.hotkey, HotkeyMode::Confirm);
+    assert!(defaults.quick.is_empty());
+    assert_eq!(defaults.recent_age, Duration::from_secs(14 * 24 * 3600));
+    assert_eq!(defaults.stale_after, Duration::from_secs(30 * 24 * 3600));
     let place = Place::new(HOME);
     let engine = place.open();
     settled(&engine);
@@ -610,4 +643,268 @@ fn switching_background_analysis_off_cancels_the_first_background_scan() {
     });
     let freshness = engine.snapshot().unwrap().freshness;
     assert_ne!(freshness.picture, Completeness::Complete);
+}
+
+/// Profiles whose settle time is `settle`, with `pause` between batches
+/// of one task.
+fn patient(place: &Place, settle: u64, pause: u64) -> EngineConfig {
+    let mut config = place.config(PowerProfile::Background);
+    let timing = config.profiles.background.timing.as_mut().unwrap();
+    timing.settle = Duration::from_millis(settle);
+    timing.cap = Duration::from_millis(settle * 8);
+    timing.batch = 1;
+    config.profiles.background.pause = Duration::from_millis(pause);
+    config
+}
+
+#[test]
+fn an_idle_engine_sleeps_until_its_next_deadline() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(patient(&place, 400, 0)).unwrap();
+    settled(&engine);
+    let idle = engine.counters().wakeups;
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(engine.counters().wakeups, idle, "nothing to do: no wake-up");
+    engine.changed(vec![place.path("~/Documents")]).unwrap();
+    let freshness = engine.snapshot().unwrap().freshness;
+    assert_eq!(freshness.state, EngineState::Updating { pending: 1 });
+    std::thread::sleep(Duration::from_millis(200));
+    let waiting = engine.counters().wakeups - idle;
+    assert!(waiting <= 2, "{waiting} wake-ups while a change settles");
+    settled(&engine);
+    assert_eq!(engine.counters().tasks, 1);
+}
+
+#[test]
+fn batches_are_apart_by_the_profile_pause() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(patient(&place, 5, 250)).unwrap();
+    settled(&engine);
+    let dirs = vec![place.path("~/Documents"), place.path("~/Library/Logs")];
+    engine.changed(dirs).unwrap();
+    until(&engine, |e| e.counters().tasks >= 1);
+    let first = Instant::now();
+    until(&engine, |e| e.counters().tasks >= 2);
+    assert!(
+        first.elapsed() >= Duration::from_millis(150),
+        "{:?}",
+        first.elapsed()
+    );
+    assert_eq!(engine.counters().batches, 2);
+}
+
+#[test]
+fn many_changed_children_of_the_root_are_one_full_scan() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    settled(&engine);
+    let children: Vec<PathBuf> = (0..17).map(|i| place.path(&format!("c{i}"))).collect();
+    engine.changed(children).unwrap();
+    until(&engine, |e| e.counters().full_scans == 2);
+    settled(&engine);
+    assert_eq!(engine.counters().tasks, 1, "one task: the full scan");
+}
+
+#[test]
+fn after_a_cancel_the_engine_holds_and_the_user_lifts_the_hold() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(place.config(PowerProfile::Saver)).unwrap();
+    until(&engine, |e| {
+        e.snapshot().unwrap().freshness.state == EngineState::Paused(PowerProfile::Saver)
+    });
+    engine.cancel_scan();
+    engine.set_power_profile(PowerProfile::Background).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    let held = engine.snapshot().unwrap().freshness;
+    assert_eq!(held.state, EngineState::Idle, "held, nothing runs");
+    assert!(held.needs_full_scan);
+    assert_eq!(engine.counters().full_scans, 0);
+    engine.start_scan().unwrap();
+    settled(&engine);
+    let children: Vec<PathBuf> = (0..17).map(|i| place.path(&format!("c{i}"))).collect();
+    engine.changed(children).unwrap();
+    until(&engine, |e| e.counters().full_scans == 2);
+}
+
+#[test]
+fn the_engine_says_whose_scan_runs_and_off_never_stops_the_users() {
+    let place = Place::new(HOME);
+    wide(&place);
+    let engine = Engine::open(slow(&place)).unwrap();
+    let interactive = |e: &Engine| match e.snapshot().unwrap().freshness.state {
+        EngineState::Scanning { interactive, .. } => Some(interactive),
+        _ => None,
+    };
+    until(&engine, |e| interactive(e).is_some());
+    assert_eq!(interactive(&engine), Some(false), "the engine's own");
+    settled(&engine);
+    engine.start_scan().unwrap();
+    until(&engine, |e| interactive(e).is_some());
+    assert_eq!(interactive(&engine), Some(true));
+    engine.set_power_profile(PowerProfile::Off).unwrap();
+    until(&engine, |e| e.progress().is_none());
+    assert_eq!(engine.counters().full_scans, 2);
+    let freshness = engine.snapshot().unwrap().freshness;
+    assert_eq!(freshness.picture, Completeness::Complete, "not cancelled");
+}
+
+#[test]
+fn a_user_scan_replaces_the_picture_and_a_cancelled_one_keeps_it() {
+    let place = Place::new(HOME);
+    wide(&place);
+    let engine = Engine::open(slow(&place)).unwrap();
+    settled(&engine);
+    place.fx.build(&["~/Library/Caches/org.unreported/x=1"]);
+    engine.start_scan().unwrap();
+    until(&engine, |e| e.counters().full_scans == 2);
+    settled(&engine);
+    assert!(offered(&engine, &place).contains("home/Library/Caches/org.unreported"));
+    engine.start_scan().unwrap();
+    until(&engine, |e| e.progress().is_some());
+    engine.cancel_scan();
+    until(&engine, |e| e.progress().is_none());
+    let freshness = engine.snapshot().unwrap().freshness;
+    assert_eq!(freshness.picture, Completeness::Complete);
+    assert!(!freshness.needs_full_scan, "the old picture is still right");
+    assert!(offered(&engine, &place).contains("home/Library/Caches/org.unreported"));
+}
+
+#[test]
+fn switching_off_and_on_again_resumes_the_scan_the_engine_needs() {
+    let place = Place::new(HOME);
+    wide(&place);
+    let engine = Engine::open(slow(&place)).unwrap();
+    engine.set_power_profile(PowerProfile::Off).unwrap();
+    until(&engine, |e| e.progress().is_none());
+    engine.set_power_profile(PowerProfile::Background).unwrap();
+    settled(&engine);
+    let freshness = engine.snapshot().unwrap().freshness;
+    assert_eq!(freshness.picture, Completeness::Complete);
+}
+
+#[test]
+fn a_cleanup_shows_as_cleaning_while_it_runs() {
+    let place = Place::new(HOME);
+    let cache = place.fx.dir("home/Library/Caches/com.example.big");
+    for i in 0..1500 {
+        fs::write(cache.join(format!("f{i}")), "x").unwrap();
+    }
+    let engine = place.open();
+    settled(&engine);
+    let seen = std::sync::atomic::AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while engine.last_report().is_none() {
+                let state = engine.snapshot().unwrap().freshness.state;
+                if state == EngineState::Cleaning {
+                    seen.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+        engine.quick_clean(vec![QuickCategory::AppCache]).unwrap();
+    });
+    assert!(seen.into_inner(), "never seen cleaning");
+    assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
+}
+
+fn worktree_status(engine: &Engine) -> Option<Removability> {
+    let listed = engine.candidates(Some(Category::GitWorktree), ALL).unwrap();
+    listed.into_iter().next().and_then(|l| l.removability)
+}
+
+#[test]
+fn a_change_below_a_worktree_has_its_status_computed_again() {
+    let place = Place::new(&[]);
+    let git_ = isolated(&place.aux);
+    let repo = pushed_repository(&place.fx, &git_);
+    pushed_worktree(&git_, &repo, &place.path("wt"), "feature");
+    fs::create_dir(place.path("wt/sub")).unwrap();
+    let engine = place.open();
+    let idle_at_once = Settings {
+        stale_after: Duration::ZERO,
+        ..Settings::default()
+    };
+    engine.set_settings(idle_at_once).unwrap();
+    settled(&engine);
+    let removable = |e: &Engine| matches!(worktree_status(e), Some(Removability::Removable { .. }));
+    std::thread::sleep(Duration::from_millis(1100));
+    engine.changed(vec![place.path("wt")]).unwrap();
+    until(&engine, removable);
+    fs::write(place.path("wt/sub/new.txt"), "work").unwrap();
+    engine.changed(vec![place.path("wt/sub")]).unwrap();
+    until(&engine, |e| {
+        matches!(worktree_status(e), Some(Removability::Blocked(_)))
+    });
+}
+
+/// Twelve directories that look like linked worktrees, and a Git that
+/// notes each call's start and end in a log, takes 200 ms and fails.
+fn slow_git_place() -> (Place, EngineConfig, PathBuf) {
+    let place = Place::new(&[]);
+    for i in 0..12 {
+        let wt = place.fx.dir(&format!("wts/wt{i:02}"));
+        fs::write(
+            wt.join(".git"),
+            format!("gitdir: /nowhere/.git/worktrees/wt{i}\n"),
+        )
+        .unwrap();
+    }
+    let log = place.aux.path("calls.log");
+    let body = format!(
+        "echo + >> '{log}'\nsleep 0.2\necho - >> '{log}'\nexit 1",
+        log = log.display()
+    );
+    let slow = crate::repo::script(&place.aux.path("slow-git"), &body);
+    let config = EngineConfig {
+        git: metla_core::git::Git::new(slow),
+        ..place.config(PowerProfile::Background)
+    };
+    (place, config, log)
+}
+
+/// How many Git calls started, and the most that ran at once.
+fn calls(log: &Path) -> (usize, usize) {
+    let text = fs::read_to_string(log).unwrap_or_default();
+    let (mut running, mut most, mut started) = (0usize, 0usize, 0usize);
+    for line in text.lines() {
+        match line {
+            "+" => {
+                running += 1;
+                started += 1;
+                most = most.max(running);
+            }
+            _ => running = running.saturating_sub(1),
+        }
+    }
+    (started, most)
+}
+
+#[test]
+fn worktree_statuses_are_computed_in_the_background_two_at_a_time() {
+    let (_place, config, log) = slow_git_place();
+    let engine = Engine::open(config).unwrap();
+    settled(&engine);
+    let known = |e: &Engine| {
+        let listed = e.candidates(Some(Category::GitWorktree), ALL).unwrap();
+        let known = listed
+            .iter()
+            .filter(|l| l.removability != Some(Removability::Unknown));
+        known.count()
+    };
+    within(&engine, Duration::from_secs(60), |e| known(e) == 12);
+    assert_eq!(calls(&log), (12, 2), "one call each, two at a time");
+}
+
+#[test]
+fn closing_the_engine_abandons_the_statuses_still_to_compute() {
+    let (_place, config, log) = slow_git_place();
+    let engine = Engine::open(config).unwrap();
+    settled(&engine);
+    drop(engine);
+    let (started, _) = calls(&log);
+    assert!(
+        started < 12,
+        "{started} statuses computed after closing began"
+    );
 }

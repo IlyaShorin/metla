@@ -55,7 +55,7 @@ impl Statuses {
         let statuses = Arc::new(Statuses {
             known: Mutex::default(),
             jobs: Mutex::new(Some(jobs)),
-            generation: AtomicU64::new(0),
+            generation: AtomicU64::default(),
         });
         let worker = Arc::clone(&statuses);
         let thread = thread::Builder::new()

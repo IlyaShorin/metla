@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
+use super::profile::Profile;
 use super::refresh::{Refreshed, refresh};
 use super::shared::{RunningScan, Shared, lock};
 use super::view::Changed;
@@ -21,7 +22,7 @@ use crate::fs::now;
 use crate::git::{WorktreeSettings, verify_outputs};
 use crate::index::{IndexError, IndexReader, IndexWriter, Page, PictureId};
 use crate::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
-use crate::watch::{Coalescer, Event, Flags, Stream, current_event_id, volume_uuid};
+use crate::watch::{Coalescer, Event, Flags, Stream, current_event_id, resume_after, volume_uuid};
 
 /// Shallow directories with live counters during a full scan.
 const LIVE_LIMIT: usize = 4096;
@@ -70,8 +71,6 @@ pub struct Scheduler {
     /// when no event has come yet.
     pub origin: Option<u64>,
     pub clock: Instant,
-    /// Ids for changes reported by hand.
-    pub manual: u64,
     /// When the next batch may start.
     pub next_batch: Option<Instant>,
 }
@@ -87,6 +86,7 @@ impl Scheduler {
                     .recv()
                     .map_err(|_| RecvTimeoutError::Disconnected),
             };
+            self.shared.count(|c| c.wakeups += 1);
             match message {
                 Ok(Command::Stop) | Err(RecvTimeoutError::Disconnected) => break,
                 Ok(command) => self.handle(command),
@@ -100,8 +100,7 @@ impl Scheduler {
     /// Opening: follow changes from the stored event id when the history
     /// allows it; a full scan is needed without a picture or a history.
     fn start(&mut self) {
-        let resumed = self.watch();
-        self.shared.update(|s| s.needs_full_scan |= !resumed);
+        self.watch();
         self.work();
     }
 
@@ -118,25 +117,16 @@ impl Scheduler {
         match command {
             Command::Events(events) => self.feed(&events),
             Command::Changed(paths) => {
-                let events: Vec<Event> = paths.into_iter().map(|path| self.manual(path)).collect();
+                let events: Vec<Event> = paths.into_iter().map(reported).collect();
                 self.feed(&events);
             }
             Command::Scan => self.full_scan(true),
-            Command::Profile => self.retime(),
+            Command::Profile => self.watch(),
             Command::Execute(id, confirmation) => self.clean(|cleaner, context, control, trash| {
                 cleaner.execute(id, &confirmation, context, control, trash)
             }),
             Command::Quick(categories) => self.quick(&categories),
             Command::Stop => {}
-        }
-    }
-
-    fn manual(&mut self, path: PathBuf) -> Event {
-        self.manual += 1;
-        Event {
-            path,
-            flags: Flags::NONE,
-            id: self.manual,
         }
     }
 
@@ -150,54 +140,39 @@ impl Scheduler {
         self.shared.update(|s| s.pending = pending);
     }
 
-    /// The profile changed: retime the coalescer, start or stop watching.
-    fn retime(&mut self) {
-        let resumed = self.watch();
-        if !resumed {
-            self.shared.update(|s| s.needs_full_scan = true);
-        }
-    }
-
-    /// Watches as the profile says; false when the history since the
-    /// stored event id could not be resumed.
-    fn watch(&mut self) -> bool {
+    /// Watches as the profile says (the profile changed, or the engine
+    /// opened). A stream that cannot resume the stored history means a
+    /// full scan is needed.
+    fn watch(&mut self) {
         let profile = self.shared.profile();
         self.coalescer.set_timing(profile.timing);
         let watching = profile.timing.is_some();
         self.shared.update(|s| s.watching = watching);
-        if !watching {
-            self.stream = None;
-            return true;
-        }
-        match self.watching {
-            Watching::Manual => true,
-            Watching::FsEvents { latency } => self.stream.is_some() || self.open_stream(latency),
+        let stream = match (watching, self.watching) {
+            (true, Watching::FsEvents { latency }) => Some(latency),
+            _ => None,
+        };
+        match stream {
+            None => self.stream = None,
+            Some(_) if self.stream.is_some() => {}
+            Some(latency) => {
+                let resumed = self.open_stream(latency);
+                self.shared.update(|s| s.needs_full_scan |= !resumed);
+            }
         }
     }
 
-    /// Starts the stream from the stored event id when it belongs to this
-    /// volume's history and is not ahead of it; else from now on.
+    /// Starts the stream after the stored event id when the history
+    /// allows it, else from now on; true when it resumed.
     fn open_stream(&mut self, latency: Duration) -> bool {
-        let uuid = volume_uuid(self.root.device());
-        let stored = self.stored_mark();
-        let resumable = stored
-            .as_ref()
-            .filter(|(id, at)| Some(at) == uuid.as_ref() && *id <= current_event_id());
-        let since = resumable.map(|(id, _)| *id);
+        let since = resumable(&mut self.reader, self.root.device());
         let sender = self.sender.clone();
         let sink = move |events| {
             let _ = sender.send(Command::Events(events));
         };
         self.origin = Some(since.unwrap_or_else(current_event_id));
         self.stream = Stream::start(self.root.path(), since, latency, sink).ok();
-        since.is_some() && self.stream.is_some()
-    }
-
-    fn stored_mark(&mut self) -> Option<(u64, String)> {
-        let note = self.reader.read(|snap| snap.note(EVENTS_NOTE)).ok()??;
-        let text = String::from_utf8(note).ok()?;
-        let (id, uuid) = text.split_once(' ')?;
-        Some((id.parse().ok()?, uuid.to_owned()))
+        since.and(self.stream.as_ref()).is_some()
     }
 
     /// Stores the id after which a restarted stream must resume.
@@ -222,11 +197,12 @@ impl Scheduler {
         })
     }
 
-    fn options(&self, threads: usize, throttled: bool) -> ScanOptions {
+    /// Options for a scan with `profile`'s threads and priority.
+    fn options(&self, profile: &Profile) -> ScanOptions {
         ScanOptions::new(self.root.clone(), self.scope.clone())
             .rules(Arc::clone(&self.shared.rules))
-            .threads(threads)
-            .throttled(throttled)
+            .threads(profile.threads)
+            .throttled(profile.throttled)
     }
 
     /// What is due: a full scan the profile allows, then one batch.
@@ -236,21 +212,24 @@ impl Scheduler {
         if status.needs_full_scan && !status.held && profile.full_scans {
             self.full_scan(false);
         }
-        let ready = self.next_batch.is_none_or(|next| Instant::now() >= next);
-        if !ready {
+        let waiting = self
+            .next_batch
+            .map(|next| next.saturating_duration_since(Instant::now()));
+        if waiting.is_some_and(|left| !left.is_zero()) {
             return;
         }
         let tasks = self.coalescer.due(self.clock.elapsed());
         if !tasks.is_empty() {
-            self.batch(&tasks, profile.threads.max(1), profile.throttled);
+            self.batch(&tasks, &profile);
             self.next_batch = Some(Instant::now() + profile.pause);
         }
         self.mark_events();
     }
 
-    fn batch(&mut self, tasks: &[RescanTask], threads: usize, throttled: bool) {
-        self.shared.update(|s| s.updating = true);
-        let options = self.options(threads, throttled);
+    /// Applies one batch; the status keeps its pending count until the
+    /// batch is applied, so the engine reads as updating meanwhile.
+    fn batch(&mut self, tasks: &[RescanTask], profile: &Profile) {
+        let options = self.options(profile);
         let mut full = false;
         let mut touched = Vec::new();
         for task in tasks {
@@ -264,7 +243,6 @@ impl Scheduler {
         self.after_change(&touched);
         let pending = self.coalescer.pending() as u64;
         self.shared.update(|s| {
-            s.updating = false;
             s.pending = pending;
             s.needs_full_scan |= full;
         });
@@ -276,7 +254,7 @@ impl Scheduler {
 
     /// Applies one task; false when only a full scan will do.
     fn apply(&mut self, task: &RescanTask, options: &ScanOptions) -> bool {
-        let control = ScanControl::new(0);
+        let control = ScanControl::new(usize::MIN);
         let done = refresh(
             task,
             options,
@@ -347,14 +325,11 @@ impl Scheduler {
     /// profile's. A scan cancelled while a picture exists is given up and
     /// the picture kept; without one it becomes a partial picture.
     fn full_scan(&mut self, interactive: bool) {
-        let profile = self.shared.profile();
-        let threads = match interactive {
-            true => self.shared.profiles.interactive.threads,
-            false => profile.threads,
+        let profile = if interactive {
+            self.shared.profiles.interactive
+        } else {
+            self.shared.profile()
         };
-        if threads == 0 {
-            return;
-        }
         self.watch();
         let control = Arc::new(ScanControl::new(LIVE_LIMIT));
         *lock(&self.shared.scan) = Some(RunningScan {
@@ -362,9 +337,10 @@ impl Scheduler {
             interactive,
         });
         self.shared.notify(Changed::Activity);
-        let options = self.options(threads, profile.throttled && !interactive);
+        let options = self.options(&profile);
         let had_picture = self.picture().ok().flatten().is_some();
         let finished = scan_into(&mut self.writer, &options, &control, had_picture);
+        let finished = finished.unwrap_or_default();
         if finished {
             self.verify();
             self.worktrees(None);
@@ -373,13 +349,9 @@ impl Scheduler {
         *lock(&self.shared.scan) = None;
         self.shared.count(|c| c.full_scans += 1);
         let cancelled = control.is_cancelled();
-        self.shared.update(|s| {
-            if finished {
-                s.needs_full_scan = cancelled;
-            }
-            s.held |= interactive || cancelled;
-            s.held &= cancelled;
-        });
+        if finished {
+            self.shared.update(|s| s.needs_full_scan = cancelled);
+        }
         self.shared.notify(Changed::Picture);
     }
 
@@ -448,8 +420,7 @@ impl Scheduler {
             .iter()
             .filter_map(|item| item.path.parent().map(Path::to_path_buf))
             .collect();
-        let profile = self.shared.profiles.interactive;
-        let options = self.options(profile.threads, false);
+        let options = self.options(&self.shared.profiles.interactive);
         let mut touched = Vec::new();
         for parent in parents {
             self.apply(&RescanTask::Shallow(parent.clone()), &options);
@@ -459,23 +430,40 @@ impl Scheduler {
     }
 }
 
-/// Scans into the index; true when the scan's picture was stored.
+/// Scans into the index; true when the scan's picture was stored. A
+/// scan cancelled while `keep_old` is given up, keeping the picture.
 fn scan_into(
     writer: &mut IndexWriter,
     options: &ScanOptions,
     control: &ScanControl,
     keep_old: bool,
-) -> bool {
-    let Ok(session) = writer.start_scan(now()) else {
-        return false;
-    };
+) -> Result<bool, IndexError> {
+    let session = writer.start_scan(now())?;
     let summary = run(options, control, &|rows| session.send(rows));
+    let give_up = keep_old && control.is_cancelled();
     match summary {
-        Ok(summary) if !(keep_old && control.is_cancelled()) => session.finish(&summary).is_ok(),
-        _ => {
-            let _ = session.abandon();
-            false
-        }
+        Ok(summary) if !give_up => session.finish(&summary).map(|()| true),
+        _ => session.abandon().map(|()| false),
+    }
+}
+
+/// The event id the stored history resumes after, if it can be resumed
+/// on the volume `device`.
+pub fn resumable(reader: &mut IndexReader, device: u64) -> Option<u64> {
+    let note = reader.read(|snap| snap.note(EVENTS_NOTE)).ok()??;
+    let text = String::from_utf8(note).ok()?;
+    let (id, recorded) = text.split_once(' ')?;
+    let stored = Some((id.parse().ok()?, recorded));
+    let uuid = volume_uuid(device);
+    resume_after(stored, uuid.as_deref(), current_event_id())
+}
+
+/// A change reported by hand: an event without an id of its own.
+fn reported(path: PathBuf) -> Event {
+    Event {
+        path,
+        flags: Flags::NONE,
+        id: u64::MIN,
     }
 }
 

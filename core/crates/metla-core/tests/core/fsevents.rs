@@ -154,3 +154,32 @@ fn fsevents_a_restart_resumes_from_the_stored_event_and_catches_what_changed_mea
     settled(&again);
     assert_eq!(again.counters().full_scans, 0);
 }
+
+#[test]
+fn a_stored_event_from_another_history_or_none_at_all_means_a_full_scan() {
+    let place = Place::new(HOME);
+    let quick = || real(&place, Duration::from_millis(20), profiles());
+    let manual = Engine::open(place.config(PowerProfile::Background)).unwrap();
+    settled(&manual);
+    drop(manual);
+    let without = Engine::open(quick()).unwrap();
+    assert!(
+        without.snapshot().unwrap().freshness.picture == metla_core::engine::Completeness::Complete
+    );
+    settled(&without);
+    assert_eq!(
+        without.counters().full_scans,
+        1,
+        "no stored event: nothing to resume"
+    );
+    drop(without);
+    let index = place.aux.path("data/index.sqlite");
+    let editor = metla_core::index::IndexWriter::open(&index).unwrap();
+    editor
+        .set_note(metla_core::engine::EVENTS_NOTE, b"1 not-this-volume")
+        .unwrap();
+    drop(editor);
+    let other = Engine::open(quick()).unwrap();
+    settled(&other);
+    assert_eq!(other.counters().full_scans, 1, "another volume's history");
+}

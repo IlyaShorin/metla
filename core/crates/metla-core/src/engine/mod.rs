@@ -43,7 +43,7 @@ pub use view::{
     Freshness, Listed, Overview, Removability, VolumeSpace,
 };
 
-use scheduler::{Command, Scheduler};
+use scheduler::{Command, Scheduler, resumable};
 use shared::{Shared, Status, lock};
 use worktrees::Statuses;
 
@@ -157,6 +157,10 @@ impl Engine {
         let current = scan.as_ref().is_some_and(|scan| scan.is_current());
         let pictured = scan.and_then(|scan| scan.picture);
         let usable = current && pictured.is_some_and(|picture| picture.root == root.path());
+        let streams = config.watching != Watching::Manual;
+        let timing = config.profiles.of(config.profile).timing;
+        let watched = settings.background && timing.is_some();
+        let follows = !(streams && watched) || resumable(&mut reader, root.device()).is_some();
         let scope = setup(&config.root, ScanScope::detect(&root))?;
         let rules = Arc::new(RuleSet::new(&config.home, &config.user));
         let cleaner = Cleaner::new(
@@ -183,7 +187,7 @@ impl Engine {
             observer,
             status: Mutex::new(Status {
                 profile: config.profile,
-                needs_full_scan: !usable,
+                needs_full_scan: !usable || !follows,
                 ..Status::default()
             }),
             scan: Mutex::default(),
@@ -211,7 +215,6 @@ impl Engine {
             stream: None,
             origin: None,
             clock: Instant::now(),
-            manual: u64::MIN,
             next_batch: None,
         };
         let editor = scheduler.writer.editor();
@@ -350,6 +353,7 @@ impl Engine {
 
     /// Starts a full scan with the `Interactive` profile's threads.
     pub fn start_scan(&self) -> Result<(), EngineError> {
+        lock(&self.shared.status).held = false;
         self.send(Command::Scan)
     }
 

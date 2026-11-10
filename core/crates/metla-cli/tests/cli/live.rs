@@ -131,6 +131,7 @@ fn the_freshness_line_says_what_was_done_and_whether_it_may_be_out_of_date() {
         tasks: 7,
         batches: 3,
         events: 40,
+        wakeups: 9,
     };
     let fresh = Freshness {
         full_scan: Some(UnixTime(100)),

@@ -35,7 +35,6 @@ pub struct Status {
     pub pending: u64,
     pub watching: bool,
     pub needs_full_scan: bool,
-    pub updating: bool,
     pub cleaning: bool,
     /// A scan was cancelled: no full scan starts on its own until the
     /// user asks for one.
@@ -107,7 +106,7 @@ impl Shared {
             return scanning;
         }
         let deferred = status.needs_full_scan && !self.profiles.of(effective).full_scans;
-        let due = status.pending > 0 || status.updating || status.needs_full_scan && !status.held;
+        let due = status.pending > 0 || status.needs_full_scan && !status.held;
         match (effective, deferred, due) {
             (PowerProfile::Off, _, _) => EngineState::Off,
             (profile, true, _) => EngineState::Paused(profile),

@@ -171,4 +171,7 @@ pub struct Counters {
     pub batches: u64,
     /// File-system events received.
     pub events: u64,
+    /// Times the scheduler woke up: for a command, an event batch or a
+    /// deadline. An idle engine does not wake up.
+    pub wakeups: u64,
 }

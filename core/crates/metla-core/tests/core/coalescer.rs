@@ -430,3 +430,23 @@ fn every_change_is_handed_out_after_it_happened_and_the_same_input_gives_the_sam
         assert_eq!(first, second, "seed {seed}");
     }
 }
+
+#[test]
+fn a_stream_resumes_only_within_the_same_history_and_not_from_the_future() {
+    use metla_core::watch::resume_after;
+    let cases = [
+        (Some((40, "A")), Some("A"), 50, Some(40)),
+        (Some((50, "A")), Some("A"), 50, Some(50)),
+        (Some((51, "A")), Some("A"), 50, None),
+        (Some((40, "A")), Some("B"), 50, None),
+        (Some((40, "A")), None, 50, None),
+        (None, Some("A"), 50, None),
+    ];
+    for (stored, uuid, current, expected) in cases {
+        assert_eq!(
+            resume_after(stored, uuid, current),
+            expected,
+            "{stored:?} {uuid:?}"
+        );
+    }
+}

@@ -183,12 +183,13 @@ pub fn watch(place: &Place, limit: Option<Duration>, out: &mut dyn Write) -> Res
     let counters = engine.counters();
     let _ = writeln!(
         out,
-        "watched {}: {} batches, {} tasks, {} full scans, {} events; {}",
+        "watched {}: {} batches, {} tasks, {} full scans, {} events, {} engine wake-ups; {}",
         seconds(started.elapsed()),
         counters.batches,
         counters.tasks,
         counters.full_scans,
         counters.events,
+        counters.wakeups,
         spent(&before, &usage())
     );
     Ok(())
