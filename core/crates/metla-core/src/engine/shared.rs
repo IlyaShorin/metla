@@ -102,15 +102,8 @@ impl Shared {
     /// The profile changes are followed with: `Interactive` while someone
     /// looks, if anything is followed at all.
     pub fn profile(&self) -> Profile {
-        let power = self.power();
         let attention = lock(&self.status).attention;
-        match (attention, power.timing) {
-            (true, Some(_)) => Profile {
-                full_scans: power.full_scans,
-                ..self.profiles.interactive
-            },
-            _ => power,
-        }
+        self.profiles.in_force(self.effective(), attention)
     }
 
     pub fn update(&self, change: impl FnOnce(&mut Status)) {

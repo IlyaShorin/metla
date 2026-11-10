@@ -179,6 +179,7 @@ fn inspect(git: &Git, chunk: &[Candidate], job: &Job) -> Vec<(DirId, WorktreeSta
     thread::scope(|scope| {
         for _ in 0..AT_ONCE {
             scope.spawn(|| {
+                // Applies what `Profiles::in_force` decided for the job.
                 if let Priority::Background = job.priority {
                     background_thread();
                 }

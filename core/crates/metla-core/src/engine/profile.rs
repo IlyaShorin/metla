@@ -125,4 +125,19 @@ impl Profiles {
             PowerProfile::Off => OFF,
         }
     }
+
+    /// The profile work follows under the power profile `power`: its
+    /// own, or while someone looks (`attention`) and it watches,
+    /// `Interactive`'s threads, timing and priority with `power`'s say on
+    /// full scans. A pure table: the threads only apply its priority.
+    pub fn in_force(&self, power: PowerProfile, attention: bool) -> Profile {
+        let power = self.of(power);
+        match (attention, power.timing) {
+            (true, Some(_)) => Profile {
+                full_scans: power.full_scans,
+                ..self.interactive
+            },
+            _ => power,
+        }
+    }
 }

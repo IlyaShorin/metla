@@ -363,6 +363,36 @@ fn the_power_profiles_are_the_documented_table() {
     assert_eq!(table.background.priority(), Priority::Normal);
 }
 
+/// Which profile work follows, and so the priority of the scan threads,
+/// the rescans and the worktree status threads: the power profile's, or
+/// while someone looks `Interactive`'s, keeping the power profile's say
+/// on full scans; `Off` watches nothing, attention or not.
+#[test]
+fn the_profile_in_force_and_its_priority_for_every_power_profile() {
+    use metla_core::scan::Priority::{Background as Low, Normal};
+    let table = Profiles::standard(8);
+    let rows = [
+        (PowerProfile::Interactive, false, Normal, true, true),
+        (PowerProfile::Background, false, Normal, true, true),
+        (PowerProfile::Saver, false, Low, false, true),
+        (PowerProfile::Off, false, Low, false, false),
+        (PowerProfile::Interactive, true, Normal, true, true),
+        (PowerProfile::Background, true, Normal, true, true),
+        (PowerProfile::Saver, true, Normal, false, true),
+        (PowerProfile::Off, true, Low, false, false),
+    ];
+    for (power, looking, priority, full_scans, watches) in rows {
+        let profile = table.in_force(power, looking);
+        let case = format!("{power:?}, attention {looking}");
+        assert_eq!(profile.priority(), priority, "{case}");
+        assert_eq!(profile.full_scans, full_scans, "{case}");
+        assert_eq!(profile.timing.is_some(), watches, "{case}");
+    }
+    let looked_at = table.in_force(PowerProfile::Saver, true);
+    assert_eq!(looked_at.timing, table.interactive.timing);
+    assert_eq!(looked_at.threads, table.interactive.threads);
+}
+
 #[test]
 fn engine_errors_explain_themselves() {
     let cases = [
