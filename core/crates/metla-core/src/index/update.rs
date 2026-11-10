@@ -77,7 +77,8 @@ fn stored_kinds(conn: &Connection) -> Result<KindTotals, IndexError> {
 }
 
 /// The directory `id` and every directory below it, with their own bytes
-/// by kind.
+/// by kind. `CROSS JOIN` keeps SQLite from walking the whole table and
+/// probing the subtree: it walks the subtree and looks each row up.
 fn subtree(conn: &Connection, id: DirId) -> Result<Vec<(DirId, KindTotals)>, IndexError> {
     let mut statement = conn.prepare(
         "WITH RECURSIVE sub(id) AS (
@@ -85,7 +86,7 @@ fn subtree(conn: &Connection, id: DirId) -> Result<Vec<(DirId, KindTotals)>, Ind
              UNION ALL
              SELECT dirs.id FROM dirs JOIN sub ON dirs.parent_id = sub.id
          )
-         SELECT dirs.id, dirs.kinds FROM dirs JOIN sub ON dirs.id = sub.id",
+         SELECT dirs.id, dirs.kinds FROM sub CROSS JOIN dirs ON dirs.id = sub.id",
     )?;
     let rows = statement.query_map([id.0], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, Option<Vec<u8>>>(1)?))

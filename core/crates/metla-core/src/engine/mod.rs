@@ -29,7 +29,7 @@ use crate::domain::{
 };
 use crate::fs::{DirHandle, list_dir, now, volume};
 use crate::git::{Git, WorktreeSettings};
-use crate::index::{IndexEditor, IndexError, IndexReader, IndexWriter, Page, Snapshot};
+use crate::index::{IndexEditor, IndexError, IndexReader, IndexWriter, Page, Picture, Snapshot};
 use crate::rules::RuleSet;
 use crate::scan::{ScanRoot, ScanScope};
 use crate::watch::Coalescer;
@@ -98,13 +98,14 @@ impl From<CleanError> for EngineError {
 
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EngineError::Index(error) => write!(f, "{error}"),
-            EngineError::Setup(why) => write!(f, "{why}"),
-            EngineError::Clean(error) => write!(f, "{error}"),
-            EngineError::NotInPicture => write!(f, "not in the picture"),
-            EngineError::Stopped => write!(f, "the engine has stopped"),
-        }
+        let text = match self {
+            EngineError::Index(error) => error.to_string(),
+            EngineError::Setup(why) => why.clone(),
+            EngineError::Clean(error) => error.to_string(),
+            EngineError::NotInPicture => "not in the picture".into(),
+            EngineError::Stopped => "the engine has stopped".into(),
+        };
+        f.write_str(&text)
     }
 }
 
@@ -239,9 +240,8 @@ impl Engine {
     }
 
     fn send(&self, command: Command) -> Result<(), EngineError> {
-        self.commands
-            .send(command)
-            .map_err(|_| EngineError::Stopped)
+        let sent = self.commands.send(command);
+        sent.or(Err(EngineError::Stopped))
     }
 
     fn read<T>(
@@ -268,21 +268,7 @@ impl Engine {
             ))
         })?;
         let picture = scan.and_then(|s| s.picture).filter(|p| p.root == root);
-        let status = *lock(&self.shared.status);
-        let completeness = match &picture {
-            None => Completeness::Missing,
-            Some(p) if p.coverage.is_complete() => Completeness::Complete,
-            Some(_) => Completeness::Partial,
-        };
-        let freshness = Freshness {
-            full_scan: picture.as_ref().map(|p| p.finished),
-            updated: picture.as_ref().map(|p| p.updated.unwrap_or(p.finished)),
-            pending: status.pending,
-            state: self.shared.state(),
-            picture: completeness,
-            watching: status.watching,
-            needs_full_scan: status.needs_full_scan,
-        };
+        let freshness = self.fresh(picture.as_ref());
         let space = volume(&root).ok().map(|v| VolumeSpace {
             total: v.total,
             available: v.available,
@@ -298,6 +284,33 @@ impl Engine {
             freshness,
             profile: self.shared.effective(),
         })
+    }
+
+    /// Only how fresh the picture is: cheaper than a snapshot, which also
+    /// counts the candidates.
+    pub fn freshness(&self) -> Result<Freshness, EngineError> {
+        let root = self.shared.root.clone();
+        let scan = self.read(|snap| snap.scan())?;
+        let picture = scan.and_then(|s| s.picture).filter(|p| p.root == root);
+        Ok(self.fresh(picture.as_ref()))
+    }
+
+    fn fresh(&self, picture: Option<&Picture>) -> Freshness {
+        let status = *lock(&self.shared.status);
+        let completeness = match picture {
+            None => Completeness::Missing,
+            Some(p) if p.coverage.is_complete() => Completeness::Complete,
+            Some(_) => Completeness::Partial,
+        };
+        Freshness {
+            full_scan: picture.map(|p| p.finished),
+            updated: picture.map(|p| p.updated.unwrap_or(p.finished)),
+            pending: status.pending,
+            state: self.shared.state(),
+            picture: completeness,
+            watching: status.watching,
+            needs_full_scan: status.needs_full_scan,
+        }
     }
 
     /// One page of the offered candidates of `category` (all when

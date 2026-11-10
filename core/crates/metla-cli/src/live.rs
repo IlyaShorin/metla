@@ -175,8 +175,8 @@ pub fn watch(place: &Place, limit: Option<Duration>, out: &mut dyn Write) -> Res
     );
     while let Some(left) = left(limit, started) {
         if let Ok(Changed::Picture) = notes.recv_timeout(left) {
-            let overview = engine.snapshot().map_err(|e| e.to_string())?;
-            let line = freshness_line(now(), &engine.counters(), &overview.freshness);
+            let freshness = engine.freshness().map_err(|e| e.to_string())?;
+            let line = freshness_line(now(), &engine.counters(), &freshness);
             let _ = writeln!(out, "{line}");
         }
     }

@@ -9,9 +9,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use metla_core::domain::{DirRecord, UnixTime};
-use metla_core::engine::{Engine, EngineState};
+use metla_core::engine::{DirRef, Engine, EngineState};
 use metla_core::fs::{thread_cpu, usage};
-use metla_core::index::{IndexReader, IndexWriter};
+use metla_core::index::{IndexReader, IndexWriter, Page};
 use metla_core::rules::RuleSet;
 use metla_core::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
 
@@ -33,7 +33,7 @@ fn waited(limit: Duration, done: impl Fn() -> bool) -> Option<Duration> {
 
 /// The engine has nothing left to do and its picture is complete.
 fn idle(engine: &Engine) -> bool {
-    let freshness = engine.snapshot().map(|o| o.freshness);
+    let freshness = engine.freshness();
     freshness.is_ok_and(|f| f.state == EngineState::Idle && f.pending == 0 && !f.needs_full_scan)
 }
 
@@ -169,11 +169,15 @@ pub fn bench_refresh(place: &Place) -> Result<String, String> {
     let mut lines = format!("refresh with {:?}:", place.profile);
     for round in 0..3 {
         let total = || {
-            engine
-                .snapshot()
-                .ok()
-                .and_then(|o| o.totals)
-                .map(|t| t.bytes)
+            let root = DirRef::Path(place.root.clone());
+            let folder = engine.children(
+                &root,
+                Page {
+                    offset: 0,
+                    limit: 0,
+                },
+            );
+            folder.ok().map(|f| f.dir.tree.bytes)
         };
         let before = total();
         fs::write(probe.join(format!("w{round}")), vec![9u8; 1 << 20])
