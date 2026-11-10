@@ -208,6 +208,22 @@ impl Snapshot<'_> {
         self.records(&sql, [id.0])
     }
 
+    /// The `limit` largest subdirectories of `id`, largest tree first.
+    pub fn largest_children(&self, id: DirId, limit: usize) -> Result<Vec<DirRecord>, IndexError> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM dirs WHERE parent_id = ?1
+             ORDER BY tree_bytes DESC, name LIMIT ?2"
+        );
+        self.records(&sql, params![id.0, int(limit as u64)])
+    }
+
+    /// How many subdirectories `id` has.
+    pub fn child_count(&self, id: DirId) -> Result<usize, IndexError> {
+        let sql = "SELECT count(*) FROM dirs WHERE parent_id = ?1";
+        let count: i64 = self.conn.query_row(sql, [id.0], |r| r.get(0))?;
+        Ok(count.unsigned_abs() as usize)
+    }
+
     /// The `limit` largest directories anywhere below `id`.
     pub fn top(&self, id: DirId, limit: usize) -> Result<Vec<DirRecord>, IndexError> {
         let sql = format!(

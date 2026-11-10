@@ -164,6 +164,9 @@ pub enum FolderEntry {
     Dir(Box<DirRecord>),
     /// A file (anything but a directory), listed now.
     File { name: OsString, bytes: Bytes },
+    /// The files past the most a listing keeps: "N more files". Always
+    /// last.
+    MoreFiles { files: u64, bytes: Bytes },
 }
 
 /// One page of a directory's contents, largest first.

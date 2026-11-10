@@ -47,11 +47,10 @@ thread_local! {
     static SPACE: RefCell<Vec<u8>> = RefCell::new(vec![u8::default(); BUFFER]);
 }
 
-/// Every entry of `dir`, or `None` when its file system does not support
-/// the bulk call.
-pub fn list(dir: &DirHandle) -> Result<Option<Vec<Entry>>, ListError> {
+/// Hands every entry of `dir` to `sink`; false, before any entry, when
+/// its file system does not support the bulk call.
+pub fn visit(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<bool, ListError> {
     let own = dir.reopen()?;
-    let mut entries = Vec::new();
     let mut request = libc::attrlist {
         bitmapcount: libc::ATTR_BIT_MAP_COUNT,
         commonattr: COMMON,
@@ -76,17 +75,17 @@ pub fn list(dir: &DirHandle) -> Result<Option<Vec<Entry>>, ListError> {
             });
             let count = match read {
                 Ok(count) => count,
-                Err(libc::ENOTSUP) => return Ok(None),
+                Err(libc::ENOTSUP) => return Ok(false),
                 Err(errno) => return Err(ListError::from_errno(errno)),
             };
             if count == 0 {
-                return Ok(Some(entries));
+                return Ok(true);
             }
             let mut at = 0;
             for _ in 0..count {
                 let record = &buffer[at..];
                 at += read_u32(record, 0) as usize;
-                entries.extend(entry(dir, record)?);
+                entry(dir, record)?.map(&mut *sink);
             }
         }
     })

@@ -6,6 +6,7 @@
 //! scans, rescans, cleanups — runs on the engine's scheduler thread, one
 //! at a time, and reports through the observer (`Changed`, no data).
 
+mod listing;
 mod profile;
 mod refresh;
 mod scheduler;
@@ -24,16 +25,17 @@ use std::time::Instant;
 
 use crate::clean::{CleanError, CleanProgress, CleanSettings, Cleaner, Production, TrashHost};
 use crate::domain::{
-    Bytes, Category, CleanupPreview, CleanupReport, Confirmation, DirId, DirRecord, EntryKind,
-    Exclusion, PreviewId, ProgressSnapshot, QuickCategory, Recency, Tally,
+    Bytes, Category, CleanupPreview, CleanupReport, Confirmation, DirId, Exclusion, PreviewId,
+    ProgressSnapshot, QuickCategory, Recency, Tally,
 };
-use crate::fs::{DirHandle, list_dir, now, volume};
+use crate::fs::{now, volume};
 use crate::git::{Git, WorktreeSettings};
 use crate::index::{IndexEditor, IndexError, IndexReader, IndexWriter, Page, Picture, Snapshot};
 use crate::rules::RuleSet;
 use crate::scan::{ScanRoot, ScanScope};
 use crate::watch::Coalescer;
 
+pub use listing::{LISTED_FILES, Largest, Rest};
 pub use profile::{OFF, PowerProfile, Profile, Profiles};
 pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
 pub use scheduler::{EVENTS_NOTE, Watching};
@@ -419,8 +421,11 @@ impl Engine {
     }
 
     /// One page of a directory's contents, largest first: its
-    /// subdirectories from the picture and its files listed now.
+    /// subdirectories from the picture and its files listed now, at
+    /// most [`LISTED_FILES`] of them and the rest as one entry. Reads
+    /// only the subdirectories up to the page's end.
     pub fn children(&self, dir: &DirRef, page: Page) -> Result<Folder, EngineError> {
+        let end = page.offset.saturating_add(page.limit);
         let found = self.read(|snap| {
             let found = match dir {
                 DirRef::Id(id) => (snap.record(*id)?, snap.path_of(*id)?),
@@ -429,11 +434,12 @@ impl Engine {
             let (Some(row), Some(path)) = found else {
                 return Ok(None);
             };
-            let children = snap.children(row.id)?;
-            Ok(Some((row, path, children)))
+            let children = snap.largest_children(row.id, end)?;
+            let count = snap.child_count(row.id)?;
+            Ok(Some((row, path, children, count)))
         })?;
-        let (row, path, children) = found.ok_or(EngineError::NotInPicture)?;
-        Ok(folder(row, path, children, page))
+        let (row, path, children, count) = found.ok_or(EngineError::NotInPicture)?;
+        Ok(listing::folder(row, path, children, count, page))
     }
 
     /// Starts a full scan with the `Interactive` profile's threads; it
@@ -612,51 +618,5 @@ fn clean_settings(home: &Path, settings: &Settings) -> CleanSettings {
             stale_after: settings.stale_after,
         },
         recent_age: settings.recent_age,
-    }
-}
-
-/// A folder's page: subdirectories and files listed now, largest first.
-fn folder(row: DirRecord, path: PathBuf, children: Vec<DirRecord>, page: Page) -> Folder {
-    let listed = DirHandle::open(&path).and_then(|dir| list_dir(&dir));
-    let files: Vec<FolderEntry> = listed
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|e| e.meta.kind != EntryKind::Dir)
-        .map(|e| FolderEntry::File {
-            bytes: e.meta.share(),
-            name: e.name,
-        })
-        .collect();
-    let dirs = children
-        .into_iter()
-        .map(|row| FolderEntry::Dir(Box::new(row)));
-    let mut entries: Vec<FolderEntry> = dirs.collect();
-    entries.extend(files);
-    entries.sort_by(|a, b| size(b).cmp(&size(a)).then_with(|| name(a).cmp(name(b))));
-    let total = entries.len();
-    let entries = entries
-        .into_iter()
-        .skip(page.offset)
-        .take(page.limit)
-        .collect();
-    Folder {
-        dir: row,
-        path,
-        entries,
-        total,
-    }
-}
-
-fn size(entry: &FolderEntry) -> Bytes {
-    match entry {
-        FolderEntry::Dir(row) => row.tree.bytes,
-        FolderEntry::File { bytes, .. } => *bytes,
-    }
-}
-
-fn name(entry: &FolderEntry) -> &OsString {
-    match entry {
-        FolderEntry::Dir(row) => &row.name,
-        FolderEntry::File { name, .. } => name,
     }
 }

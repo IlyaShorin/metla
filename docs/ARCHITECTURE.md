@@ -222,7 +222,12 @@ using the system `libsqlite3`.
   written at a time. Readers use their own connections.
 * **Directories only.** One row per directory with its own and subtree
   totals. Files are not stored; when the user expands a directory its files
-  are listed live by one `readdir` off the UI thread. A Mac with millions of
+  are listed live by one listing off the UI thread (`Engine::children`):
+  the entries stream through a bounded heap that keeps the 10,000
+  largest files (`LISTED_FILES`; of equal sizes the names that sort
+  first), and the rest are one entry with their count and bytes
+  (`FolderEntry::MoreFiles`, "N more files", always last). Only the
+  subdirectories up to the page's end are read from the index. A Mac with millions of
   files needs hundreds of thousands of rows, not millions, and memory use
   stays bounded by the page cache.
 

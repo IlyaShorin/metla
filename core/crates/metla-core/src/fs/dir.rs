@@ -183,20 +183,33 @@ fn stat_of(fd: &OwnedFd) -> Result<EntryMeta, ListError> {
 /// out. Uses `getattrlistbulk`, and the classic listing where the file
 /// system does not support it.
 pub fn list_dir(dir: &DirHandle) -> Result<Vec<Entry>, ListError> {
-    match super::bulk::list(dir)? {
-        Some(entries) => Ok(entries),
-        None => list_dir_classic(dir),
+    let mut entries = Vec::new();
+    visit_dir(dir, &mut |entry| entries.push(entry))?;
+    Ok(entries)
+}
+
+/// [`list_dir`] handing each entry to `sink` as it is read, so a
+/// directory of any size is listed in bounded memory.
+pub fn visit_dir(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<(), ListError> {
+    if !super::bulk::visit(dir, sink)? {
+        visit_classic(dir, sink)?;
     }
+    Ok(())
 }
 
 /// [`list_dir`] with `readdir` and one `fstatat` per entry.
 pub fn list_dir_classic(dir: &DirHandle) -> Result<Vec<Entry>, ListError> {
-    let stream = DirStream::open(dir)?;
     let mut entries = Vec::new();
-    while let Some(name) = stream.next_name()? {
-        entries.extend(entry_of(dir, name)?);
-    }
+    visit_classic(dir, &mut |entry| entries.push(entry))?;
     Ok(entries)
+}
+
+fn visit_classic(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<(), ListError> {
+    let stream = DirStream::open(dir)?;
+    while let Some(name) = stream.next_name()? {
+        entry_of(dir, name)?.map(&mut *sink);
+    }
+    Ok(())
 }
 
 /// The entry for `name`, or nothing for `.`, `..` and a name that is gone.

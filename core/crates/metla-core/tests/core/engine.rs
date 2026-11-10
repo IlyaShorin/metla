@@ -15,8 +15,8 @@ use metla_core::domain::{
 };
 use metla_core::engine::{
     Changed, Completeness, DirRef, Engine, EngineConfig, EngineError, EngineObserver, EngineState,
-    Failure, FolderEntry, HotkeyMode, Listed, PowerProfile, Profile, Profiles, Removability,
-    Settings, Watching,
+    Failure, FolderEntry, HotkeyMode, LISTED_FILES, Largest, Listed, PowerProfile, Profile,
+    Profiles, Removability, Settings, Watching,
 };
 use metla_core::index::Page;
 use metla_core::watch::Timing;
@@ -470,6 +470,7 @@ fn a_folder_lists_its_subdirectories_and_files_largest_first_then_by_name() {
         .map(|e| match e {
             FolderEntry::Dir(row) => format!("{}/", row.name.to_string_lossy()),
             FolderEntry::File { name, .. } => name.to_string_lossy().into_owned(),
+            FolderEntry::MoreFiles { .. } => "…".into(),
         })
         .collect();
     assert_eq!(names, ["big/", "file", "twin-a", "twin-b", "small/"]);
@@ -486,6 +487,106 @@ fn a_folder_lists_its_subdirectories_and_files_largest_first_then_by_name() {
     assert_eq!(by_id.entries.len(), 1);
     let missing = engine.children(&DirRef::Path(place.path("nowhere")), ALL);
     assert!(matches!(missing, Err(EngineError::NotInPicture)));
+}
+
+#[test]
+fn a_folder_lists_at_most_ten_thousand_files_and_counts_the_rest() {
+    let place = Place::new(&["many/sub/x=1"]);
+    let many = place.path("many");
+    for i in 0..LISTED_FILES {
+        fs::write(many.join(format!("f{i:05}")), "x").unwrap();
+    }
+    let engine = place.open();
+    settled(&engine);
+    let list = |engine: &Engine| {
+        let everything = Page {
+            offset: 0,
+            limit: 2 * LISTED_FILES,
+        };
+        engine
+            .children(&DirRef::Path(many.clone()), everything)
+            .unwrap()
+    };
+    let folder = list(&engine);
+    assert_eq!(
+        folder.total,
+        LISTED_FILES + 1,
+        "every file and the directory"
+    );
+    assert!(
+        !folder
+            .entries
+            .iter()
+            .any(|e| matches!(e, FolderEntry::MoreFiles { .. }))
+    );
+    write_file(&many.join("f99999"), 1);
+    let folder = list(&engine);
+    assert_eq!(folder.total, LISTED_FILES + 2);
+    let more = folder.entries.last().unwrap();
+    let FolderEntry::MoreFiles { files, bytes } = more else {
+        panic!("{more:?}");
+    };
+    assert_eq!(*files, 1, "the name that sorts last of the smallest");
+    assert!(bytes.0 > 0);
+    let kept = folder
+        .entries
+        .iter()
+        .filter(|e| matches!(e, FolderEntry::File { .. }));
+    assert_eq!(kept.count(), LISTED_FILES);
+}
+
+#[test]
+fn a_folder_page_needs_only_the_largest_subdirectories_up_to_its_end() {
+    let lines: Vec<String> = (0..30).map(|i| format!("wide/d{i:02}/x=1")).collect();
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let place = Place::new(&lines);
+    write_file(&place.path("wide/d07/big"), 40_000);
+    let engine = place.open();
+    settled(&engine);
+    let page = Page {
+        offset: 2,
+        limit: 3,
+    };
+    let folder = engine
+        .children(&DirRef::Path(place.path("wide")), page)
+        .unwrap();
+    assert_eq!(folder.total, 30);
+    let names: Vec<String> = folder
+        .entries
+        .iter()
+        .map(|e| match e {
+            FolderEntry::Dir(row) => row.name.to_string_lossy().into_owned(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(names, ["d01", "d02", "d03"], "after d07 and d00");
+}
+
+#[test]
+fn the_largest_files_are_kept_and_the_rest_counted() {
+    let mut largest = Largest::new(3);
+    for (name, bytes) in [("a", 5), ("b", 9), ("c", 1), ("d", 5), ("e", 7), ("f", 5)] {
+        largest.add(name.into(), Bytes(bytes));
+    }
+    let (kept, rest) = largest.finish();
+    let names: Vec<&str> = kept.iter().map(|(n, _)| n.to_str().unwrap()).collect();
+    assert_eq!(
+        names,
+        ["b", "e", "a"],
+        "largest first; of equals, the first name"
+    );
+    assert_eq!((rest.files, rest.bytes), (3, Bytes(11)));
+    let mut exact = Largest::new(2);
+    exact.add("x".into(), Bytes(1));
+    exact.add("y".into(), Bytes(2));
+    let (kept, rest) = exact.finish();
+    assert_eq!(kept.len(), 2);
+    assert_eq!((rest.files, rest.bytes), (0, Bytes(0)));
+    let mut none = Largest::new(0);
+    none.add("z".into(), Bytes(4));
+    let (kept, rest) = none.finish();
+    assert!(kept.is_empty());
+    assert_eq!((rest.files, rest.bytes), (1, Bytes(4)));
 }
 
 #[test]
