@@ -60,9 +60,9 @@ pub struct Engine {
 
 #[uniffi::export]
 impl Engine {
-    /// Opens the engine; the saved picture answers at once. It can clean
-    /// only a root marked as a fixture: this crate cannot make the
-    /// production capability.
+    /// Opens the engine; the saved picture answers at once. Unless this
+    /// is the app's release build, it can clean only a root marked as a
+    /// fixture.
     #[uniffi::constructor]
     pub fn open(
         options: EngineOptions,
@@ -78,7 +78,7 @@ impl Engine {
             user: OsString::from(options.user),
             data_dir: PathBuf::from(options.data_dir),
             git: Git::system(),
-            production: None,
+            production: production(),
             trash: Arc::new(Trash(trash)),
             watching,
             profiles: Profiles::standard(cores()),
@@ -224,6 +224,26 @@ impl Engine {
     pub fn last_report(&self) -> Option<CleanupResult> {
         self.inner.last_report().map(CleanupResult::from)
     }
+}
+
+/// Whether this build can clean a root that is not a fixture: only the
+/// app's release build can.
+#[uniffi::export]
+pub fn cleans_beyond_fixtures() -> bool {
+    production().is_some()
+}
+
+/// The capability to clean a root that is not a fixture: made only in a
+/// release build with the `production` feature, the app's release build.
+#[cfg(all(feature = "production", not(debug_assertions)))]
+fn production() -> Option<metla_core::clean::Production> {
+    Some(metla_core::clean::Production::release_app())
+}
+
+/// Any other build cleans fixtures only.
+#[cfg(not(all(feature = "production", not(debug_assertions))))]
+fn production() -> Option<metla_core::clean::Production> {
+    None
 }
 
 /// `path` as an exclusion, checked where it comes in.

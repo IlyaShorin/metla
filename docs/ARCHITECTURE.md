@@ -820,9 +820,17 @@ another user owns it stays `InspectionFailed` (a worktree) or
   holds a lock of its own (a test reads the engine from inside the
   notification). Errors are `MetlaError`; nothing panics across the
   boundary by design.
-* **No production capability.** `metla-ffi` depends on `metla-core`
-  without its `production` feature, and a test reads its sources: no
-  build of the app in M5 can clean a root that is not a fixture.
+* **The production capability only in the app's release build.**
+  `metla-ffi` has a `production` feature (off by default) that turns on
+  `metla-core`'s; the capability is made in exactly one function, under
+  `#[cfg(all(feature = "production", not(debug_assertions)))]`, and a
+  test reads the sources to keep it so. `scripts/build-core.sh
+  production` builds that library for the release app only; the debug
+  app and the Swift tests link `scripts/build-core.sh`'s plain library,
+  and the Rust tests are debug builds, so none of them can clean a root
+  that is not a fixture (tested at the Rust and the Swift level:
+  `execute_confirmed` and `quick_clean` report that they did not run).
+  `cleans_beyond_fixtures()` tells the app which build it is.
 * **Swift side.** `EngineClient` is an actor that owns the engine; every
   call runs on it, off the main thread, through `MainThreadGuard`, which
   stops a debug build making a blocking engine call on the main thread.
@@ -873,9 +881,9 @@ another user owns it stays `InspectionFailed` (a worktree) or
   <dir>` builds one.
 * The app honours `METLA_ROOT`, `METLA_HOME` and `METLA_DATA_DIR` so it
   can be driven against a fixture with a separate index; `run-app.sh`
-  makes a fixture when none is given. In M5 the app cannot clean a root
-  that is not a fixture (`metla-ffi` has no production capability) and
-  its `TrashHost` refuses every move.
+  makes a fixture when none is given and refuses a root that is not one.
+  Only the release build can clean a root that is not a fixture (§10);
+  it is never started on anything but a fixture while developing.
 * The engine can run on the real root for measurements (scan, watch,
   snapshot): without the `Production` capability its cleaner refuses a
   root without the fixture marker, and the CLI's engine moves nothing to

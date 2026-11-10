@@ -9,9 +9,10 @@
 //! have a record of their own here (`view`). Every call returns at once
 //! and is safe from any thread; lists are pages of a bounded size.
 //!
-//! This crate depends on metla-core without its `production` feature, so
-//! nothing built from it can make the capability to clean a root that is
-//! not a fixture.
+//! Only a release build with this crate's `production` feature (the
+//! app's release build) makes the capability to clean a root that is not
+//! a fixture; every other build, the tests included, cleans fixtures
+//! only.
 
 mod callbacks;
 mod domain;
@@ -20,7 +21,7 @@ mod error;
 mod view;
 
 pub use callbacks::{EngineObserver, Observer, Trash, TrashHost, TrashOutcome};
-pub use engine::{Engine, EngineOptions, MAX_PAGE, page};
+pub use engine::{Engine, EngineOptions, MAX_PAGE, cleans_beyond_fixtures, page};
 pub use error::MetlaError;
 pub use view::{
     CandidatePage, CategoryTally, CleanupResult, Confirmations, CoverageSummary, EngineSettings,

@@ -66,11 +66,17 @@ does not.
 ## The app
 
 ```
-scripts/build-core.sh      # metla-ffi's static library and the Swift bindings
-scripts/build-app.sh       # Metla.app (ad-hoc signed) under target/app
-scripts/run-app.sh         # starts it on a fixture metla-cli makes
-scripts/run-app.sh --capture <dir>   # PNGs of the main screens, light and dark
+scripts/build-core.sh      # metla-ffi's static library (fixtures only) and the Swift bindings
+scripts/build-core.sh production    # the release app's library: can clean real data
+scripts/build-app.sh       # Metla.app (release, ad-hoc signed) under target/app/release
+METLA_CONFIGURATION=debug scripts/build-app.sh   # the debug app: cleans fixtures only
+scripts/run-app.sh         # starts the debug app on a fixture metla-cli makes
+scripts/run-app.sh --capture <dir>   # PNGs of the screens, light and dark
 ```
+
+Only the release build of the app can clean a root that is not a
+fixture. Develop, test and capture with the debug build; never start a
+release build without `METLA_ROOT` pointing at a fixture.
 
 `swift build` and `swift test` in `app/` need the generated bindings
 (`build-core.sh`) and the library's directory on the linker's path

@@ -21,10 +21,13 @@ test = false
 
 [features]
 bindgen = ["uniffi/cli"]
+# Lets a release build make the capability to clean a root that is not a
+# fixture. Only the app's release build asks for it
+# (scripts/build-core.sh release); tests, the debug app and the CLI never
+# have it, and a debug build cannot make it even with the feature.
+production = ["metla-core/production"]
 
 [dependencies]
-# Without the `production` feature: nothing built from this crate can
-# make the capability to clean a root that is not a fixture.
 metla-core = { path = "../metla-core" }
 uniffi = "0.32"
 

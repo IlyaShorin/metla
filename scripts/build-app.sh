@@ -3,8 +3,10 @@
 # release (METLA_CONFIGURATION=debug for a debug build), and the bundle
 # layout with its Info.plist, ad-hoc signed. Prints the bundle's path.
 #
-# In this version no build of the app can clean a root that is not a
-# fixture: metla-ffi never makes the production capability.
+# Only the release build links the core built with its production
+# capability (scripts/build-core.sh production) and can clean a root that
+# is not a fixture; the debug build cleans fixtures only. Start a release
+# build on a fixture (METLA_ROOT) while developing.
 #
 # Environment:
 #   METLA_BUILD           where the bundle and SwiftPM's build directory go
@@ -19,14 +21,19 @@ build="${METLA_BUILD:-$repo/target/app}"
 configuration="${METLA_CONFIGURATION:-release}"
 version="0.5.0"
 
-lib="$("$repo/scripts/build-core.sh")"
+case "$configuration" in
+    release) kind=production ;;
+    debug) kind=plain ;;
+    *) echo "METLA_CONFIGURATION must be release or debug" >&2; exit 2 ;;
+esac
+lib="$("$repo/scripts/build-core.sh" "$kind")"
 scratch="$build/swift-build"
 (cd "$repo/app" && swift build -c "$configuration" --scratch-path "$scratch" \
     -Xswiftc -warnings-as-errors -Xlinker -L"$lib") >&2
 products="$(cd "$repo/app" && swift build -c "$configuration" --scratch-path "$scratch" \
     -Xlinker -L"$lib" --show-bin-path)"
 
-app="$build/Metla.app"
+app="$build/$configuration/Metla.app"
 rm -rf -- "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$products/Metla" "$app/Contents/MacOS/Metla"

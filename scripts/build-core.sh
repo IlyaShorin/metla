@@ -2,6 +2,12 @@
 # Builds the Rust core for the app and prints the directory that holds
 # libmetla_ffi.a, which the Swift build passes to the linker.
 #
+#   scripts/build-core.sh              fixtures only: the tests and the
+#                                      debug app (target/app-core/plain)
+#   scripts/build-core.sh production   the app's release build: the only
+#                                      library that can clean a root that is
+#                                      not a fixture (target/app-core/production)
+#
 #   * metla-ffi's static library, release, for aarch64-apple-darwin, and
 #     for x86_64-apple-darwin too when that Rust target is installed (no
 #     toolchain is downloaded), joined into one library with lipo;
@@ -18,7 +24,14 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 core="$repo/core"
 generated="$repo/app/Sources/MetlaCoreFFI/generated"
+kind="${1:-plain}"
+case "$kind" in
+    plain) features=() ;;
+    production) features=(--features production) ;;
+    *) echo "usage: $0 [plain|production]" >&2; exit 2 ;;
+esac
 out="$core/target/app-core"
+lib_dir="$out/$kind/lib"
 bindings="$out/bindings"
 
 triples=(aarch64-apple-darwin)
@@ -29,16 +42,17 @@ fi
 libraries=()
 for triple in "${triples[@]}"; do
     (cd "$core" && cargo rustc -q -p metla-ffi --lib --release --target "$triple" \
-        --crate-type staticlib) >&2
+        ${features[@]+"${features[@]}"} --crate-type staticlib) >&2
     libraries+=("$core/target/$triple/release/libmetla_ffi.a")
 done
 
-mkdir -p "$out/lib" "$bindings"
-lipo -create "${libraries[@]}" -output "$out/lib/libmetla_ffi.a"
+# Both kinds build to the same file per triple: join them at once.
+mkdir -p "$lib_dir" "$bindings"
+lipo -create "${libraries[@]}" -output "$lib_dir/libmetla_ffi.a"
 
 (cd "$core" && cargo run -q -p metla-ffi --features bindgen --bin uniffi-bindgen-swift -- \
     --swift-sources --headers --metadata-no-deps \
-    "$out/lib/libmetla_ffi.a" "$bindings") >&2
+    "$lib_dir/libmetla_ffi.a" "$bindings") >&2
 
 mkdir -p "$generated/include"
 cp "$bindings/metla_ffi.swift" "$generated/metla_ffi.swift"
@@ -57,4 +71,4 @@ module metla_ffiFFI {
 }
 MAP
 
-echo "$out/lib"
+echo "$lib_dir"
