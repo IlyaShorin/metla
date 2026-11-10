@@ -603,3 +603,31 @@ fn a_scan_with_the_classic_listing_records_exactly_the_same_tree() {
     assert_eq!(bulk.records, classic.records);
     assert_eq!(bulk.summary.totals, classic.summary.totals);
 }
+
+/// Whether the calling thread runs at background priority.
+fn in_background() -> bool {
+    unsafe { libc::getpriority(libc::PRIO_DARWIN_THREAD, 0) != 0 }
+}
+
+#[test]
+fn a_throttled_scan_reads_at_background_priority_and_others_do_not() {
+    let fx = Fixture::new();
+    fx.build(&["a/b/c=1", "d/"]);
+    for throttled in [false, true] {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        let hook = Hook(move |_: &DirFacts<'_>| record.lock().unwrap().push(in_background()));
+        let options = options(fx.root())
+            .threads(2)
+            .throttled(throttled)
+            .observer(Arc::new(hook));
+        scan_with(&options, &ScanControl::new(8));
+        let seen = seen.lock().unwrap();
+        assert!(!seen.is_empty());
+        assert!(
+            seen.iter().all(|b| *b == throttled),
+            "{throttled}: {seen:?}"
+        );
+    }
+    assert!(!in_background(), "the test thread itself is untouched");
+}

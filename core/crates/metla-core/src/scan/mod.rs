@@ -269,7 +269,7 @@ pub fn rescan(
         path: target.path,
         // A rescan's own coverage is not used: the index counts it again
         // from its rows, so depths below the origin need no offset.
-        depth: 0,
+        depth: u32::default(),
         mtime: meta.mtime,
         identity: Identity {
             device: meta.device,
