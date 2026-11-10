@@ -25,8 +25,8 @@ use std::time::Instant;
 
 use crate::clean::{CleanError, CleanProgress, CleanSettings, Cleaner, Production, TrashHost};
 use crate::domain::{
-    Bytes, Category, CleanupPreview, CleanupReport, Confirmation, DirId, Exclusion, PreviewId,
-    ProgressSnapshot, QuickCategory, Recency, Tally,
+    Bytes, Category, CleanupPreview, CleanupReport, Confirmation, DirId, DirRecord, Exclusion,
+    PreviewId, ProgressSnapshot, QuickCategory, Recency, Tally,
 };
 use crate::fs::{now, volume};
 use crate::git::{Git, WorktreeSettings};
@@ -468,11 +468,7 @@ impl Engine {
     pub fn children(&self, dir: &DirRef, page: Page) -> Result<Folder, EngineError> {
         let end = page.offset.saturating_add(page.limit);
         let found = self.read(|snap| {
-            let found = match dir {
-                DirRef::Id(id) => (snap.record(*id)?, snap.path_of(*id)?),
-                DirRef::Path(path) => (snap.dir(path)?, Some(path.clone())),
-            };
-            let (Some(row), Some(path)) = found else {
+            let Some((row, path)) = located(snap, dir)? else {
                 return Ok(None);
             };
             let children = snap.largest_children(row.id, end)?;
@@ -650,6 +646,15 @@ impl Drop for Engine {
             let _ = thread.join();
         }
     }
+}
+
+/// The directory `dir` names and its path, if the picture has it.
+fn located(snap: &Snapshot<'_>, dir: &DirRef) -> Result<Option<(DirRecord, PathBuf)>, IndexError> {
+    let found = match dir {
+        DirRef::Id(id) => (snap.record(*id)?, snap.path_of(*id)?),
+        DirRef::Path(path) => (snap.dir(path)?, Some(path.clone())),
+    };
+    Ok(found.0.zip(found.1))
 }
 
 fn clean_settings(home: &Path, settings: &Settings) -> CleanSettings {

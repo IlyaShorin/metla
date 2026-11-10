@@ -183,9 +183,7 @@ fn stat_of(fd: &OwnedFd) -> Result<EntryMeta, ListError> {
 /// out. Uses `getattrlistbulk`, and the classic listing where the file
 /// system does not support it.
 pub fn list_dir(dir: &DirHandle) -> Result<Vec<Entry>, ListError> {
-    let mut entries = Vec::new();
-    visit_dir(dir, &mut |entry| entries.push(entry))?;
-    Ok(entries)
+    collect(|sink| visit_dir(dir, sink))
 }
 
 /// [`list_dir`] handing each entry to `sink` as it is read, so a
@@ -199,8 +197,15 @@ pub fn visit_dir(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<(), Lis
 
 /// [`list_dir`] with `readdir` and one `fstatat` per entry.
 pub fn list_dir_classic(dir: &DirHandle) -> Result<Vec<Entry>, ListError> {
+    collect(|sink| visit_classic(dir, sink))
+}
+
+/// What `visit` hands over, in a list.
+fn collect(
+    visit: impl FnOnce(&mut dyn FnMut(Entry)) -> Result<(), ListError>,
+) -> Result<Vec<Entry>, ListError> {
     let mut entries = Vec::new();
-    visit_classic(dir, &mut |entry| entries.push(entry))?;
+    visit(&mut |entry| entries.push(entry))?;
     Ok(entries)
 }
 

@@ -309,7 +309,7 @@ impl Scheduler {
             }
             Ok(_) => false,
             Err(error) => {
-                let failure = refresh_failure(&error);
+                let failure = refresh_failure(error);
                 self.shared.update(|s| s.failure = Some(failure));
                 false
             }
@@ -536,10 +536,9 @@ fn index_failure(error: IndexError) -> Failure {
     }
 }
 
-fn refresh_failure(error: &RefreshError) -> Failure {
+fn refresh_failure(error: RefreshError) -> Failure {
     match error {
-        RefreshError::Index(IndexError::NoSpace) => Failure::NoSpace,
-        RefreshError::Index(_) => Failure::Index,
+        RefreshError::Index(error) => index_failure(error),
         RefreshError::Scan(_) => Failure::Scan,
     }
 }

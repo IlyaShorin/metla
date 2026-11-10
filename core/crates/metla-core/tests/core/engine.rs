@@ -986,6 +986,31 @@ fn a_scan_that_runs_out_of_disk_space_fails_and_the_picture_stays() {
 }
 
 #[test]
+fn an_update_that_runs_out_of_disk_space_says_so_and_waits_for_the_user() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    settled(&engine);
+    drop(engine);
+    wide(&place);
+    let size = fs::metadata(index_of(&place)).unwrap().len();
+    let limited = EngineConfig {
+        index_limit: Some(Bytes(size + 32 * 1024)),
+        ..place.config(PowerProfile::Background)
+    };
+    let engine = Engine::open(limited).unwrap();
+    engine.changed(vec![place.path("wide")]).unwrap();
+    let failed = EngineState::Failed(Failure::NoSpace);
+    until(&engine, |e| e.freshness().unwrap().state == failed);
+    let freshness = engine.freshness().unwrap();
+    assert!(
+        freshness.needs_full_scan,
+        "the change is not in the picture"
+    );
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(engine.counters().full_scans, 0, "no full scan on its own");
+}
+
+#[test]
 fn a_first_scan_without_disk_space_fails_once_and_waits_for_the_user() {
     let place = Place::new(HOME);
     wide(&place);

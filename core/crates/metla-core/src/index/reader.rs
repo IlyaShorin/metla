@@ -252,11 +252,7 @@ impl Snapshot<'_> {
 
     /// The `limit` largest subdirectories of `id`, largest tree first.
     pub fn largest_children(&self, id: DirId, limit: usize) -> Result<Vec<DirRecord>, IndexError> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM dirs WHERE parent_id = ?1
-             ORDER BY tree_bytes DESC, name LIMIT ?2"
-        );
-        self.records(&sql, params![id.0, int(limit as u64)])
+        self.ranked(id, limit, false)
     }
 
     /// The `limit` largest directories of the picture but its root, with
@@ -283,15 +279,27 @@ impl Snapshot<'_> {
 
     /// The `limit` largest directories anywhere below `id`.
     pub fn top(&self, id: DirId, limit: usize) -> Result<Vec<DirRecord>, IndexError> {
-        let sql = format!(
-            "WITH RECURSIVE below(id) AS (
-                 SELECT id FROM dirs WHERE parent_id = ?1
-                 UNION ALL
-                 SELECT dirs.id FROM dirs JOIN below ON dirs.parent_id = below.id
-             )
-             SELECT {COLUMNS} FROM dirs WHERE id IN below
-             ORDER BY tree_bytes DESC, id LIMIT ?2"
-        );
+        self.ranked(id, limit, true)
+    }
+
+    /// The `limit` largest directories below `id`: anywhere in its
+    /// subtree, or its children only (ties by name).
+    fn ranked(&self, id: DirId, limit: usize, subtree: bool) -> Result<Vec<DirRecord>, IndexError> {
+        let sql = match subtree {
+            true => format!(
+                "WITH RECURSIVE below(id) AS (
+                     SELECT id FROM dirs WHERE parent_id = ?1
+                     UNION ALL
+                     SELECT dirs.id FROM dirs JOIN below ON dirs.parent_id = below.id
+                 )
+                 SELECT {COLUMNS} FROM dirs WHERE id IN below
+                 ORDER BY tree_bytes DESC, id LIMIT ?2"
+            ),
+            false => format!(
+                "SELECT {COLUMNS} FROM dirs WHERE parent_id = ?1
+                 ORDER BY tree_bytes DESC, name LIMIT ?2"
+            ),
+        };
         self.records(&sql, params![id.0, int(limit as u64)])
     }
 
