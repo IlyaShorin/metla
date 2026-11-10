@@ -100,7 +100,9 @@ impl ScanOptions {
             scope,
             threads: 1,
             throttled: false,
-            classic: false,
+            // The bulk listing unless asked: both listings give the same
+            // entries (tests compare them), only their speed differs.
+            classic: bool::default(),
             rules: None,
             observer: None,
         }

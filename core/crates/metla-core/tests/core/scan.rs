@@ -617,13 +617,11 @@ fn a_throttled_scan_reads_at_background_priority_and_others_do_not() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let record = Arc::clone(&seen);
         let hook = Hook(move |_: &DirFacts<'_>| record.lock().unwrap().push(in_background()));
-        let options = options(fx.root())
-            .threads(2)
-            .priority(match throttled {
-                true => metla_core::scan::Priority::Background,
-                false => metla_core::scan::Priority::default(),
-            })
-            .observer(Arc::new(hook));
+        let options = options(fx.root()).threads(2).observer(Arc::new(hook));
+        let options = match throttled {
+            true => options.priority(metla_core::scan::Priority::Background),
+            false => options,
+        };
         scan_with(&options, &ScanControl::new(8));
         let seen = seen.lock().unwrap();
         assert!(!seen.is_empty());
