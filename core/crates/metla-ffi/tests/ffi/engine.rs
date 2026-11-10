@@ -26,6 +26,16 @@ fn the_overview_comes_through_whole() {
         (caches.tally.count, caches.disposal),
         (2, Disposal::DeletePermanently)
     );
+    assert_eq!(
+        caches.reclaimable.freed, caches.tally,
+        "both caches preselected"
+    );
+    let freed: u64 = overview
+        .categories
+        .iter()
+        .map(|c| c.reclaimable.freed.bytes.0)
+        .sum();
+    assert_eq!(freed, overview.reclaimable.freed.bytes.0, "the rows add up");
     assert_eq!(overview.kinds.len(), 7);
     assert_eq!(overview.coverage.unwrap().gaps.len(), 4);
     assert!(overview.volume.is_some());

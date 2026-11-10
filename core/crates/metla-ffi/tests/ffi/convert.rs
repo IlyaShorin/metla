@@ -184,6 +184,13 @@ fn the_overview_lists_every_category_and_kind_in_a_fixed_order() {
         totals: None,
         categories: BTreeMap::from([(Category::Log, logs)]),
         reclaimable: Reclaimable::default(),
+        reclaimable_by_category: BTreeMap::from([(
+            Category::Log,
+            Reclaimable {
+                freed: Tally::default(),
+                trashed: logs,
+            },
+        )]),
         kinds,
         coverage: Some(coverage),
         freshness: freshness(),
@@ -196,6 +203,11 @@ fn the_overview_lists_every_category_and_kind_in_a_fixed_order() {
     let log = &shown.categories[3];
     assert_eq!((log.tally, log.disposal), (logs, Disposal::MoveToTrash));
     assert_eq!(shown.categories[0].tally, Tally::default());
+    assert_eq!(
+        log.reclaimable.trashed, logs,
+        "what its preselected ones do"
+    );
+    assert_eq!(shown.categories[0].reclaimable, Reclaimable::default());
     assert_eq!(shown.categories[4].disposal, Disposal::GitWorktreeRemove);
     let kinds: Vec<_> = shown.kinds.iter().map(|k| (k.kind, k.bytes.0)).collect();
     assert_eq!(kinds.len(), 7);

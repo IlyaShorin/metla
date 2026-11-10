@@ -93,6 +93,11 @@ pub struct Reclaimable {
 }
 
 impl Reclaimable {
+    pub fn merge(&mut self, other: &Reclaimable) {
+        self.freed.merge(&other.freed);
+        self.trashed.merge(&other.trashed);
+    }
+
     pub fn add(&mut self, candidate: &Candidate) {
         let tally = match candidate.disposal() {
             Disposal::MoveToTrash => &mut self.trashed,

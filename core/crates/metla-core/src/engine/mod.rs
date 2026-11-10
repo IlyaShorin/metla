@@ -26,7 +26,7 @@ use std::time::Instant;
 use crate::clean::{CleanError, CleanProgress, CleanSettings, Cleaner, Production, TrashHost};
 use crate::domain::{
     Bytes, Category, CleanupPreview, CleanupReport, Confirmation, DirId, DirRecord, Exclusion,
-    PreviewId, ProgressSnapshot, QuickCategory, Recency, Tally,
+    PreviewId, ProgressSnapshot, QuickCategory, Recency, Reclaimable, Tally,
 };
 use crate::fs::{now, volume};
 use crate::git::{Git, WorktreeSettings};
@@ -335,14 +335,16 @@ impl Engine {
     pub fn snapshot(&self) -> Result<Overview, EngineError> {
         let recency = self.recency();
         let root = self.shared.root.clone();
-        let (scan, totals, categories, reclaimable) = self.read(|snap| {
+        let (scan, totals, categories, per) = self.read(|snap| {
             Ok((
                 snap.scan()?,
                 snap.root()?.map(|row| row.tree),
                 snap.category_tallies()?,
-                snap.reclaimable(&recency)?,
+                snap.reclaimable_by_category(&recency)?,
             ))
         })?;
+        let mut reclaimable = Reclaimable::default();
+        per.values().for_each(|one| reclaimable.merge(one));
         let picture = scan.and_then(|s| s.picture).filter(|p| p.root == root);
         let freshness = self.fresh(picture.as_ref());
         let space = volume(&root).ok().map(|v| VolumeSpace {
@@ -357,6 +359,7 @@ impl Engine {
             volume: space,
             categories,
             reclaimable,
+            reclaimable_by_category: per,
             freshness,
             profile: self.shared.effective(),
         })

@@ -123,8 +123,12 @@ pub struct Overview {
     pub volume: Option<VolumeSpace>,
     /// The root's totals; `None` without a picture.
     pub totals: Option<TreeTotals>,
+    /// Every offered candidate, per category.
     pub categories: BTreeMap<Category, Tally>,
+    /// What cleaning the preselected candidates would do: in all, and per
+    /// category (every category present; they add up to the total).
     pub reclaimable: Reclaimable,
+    pub reclaimable_by_category: BTreeMap<Category, Reclaimable>,
     pub kinds: KindTotals,
     pub coverage: Option<Coverage>,
     pub freshness: Freshness,

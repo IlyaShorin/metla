@@ -351,15 +351,30 @@ impl Snapshot<'_> {
     /// would only move to the Trash. Worktrees are never preselected, so
     /// nothing is counted twice.
     pub fn reclaimable(&self, recency: &Recency) -> Result<Reclaimable, IndexError> {
-        let mut reclaimable = Reclaimable::default();
+        let per = self.reclaimable_by_category(recency)?;
+        Ok(per.values().fold(Reclaimable::default(), |mut all, one| {
+            all.merge(one);
+            all
+        }))
+    }
+
+    /// [`Snapshot::reclaimable`] per category (every category present):
+    /// what the preselected candidates of each would free and move to the
+    /// Trash, by their rules' disposal.
+    pub fn reclaimable_by_category(
+        &self,
+        recency: &Recency,
+    ) -> Result<BTreeMap<Category, Reclaimable>, IndexError> {
+        let mut per: BTreeMap<Category, Reclaimable> =
+            Category::ALL.map(|c| (c, Reclaimable::default())).into();
         let found = self
             .visible(None)?
             .into_iter()
             .map(|f| f.candidate(recency));
         for candidate in found.filter(|c| c.preselected) {
-            reclaimable.add(&candidate);
+            per.entry(candidate.category()).or_default().add(&candidate);
         }
-        Ok(reclaimable)
+        Ok(per)
     }
 
     /// Project output Git has not been asked about yet, with its path.

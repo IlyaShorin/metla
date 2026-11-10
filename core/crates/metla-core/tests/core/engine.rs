@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use metla_core::clean::{CleanError, FIXTURE_MARKER, TrashHost};
 use metla_core::domain::{
-    Bytes, Category, Confirmation, DirId, Exclusion, Outcome, QuickCategory, Separate,
+    Bytes, Category, Confirmation, DirId, Exclusion, Outcome, QuickCategory, Separate, Tally,
 };
 use metla_core::engine::{
     Changed, Completeness, DirRef, Engine, EngineConfig, EngineError, EngineObserver, EngineState,
@@ -726,6 +726,62 @@ fn the_engine_asks_git_about_project_output_after_a_scan_and_after_an_update() {
     until(&engine, |e| {
         offered(e, &place).contains("code/app/web/target")
     });
+}
+
+#[test]
+fn what_can_be_freed_is_told_per_category_and_adds_up() {
+    let place = Place::new(&[
+        "~/Library/Caches/com.example.app/blob=cached",
+        "~/Library/Logs/com.example.app/today.log=log",
+        "~/.Trash/old.dmg=old",
+        "code/app/Cargo.toml",
+        "code/app/target/debug/out=binary",
+    ]);
+    let git_ = isolated(&place.aux);
+    git(
+        &git_,
+        &place.path("code/app"),
+        &["init", "-q", "-b", "main"],
+    );
+    fs::write(place.path("code/app/.gitignore"), "target/\n").unwrap();
+    let engine = place.open();
+    settled(&engine);
+    until(&engine, |e| offered(e, &place).contains("code/app/target"));
+    let overview = engine.snapshot().unwrap();
+    let per = &overview.reclaimable_by_category;
+    assert_eq!(per.len(), Category::ALL.len(), "every category");
+    let sum = |field: fn(&metla_core::domain::Reclaimable) -> metla_core::domain::Tally| {
+        per.values()
+            .map(field)
+            .fold(Tally::default(), |mut all, t| {
+                all.merge(&t);
+                all
+            })
+    };
+    assert_eq!(
+        sum(|r| r.freed),
+        overview.reclaimable.freed,
+        "rows add up to the header"
+    );
+    assert_eq!(sum(|r| r.trashed), overview.reclaimable.trashed);
+    let build = &per[&Category::BuildArtifact];
+    assert_eq!(
+        build.freed.count, 0,
+        "recent build output is found, not preselected"
+    );
+    assert_eq!(overview.categories[&Category::BuildArtifact].count, 1);
+    let temp = &per[&Category::Temp];
+    assert_eq!(
+        (temp.freed.count, temp.trashed.count),
+        (1, 0),
+        "the Trash is emptied for good"
+    );
+    let logs = &per[&Category::Log];
+    assert_eq!(
+        (logs.freed.count, logs.trashed.count),
+        (0, 1),
+        "logs go to the Trash"
+    );
 }
 
 #[test]

@@ -33,12 +33,17 @@ pub struct Overview {
     pub profile: PowerProfile,
 }
 
-/// A category's offered candidates and how they are removed.
+/// A category's offered candidates, how the category is removed, and
+/// what cleaning its preselected candidates would do (by their rules'
+/// disposal: the Trash's contents are deleted, not moved).
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct CategoryTally {
     pub category: Category,
     pub disposal: Disposal,
+    /// Every offered candidate.
     pub tally: Tally,
+    /// The preselected ones; the categories' add up to the Overview's.
+    pub reclaimable: Reclaimable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
@@ -86,6 +91,11 @@ impl From<engine::Overview> for Overview {
                     disposal: category.disposal(),
                     tally: overview
                         .categories
+                        .get(&category)
+                        .copied()
+                        .unwrap_or_default(),
+                    reclaimable: overview
+                        .reclaimable_by_category
                         .get(&category)
                         .copied()
                         .unwrap_or_default(),
