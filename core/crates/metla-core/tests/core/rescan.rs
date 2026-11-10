@@ -343,6 +343,16 @@ fn a_change_for_a_picture_that_was_replaced_is_not_applied() {
         reader.read(|snap| snap.root()).unwrap().is_some(),
         "nothing removed"
     );
+    let (_older, older_index, _first) = written(&fx, &options);
+    let mut older = IndexReader::open(&older_index).unwrap();
+    let task = RescanTask::Shallow(fx.path("a"));
+    let control = ScanControl::new(0);
+    let done = refresh(&task, &options, &mut older, &writer, &control, UnixTime(4)).unwrap();
+    assert_eq!(
+        done,
+        Refreshed::NoPicture,
+        "planned on a picture the writer no longer holds"
+    );
 }
 
 #[test]
