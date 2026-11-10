@@ -47,9 +47,21 @@ thread_local! {
     static SPACE: RefCell<Vec<u8>> = RefCell::new(vec![u8::default(); BUFFER]);
 }
 
-/// Hands every entry of `dir` to `sink`; false, before any entry, when
-/// its file system does not support the bulk call.
-pub fn visit(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<bool, ListError> {
+/// How a bulk listing ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Listing {
+    /// Every entry was handed on.
+    Done,
+    /// The file system does not support the bulk call; nothing was
+    /// handed on. Not seen on the development machine: APFS, HFS+ and
+    /// devfs all answer (the kernel emulates the call where needed), so
+    /// no test reaches this case.
+    Unsupported,
+}
+
+/// Hands every entry of `dir` to `sink`, unless its file system does not
+/// support the bulk call.
+pub(super) fn visit(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<Listing, ListError> {
     let own = dir.reopen()?;
     let mut request = libc::attrlist {
         bitmapcount: libc::ATTR_BIT_MAP_COUNT,
@@ -75,11 +87,11 @@ pub fn visit(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<bool, ListE
             });
             let count = match read {
                 Ok(count) => count,
-                Err(libc::ENOTSUP) => return Ok(false),
+                Err(libc::ENOTSUP) => return Ok(Listing::Unsupported),
                 Err(errno) => return Err(ListError::from_errno(errno)),
             };
             if count == 0 {
-                return Ok(true);
+                return Ok(Listing::Done);
             }
             let mut at = 0;
             for _ in 0..count {

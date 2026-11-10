@@ -189,7 +189,7 @@ pub fn list_dir(dir: &DirHandle) -> Result<Vec<Entry>, ListError> {
 /// [`list_dir`] handing each entry to `sink` as it is read, so a
 /// directory of any size is listed in bounded memory.
 pub fn visit_dir(dir: &DirHandle, sink: &mut dyn FnMut(Entry)) -> Result<(), ListError> {
-    if !super::bulk::visit(dir, sink)? {
+    if super::bulk::visit(dir, sink)? == super::bulk::Listing::Unsupported {
         visit_classic(dir, sink)?;
     }
     Ok(())
