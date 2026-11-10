@@ -52,4 +52,21 @@ waiting for the mutator to stop it.
 
 These tools do not analyse Swift. Swift is held to: Swift 6 language mode
 with strict concurrency, warnings as errors, `swift test`, and line coverage
-of `MetlaKit` reported by `llvm-cov`.
+of `MetlaKit` reported by `llvm-cov` — `scripts/quality-swift.sh`. See
+[docs/QUALITY.md](docs/QUALITY.md) for what each gate covers and what it
+does not.
+
+## The app
+
+```
+scripts/build-core.sh      # metla-ffi's static library and the Swift bindings
+scripts/build-app.sh       # Metla.app (ad-hoc signed) under target/app
+scripts/run-app.sh         # starts it on a fixture metla-cli makes
+scripts/run-app.sh --capture <dir>   # PNGs of the main screens, light and dark
+```
+
+`swift build` and `swift test` in `app/` need the generated bindings
+(`build-core.sh`) and the library's directory on the linker's path
+(`-Xlinker -L<dir>`, the path `build-core.sh` prints); the scripts pass
+it. Start the app only on a fixture (`METLA_ROOT`, `METLA_HOME`,
+`METLA_DATA_DIR`) while developing.

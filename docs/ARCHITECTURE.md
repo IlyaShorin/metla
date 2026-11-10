@@ -768,22 +768,65 @@ another user owns it stays `InspectionFailed` (a worktree) or
 
 ## 10. The Rust/Swift boundary
 
-* UniFFI (proc-macro mode). Domain types derive the UniFFI traits behind the
-  `ffi` cargo feature, so each type is defined once and the core builds and
-  tests without UniFFI.
-* `metla-ffi` exports one object, `Engine`, plus two foreign-implemented
-  traits: `EngineObserver` (coalesced change notifications) and `TrashHost`.
-* Calls are synchronous and short on the Rust side. Swift wraps the engine
-  in an actor; nothing is called on the main thread. Long work (scan,
-  cleanup) runs on engine threads and reports through the observer.
-* Observer events carry no data, only "what changed"; the UI then asks for
-  the snapshot it shows. This keeps one source of truth and makes dropped or
-  merged notifications harmless.
+* **UniFFI 0.32, proc-macro mode, no UDL.** `metla-ffi` is the only crate
+  Swift links (a static library, `scripts/build-core.sh`). The domain's
+  types cross as they are: `metla-ffi` declares them again with UniFFI's
+  remote derives (`#[uniffi::remote(Record|Enum)]`), which generate the
+  conversion field by field and fail to compile when a declaration and
+  the core's type differ; newtypes (`Bytes`, `DirId`, `UnixTime`, ...)
+  cross as their numbers, paths and names as strings (APFS names are
+  UTF-8). This replaces the earlier plan of deriving the traits behind an
+  `ffi` feature of `metla-core`: the core's maps, sets and private fields
+  cannot carry UniFFI derives without changing their shape, and the
+  remote derives need no hand-written conversion for the rest. The core
+  does not depend on UniFFI at all. Records of the boundary's own exist
+  only where the core's shape cannot cross: the Overview with categories
+  and file kinds as lists in a fixed order, `CoverageSummary`,
+  `FolderPage`, `Confirmations`, `Leftover`, `CleanupResult`, and
+  `CandidatePage` with a `u64` total.
+* **One object, two traits.** `Engine` (open, snapshot, freshness,
+  progress, largest folders, candidate pages in an order, folder pages,
+  scans, power profile, attention, exclusions, preview,
+  `execute_confirmed` with the preview id and the per-group and per-item
+  confirmations, `quick_clean` with `QuickCategory`'s three cases,
+  cleanup progress and report) and two traits the app implements:
+  `EngineObserver` (data-free notifications with a coarse topic,
+  `Changed`) and `TrashHost` (move one path, `Moved` or `Refused {
+  reason }`).
+* **Calls** are synchronous, return at once and are safe from any thread.
+  Lists are pages of at most 1,000 entries (`MAX_PAGE`). Nothing walks
+  the file system on the caller's thread except `children`, which lists
+  the one directory asked for (at most 10,000 files kept). Long work
+  (scans, cleanups) runs on engine threads and is reported through the
+  observer, which the engine calls on its own threads and never while it
+  holds a lock of its own (a test reads the engine from inside the
+  notification). Errors are `MetlaError`; nothing panics across the
+  boundary by design.
+* **No production capability.** `metla-ffi` depends on `metla-core`
+  without its `production` feature, and a test reads its sources: no
+  build of the app in M5 can clean a root that is not a fixture.
+* **Swift side.** `EngineClient` is an actor that owns the engine; every
+  call runs on it, off the main thread, through `MainThreadGuard`, which
+  stops a debug build making a blocking engine call on the main thread.
+  Observer notifications are kept per topic and signalled through a
+  stream; the view models drain the topics, refresh at most every
+  250 ms, and poll while a scan runs (a scan's progress is read, not
+  pushed).
 
 ## 11. The app
 
-* `NavigationSplitView` main window: Overview, cleanup categories, Folders,
-  last report. Standard controls, light and dark, full keyboard navigation.
+* SwiftPM package `app/` (no Xcode project, no third-party packages),
+  macOS 14: `MetlaCoreFFI` (generated bindings and the C module),
+  `MetlaKit` (engine client, view models, formatting, strings, launch
+  settings; tested), `MetlaApp` (SwiftUI views, AppKit glue, `@main`).
+  `scripts/build-app.sh` lays out an ad-hoc signed `Metla.app`;
+  `scripts/run-app.sh` starts it on a fixture.
+* `NavigationSplitView` main window (M5): Overview, the six categories'
+  tables, Folders; standard controls, light and dark, English and
+  Russian (rule titles localised by rule id, the catalogue's English
+  title as fallback). The window's visibility is the engine's
+  attention. Last report, the cleanup flow, the menu-bar panel, Settings
+  and hotkeys come in M6.
 * `MenuBarExtra` panel: disk gauge, reclaimable estimate, scan state and
   freshness, quick actions.
 * Settings scene: General (background analysis, battery behaviour, launch at
@@ -794,6 +837,10 @@ another user owns it stays `InspectionFailed` (a worktree) or
 * Without Full Disk Access the app says so, skips protected locations
   rather than triggering a prompt per folder, and marks the analysis
   partial. It never asks for root.
+* `--capture <dir>` renders each main screen, light and dark, to PNG files
+  from the app's own layers and quits; on macOS 26 the parts the window
+  server composes (Liquid Glass: the sidebar, toolbar items, checkbox
+  marks) come out empty, since a picture of them needs screen recording.
 
 ## 12. Development safety
 
@@ -805,8 +852,11 @@ another user owns it stays `InspectionFailed` (a worktree) or
   feature. The CLI never names it (a test reads its sources), so
   `metla-cli clean` works only on fixtures; `metla-cli fixture create
   <dir>` builds one.
-* The app honours `METLA_ROOT` and `METLA_DATA_DIR` so it can be driven
-  against a fixture with a separate index.
+* The app honours `METLA_ROOT`, `METLA_HOME` and `METLA_DATA_DIR` so it
+  can be driven against a fixture with a separate index; `run-app.sh`
+  makes a fixture when none is given. In M5 the app cannot clean a root
+  that is not a fixture (`metla-ffi` has no production capability) and
+  its `TrashHost` refuses every move.
 * The engine can run on the real root for measurements (scan, watch,
   snapshot): without the `Production` capability its cleaner refuses a
   root without the fixture marker, and the CLI's engine moves nothing to
@@ -819,7 +869,9 @@ another user owns it stays `InspectionFailed` (a worktree) or
 
 Rust: `cargo test`, `clippy -D warnings`, and the ub-mode tools — crapper
 (every function CRAP < 10), dryer (no duplication ≥ 0.8), mutator (no
-uncovered sites, no survivors), uml-viewer (dependency rule). These tools do
-not understand Swift. Swift is checked with the Swift 6 compiler in strict
-concurrency mode, warnings as errors, `swift test` and llvm-cov coverage of
-`MetlaKit`; this boundary is stated in every quality report.
+uncovered sites, no survivors), uml-viewer (dependency rule) —
+`scripts/quality.sh`. These tools do not understand Swift. Swift is
+checked with the Swift 6 compiler in strict concurrency mode, warnings as
+errors, `swift test` and llvm-cov coverage of `MetlaKit`
+(`scripts/quality-swift.sh`); [QUALITY.md](QUALITY.md) states the
+boundary.

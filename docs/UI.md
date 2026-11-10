@@ -24,7 +24,10 @@ is shipped as a localisation.
   `Updated 2 min ago`, `Updated 2 min ago · partial`,
   `Never scanned`, `Background analysis off`.
 * **Refresh** (⌘R) and **Clean…** (⌘⌫, opens the preview for the current
-  default selection).
+  default selection). In M5 **Clean…** and **Clean selected…** open a
+  placeholder sheet; the preview is M6's.
+* The engine follows changes at once while the window is visible (its
+  attention); otherwise the power profile decides.
 
 **Overview**
 
@@ -67,9 +70,10 @@ default. Header shows "selected N of M · size" and **Clean selected…**.
 
 An outline of the whole disk, lazily loaded, sorted by size. Columns: name
 with disclosure triangle, share of parent (bar), item count, size.
-Directories expand down to files. Badges: rule title on candidates,
-"no access" on denied directories, "skipped" on excluded mounts and cloud
-placeholders. Footer shows the selection and key hints.
+Directories expand down to files; a directory lists at most its 10,000
+largest files and one "N more" row for the rest. Badges: rule title on
+candidates, "no access" on denied directories, "skipped" on excluded
+mounts and cloud placeholders. Footer shows the selection and key hints.
 
 * → expands, ← collapses, ⌘↩ Reveal in Finder, ⌘⌫ add candidate to the
   cleanup selection, ⌘E exclude.

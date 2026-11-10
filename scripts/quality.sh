@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Quality gates for the Rust core (core/):
+# Quality gates for the Rust workspace (core/: metla-core, metla-cli,
+# metla-ffi):
 #   cargo fmt --check, cargo clippy -D warnings, cargo test,
 #   the slow tests with real FSEvents latency (the ignored group, once),
 #   crapper (every function CRAP < 10), dryer (no pair scoring >= 0.8),
@@ -30,7 +31,8 @@
 # test run, and a run without an end is a mutant stopped at its timeout,
 # counted per file below.
 #
-# The tools do not analyse Swift; the Swift app has its own gates.
+# The tools do not analyse Swift; the Swift app has its own gates
+# (scripts/quality-swift.sh, docs/QUALITY.md).
 
 set -uo pipefail
 
