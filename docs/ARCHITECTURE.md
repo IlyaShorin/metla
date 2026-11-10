@@ -450,8 +450,10 @@ M4 changes:
 
 * **The stream** (`watch::sys`, every FFI declaration of the module):
   one FSEvents stream on the root, directory granularity, `WatchRoot`,
-  not `NoDefer`, a latency of about a second, delivered on a serial
-  dispatch queue of its own. On `/` an event in a firmlinked area is
+  not `NoDefer`, with the profile's latency, delivered on a serial
+  dispatch queue of its own. A profile of another latency replaces the
+  stream with one that replays from the id after which nothing is
+  pending, so nothing the old stream held back is lost. On `/` an event in a firmlinked area is
   reported by its path under `/`, which is why the coalescer may ignore
   the firmlink targets inside `/System/Volumes/Data` that the scan scope
   excludes.
@@ -468,7 +470,9 @@ M4 changes:
   * keeps events per directory; a change is due after a *settle time* of
     quiet; each later event (events handed over together count once)
     restarts the wait and multiplies the settle time by the factor, up to
-    the cap, and nothing waits longer than one cap after its first event,
+    the cap and never below the profile's own settle time (so a profile
+    change retimes what waits), and nothing waits longer than one cap
+    after its first event,
     so a directory that never stops changing is rescanned once per cap; a
     directory rescanned less than a cap ago starts from its last settle
     time multiplied again (remembered for as many directories as are
@@ -552,12 +556,28 @@ One table, `Profiles::standard(cores)`; the app picks the profile from
 the power state, the engine owns what each means. The thread counts
 come from the thread sweep in PERFORMANCE.md.
 
-| Profile       | Threads | Settle / cap | Batch | Tracked dirs | Pause  | Starts full scans | Priority |
-|---------------|---------|--------------|-------|--------------|--------|-------------------|----------|
-| `Interactive` | cores−2, at most 8 | 1 s / 30 s | 256 | 4,096   | none   | yes               | normal   |
-| `Background`  | 2       | 2 s / 60 s   | 64    | 4,096        | 0.1 s  | yes               | normal   |
-| `Saver`       | 1       | 10 s / 300 s | 16    | 1,024        | 1 s    | no (`Paused`)     | background, throttled I/O |
-| `Off`         | 0       | —            | —     | —            | —      | no                | — (nothing is watched) |
+| Profile       | Threads | Latency | Settle / cap | Batch | Tracked dirs | Pause | Starts full scans | Priority |
+|---------------|---------|---------|--------------|-------|--------------|-------|-------------------|----------|
+| `Interactive` | cores−2, at most 8 | 1 s | 1 s / 30 s | 256 | 4,096 | none | yes | normal |
+| `Background`  | 2       | 15 s    | 30 s / 300 s | 1,024 | 4,096        | 60 s  | yes               | normal   |
+| `Saver`       | 1       | 15 s    | 60 s / 900 s | 256   | 1,024        | 180 s | no (`Paused`)     | background, throttled I/O |
+| `Off`         | 0       | —       | —            | —     | —            | —     | no                | — (nothing is watched) |
+
+The pause between batches sets how often Background and Saver change
+the picture: about once a minute and every three minutes. Their streams
+hold events back for 15 s; macOS was measured to deliver every 15 s or
+so whatever longer latency is asked for (30 s and 600 s alike), so the
+table does not promise more. While nobody looks, a change on disk can
+therefore wait up to a latency plus a pause before it is applied, and
+`pending` counts only what has been delivered.
+
+**Attention.** `Engine::set_attention(true)` says someone looks (the
+app's window or panel is visible): changes are followed as
+`Interactive` follows them (its latency, settle times, batches and
+threads), what waits is due at once (`Coalescer::expedite`), and the
+pause is forgotten; full scans the engine starts on its own still
+follow the power profile. `set_attention(false)` returns to the power
+profile. Attention watches nothing that `Off` leaves alone.
 
 Every profile multiplies the settle time by 2 per event and collapses
 more than 32 changed children. `Off` stops watching at once and cancels

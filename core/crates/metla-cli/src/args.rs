@@ -34,8 +34,6 @@ profiles: interactive, background, saver, off
 clean works only on a root marked .metla-fixture; without --yes it only previews;
 bench churn and refresh write only into a root marked .metla-fixture";
 
-/// The FSEvents latency `watch` and `bench` use unless told otherwise.
-pub const LATENCY: Duration = Duration::from_secs(1);
 /// How long a bench waits for the engine unless told otherwise.
 pub const PATIENCE: Duration = Duration::from_secs(600);
 /// How long `bench churn` churns, and how many files per burst.
@@ -221,7 +219,7 @@ impl Parsed {
             root: self.path("--root")?,
             data_dir: self.path("--data-dir")?,
             home: self.take("--home").map(PathBuf::from),
-            latency: self.millis("--latency-ms")?.unwrap_or(LATENCY),
+            latency: self.millis("--latency-ms")?,
             settle: self.millis("--settle-ms")?,
             profile: self.profile()?,
             patience: self

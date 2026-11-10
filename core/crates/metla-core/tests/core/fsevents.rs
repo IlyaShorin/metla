@@ -16,10 +16,22 @@ use crate::support::write_file;
 
 fn real(place: &Place, latency: Duration, profiles: Profiles) -> EngineConfig {
     EngineConfig {
-        watching: Watching::FsEvents { latency },
-        profiles,
+        watching: Watching::FsEvents,
+        profiles: following(profiles, latency),
         ..place.config(PowerProfile::Background)
     }
+}
+
+/// `profiles` with every stream holding events back for `latency`.
+pub fn following(mut profiles: Profiles, latency: Duration) -> Profiles {
+    for profile in [
+        &mut profiles.interactive,
+        &mut profiles.background,
+        &mut profiles.saver,
+    ] {
+        profile.latency = latency;
+    }
+    profiles
 }
 
 /// The standard profiles, with the slow ones' threads.
@@ -53,6 +65,63 @@ fn the_engine_follows_a_real_stream_and_resumes_after_the_stored_event() {
     });
     settled(&again);
     assert_eq!(again.counters().full_scans, 0, "resumed, not rescanned");
+}
+
+/// Background holds events back for ten minutes; Interactive hands
+/// them over at once.
+fn held_back(place: &Place) -> EngineConfig {
+    let mut profiles = following(profiles(), Duration::from_millis(20));
+    profiles.background.latency = Duration::from_secs(600);
+    EngineConfig {
+        watching: Watching::FsEvents,
+        profiles,
+        ..place.config(PowerProfile::Background)
+    }
+}
+
+#[test]
+fn another_latency_replaces_the_stream_and_replays_what_it_held_back() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(held_back(&place)).unwrap();
+    settled(&engine);
+    place.fx.build(&["~/Library/Caches/org.held.back/x=1"]);
+    std::thread::sleep(Duration::from_millis(300));
+    let seen = |e: &Engine| offered(e, &place).contains("home/Library/Caches/org.held.back");
+    assert!(!seen(&engine), "the stream holds the change back");
+    assert_eq!(engine.counters().events, 0);
+    assert_eq!(engine.counters().streams, 1);
+    engine.set_power_profile(PowerProfile::Interactive).unwrap();
+    within(&engine, DELIVERY, seen);
+    assert_eq!(
+        engine.counters().streams,
+        2,
+        "another latency, another stream"
+    );
+    assert_eq!(engine.counters().full_scans, 1, "replayed, not rescanned");
+    engine.set_power_profile(PowerProfile::Saver).unwrap();
+    settled(&engine);
+    assert_eq!(
+        engine.counters().streams,
+        2,
+        "the same latency, the same stream"
+    );
+}
+
+#[test]
+fn attention_hands_over_at_once_what_the_stream_held_back() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(held_back(&place)).unwrap();
+    settled(&engine);
+    place.fx.build(&["~/Library/Caches/org.looked.at/x=1"]);
+    std::thread::sleep(Duration::from_millis(300));
+    let seen = |e: &Engine| offered(e, &place).contains("home/Library/Caches/org.looked.at");
+    assert!(!seen(&engine), "the stream holds the change back");
+    engine.set_attention(true).unwrap();
+    within(&engine, DELIVERY, seen);
+    assert_eq!(engine.counters().streams, 2, "Interactive's latency");
+    engine.set_attention(false).unwrap();
+    until(&engine, |e| e.counters().streams == 3);
+    assert_eq!(engine.counters().full_scans, 1, "replayed, not rescanned");
 }
 
 #[test]

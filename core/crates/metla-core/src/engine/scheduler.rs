@@ -38,11 +38,18 @@ const ALL: Page = Page {
 /// Where changes come from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Watching {
-    /// An FSEvents stream on the root, with this latency.
-    FsEvents { latency: Duration },
+    /// An FSEvents stream on the root, with the profile's latency.
+    FsEvents,
     /// Only what `Engine::changed` reports (tests, and tools that know
     /// what they changed).
     Manual,
+}
+
+/// The stream that runs, and the latency it was made with.
+pub struct Following {
+    /// Held so that the stream runs; dropping it stops the stream.
+    _stream: Stream,
+    latency: Duration,
 }
 
 /// What API calls ask the scheduler to do.
@@ -51,6 +58,8 @@ pub enum Command {
     Changed(Vec<PathBuf>),
     Scan,
     Profile,
+    /// Someone started or stopped looking.
+    Attention,
     Execute(PreviewId, Confirmation),
     Quick(Vec<QuickCategory>),
     Stop,
@@ -66,7 +75,7 @@ pub struct Scheduler {
     pub watching: Watching,
     pub commands: Receiver<Command>,
     pub sender: Sender<Command>,
-    pub stream: Option<Stream>,
+    pub stream: Option<Following>,
     /// The event id the stream started after: where a restart resumes
     /// when no event has come yet.
     pub origin: Option<u64>,
@@ -122,6 +131,7 @@ impl Scheduler {
             }
             Command::Scan => self.full_scan(true),
             Command::Profile => self.watch(),
+            Command::Attention => self.attend(),
             Command::Execute(id, confirmation) => self.clean(|cleaner, context, control, trash| {
                 cleaner.execute(id, &confirmation, context, control, trash)
             }),
@@ -142,36 +152,56 @@ impl Scheduler {
 
     /// Watches as the profile says (the profile changed, or the engine
     /// opened). A stream that cannot resume the stored history means a
-    /// full scan is needed.
+    /// full scan is needed; a stream of another latency is replaced by
+    /// one that replays what the old one had not handed over yet.
     fn watch(&mut self) {
         let profile = self.shared.profile();
         self.coalescer.set_timing(profile.timing);
         let watching = profile.timing.is_some();
         self.shared.update(|s| s.watching = watching);
-        let stream = match (watching, self.watching) {
-            (true, Watching::FsEvents { latency }) => Some(latency),
-            _ => None,
-        };
-        match stream {
-            None => self.stream = None,
-            Some(_) if self.stream.is_some() => {}
-            Some(latency) => {
-                let resumed = self.open_stream(latency);
+        let wanted = (watching && self.watching == Watching::FsEvents).then_some(profile.latency);
+        let running = self.stream.as_ref().map(|following| following.latency);
+        match (wanted, running) {
+            (None, _) => self.stream = None,
+            (Some(latency), Some(now)) if latency == now => {}
+            (Some(latency), Some(_)) => {
+                let since = self.coalescer.settled().or(self.origin);
+                self.stream = None;
+                self.open_stream(latency, since);
+            }
+            (Some(latency), None) => {
+                let since = resumable(&mut self.reader, self.root.device());
+                let resumed = self.open_stream(latency, since);
                 self.shared.update(|s| s.needs_full_scan |= !resumed);
             }
         }
     }
 
-    /// Starts the stream after the stored event id when the history
-    /// allows it, else from now on; true when it resumed.
-    fn open_stream(&mut self, latency: Duration) -> bool {
-        let since = resumable(&mut self.reader, self.root.device());
+    /// Follows changes as the profile in force says; when someone starts
+    /// looking, what waits is due at once.
+    fn attend(&mut self) {
+        self.watch();
+        if lock(&self.shared.status).attention {
+            self.coalescer.expedite();
+            self.next_batch = None;
+        }
+    }
+
+    /// Starts the stream after the event `since` (`None`: from now on);
+    /// true when it replays from there.
+    fn open_stream(&mut self, latency: Duration, since: Option<u64>) -> bool {
         let sender = self.sender.clone();
         let sink = move |events| {
             let _ = sender.send(Command::Events(events));
         };
         self.origin = Some(since.unwrap_or_else(current_event_id));
-        self.stream = Stream::start(self.root.path(), since, latency, sink).ok();
+        let stream = Stream::start(self.root.path(), since, latency, sink).ok();
+        self.shared
+            .count(|c| c.streams += u64::from(stream.is_some()));
+        self.stream = stream.map(|stream| Following {
+            _stream: stream,
+            latency,
+        });
         since.and(self.stream.as_ref()).is_some()
     }
 
@@ -332,7 +362,7 @@ impl Scheduler {
         let profile = if interactive {
             self.shared.profiles.interactive
         } else {
-            self.shared.profile()
+            self.shared.power()
         };
         self.watch();
         let control = Arc::new(ScanControl::new(LIVE_LIMIT));

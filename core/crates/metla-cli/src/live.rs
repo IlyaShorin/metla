@@ -29,8 +29,8 @@ pub struct Place {
     pub data_dir: PathBuf,
     /// `None`: the current user's home directory.
     pub home: Option<PathBuf>,
-    /// The FSEvents latency.
-    pub latency: Duration,
+    /// Every profile's FSEvents latency instead of the standard table's.
+    pub latency: Option<Duration>,
     /// Every profile's settle time instead of the standard table's (its
     /// cap then eight times as long, no pause between batches).
     pub settle: Option<Duration>,
@@ -39,22 +39,25 @@ pub struct Place {
     pub patience: Duration,
 }
 
-/// The standard profiles, or all of them settling after `settle`.
-pub fn profiles(settle: Option<Duration>) -> Profiles {
+/// The standard profiles, or all of them settling after `settle`, or
+/// with a stream holding events back for `latency`.
+pub fn profiles(settle: Option<Duration>, latency: Option<Duration>) -> Profiles {
     let mut profiles = Profiles::standard(cores());
-    let Some(settle) = settle else {
-        return profiles;
-    };
     let rows = [
         &mut profiles.interactive,
         &mut profiles.background,
         &mut profiles.saver,
     ];
     for profile in rows {
-        profile.pause = Duration::ZERO;
-        if let Some(timing) = &mut profile.timing {
-            timing.settle = settle;
-            timing.cap = settle * 8;
+        if let Some(latency) = latency {
+            profile.latency = latency;
+        }
+        if let Some(settle) = settle {
+            profile.pause = Duration::ZERO;
+            if let Some(timing) = &mut profile.timing {
+                timing.settle = settle;
+                timing.cap = settle * 8;
+            }
         }
     }
     profiles
@@ -81,9 +84,7 @@ impl EngineObserver for Relay {
 /// Opens an engine on `place` following an FSEvents stream (unless its
 /// profile watches nothing), its notifications on the receiver.
 pub fn open(place: &Place) -> Result<(Engine, Receiver<Changed>), String> {
-    let watching = Watching::FsEvents {
-        latency: place.latency,
-    };
+    let watching = Watching::FsEvents;
     let (home, user) = home_and_user(place.home.as_deref())?;
     let config = EngineConfig {
         root: place.root.clone(),
@@ -94,7 +95,7 @@ pub fn open(place: &Place) -> Result<(Engine, Receiver<Changed>), String> {
         production: None,
         trash: Arc::new(NoTrash),
         watching,
-        profiles: profiles(place.settle),
+        profiles: profiles(place.settle, place.latency),
         profile: place.profile,
     };
     let engine = Engine::open(config).map_err(|e| e.to_string())?;

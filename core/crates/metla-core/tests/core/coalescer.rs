@@ -334,6 +334,62 @@ fn another_profile_retimes_what_is_waiting() {
 }
 
 #[test]
+fn expediting_makes_every_waiting_change_due_at_once() {
+    let mut c = coalescer();
+    changed(&mut c, "/r/a", 0.0);
+    changed(&mut c, "/r/a", 0.5);
+    changed(&mut c, "/r/b/c", 0.7);
+    c.expedite();
+    assert_eq!(c.next_deadline(), Some(secs(0.5)), "each at its last event");
+    assert_eq!(c.due(secs(0.8)), [shallow("/r/b/c"), shallow("/r/a")]);
+    let mut full = coalescer();
+    full.on_event(&event("/r", Flags::USER_DROPPED, 3), secs(2.0));
+    full.expedite();
+    assert_eq!(full.due(secs(2.0)), [RescanTask::Full]);
+}
+
+#[test]
+fn after_expediting_a_change_settles_for_at_least_the_profiles_settle_time() {
+    let mut c = coalescer();
+    changed(&mut c, "/r/a", 0.0);
+    c.expedite();
+    changed(&mut c, "/r/a", 0.2);
+    assert_eq!(
+        c.next_deadline(),
+        Some(secs(1.2)),
+        "a new event: settle again"
+    );
+    assert_eq!(c.due(secs(1.2)).len(), 1);
+    changed(&mut c, "/r/b", 2.0);
+    c.expedite();
+    assert_eq!(c.due(secs(2.0)).len(), 1);
+    changed(&mut c, "/r/b", 3.0);
+    assert_eq!(
+        c.next_deadline(),
+        Some(secs(4.0)),
+        "rescanned recently, but never quicker than the settle time"
+    );
+}
+
+#[test]
+fn a_profile_with_a_longer_settle_time_holds_what_waits_at_least_that_long() {
+    let mut c = coalescer();
+    changed(&mut c, "/r/a", 0.0);
+    changed(&mut c, "/r/a", 0.1);
+    let slow = Timing {
+        settle: secs(5.0),
+        ..timing()
+    };
+    c.set_timing(Some(slow));
+    changed(&mut c, "/r/a", 0.2);
+    assert_eq!(
+        c.next_deadline(),
+        Some(secs(5.2)),
+        "settle 4 s grows to 5 s"
+    );
+}
+
+#[test]
 fn due_tasks_come_in_batches_deepest_first() {
     let small = Timing {
         batch: 2,

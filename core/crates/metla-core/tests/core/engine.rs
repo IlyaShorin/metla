@@ -58,6 +58,7 @@ impl TrashHost for Away {
 pub fn quick(full_scans: bool) -> Profile {
     Profile {
         threads: 2,
+        latency: Duration::from_millis(20),
         timing: Some(Timing {
             settle: Duration::from_millis(5),
             factor: 2,
@@ -322,13 +323,25 @@ fn exclusions_hide_candidates_at_once_and_are_kept() {
 fn the_power_profiles_are_the_documented_table() {
     let table = Profiles::standard(12);
     let rows = [
-        (table.interactive, 8, 1, 30, 256, 4096, 0, true, false),
-        (table.background, 2, 2, 60, 64, 4096, 100, true, false),
-        (table.saver, 1, 10, 300, 16, 1024, 1000, false, true),
+        (table.interactive, 8, 1, 1, 30, 256, 4096, 0, true, false),
+        (
+            table.background,
+            2,
+            15,
+            30,
+            300,
+            1024,
+            4096,
+            60_000,
+            true,
+            false,
+        ),
+        (table.saver, 1, 15, 60, 900, 256, 1024, 180_000, false, true),
     ];
-    for (profile, threads, settle, cap, batch, max_dirs, pause, full, throttled) in rows {
+    for (profile, threads, latency, settle, cap, batch, max_dirs, pause, full, throttled) in rows {
         let timing = profile.timing.unwrap();
         assert_eq!(profile.threads, threads);
+        assert_eq!(profile.latency, Duration::from_secs(latency));
         assert_eq!(timing.settle, Duration::from_secs(settle));
         assert_eq!((timing.factor, timing.collapse), (2, 32));
         assert_eq!(timing.cap, Duration::from_secs(cap));
@@ -415,6 +428,7 @@ fn counters_since_earlier_ones_are_what_was_done_in_between() {
         batches: 3,
         events: 40,
         wakeups: 9,
+        streams: 1,
     };
     let later = metla_core::engine::Counters {
         full_scans: 2,
@@ -422,6 +436,7 @@ fn counters_since_earlier_ones_are_what_was_done_in_between() {
         batches: 8,
         events: 140,
         wakeups: 30,
+        streams: 4,
     };
     let done = later.since(&earlier);
     let fields = [
@@ -430,8 +445,9 @@ fn counters_since_earlier_ones_are_what_was_done_in_between() {
         done.batches,
         done.events,
         done.wakeups,
+        done.streams,
     ];
-    assert_eq!(fields, [1, 10, 5, 100, 21]);
+    assert_eq!(fields, [1, 10, 5, 100, 21, 3]);
     assert_eq!(earlier.since(&later), Default::default(), "never negative");
 }
 
@@ -722,6 +738,50 @@ fn patient(place: &Place, settle: u64, pause: u64) -> EngineConfig {
     timing.batch = 1;
     config.profiles.background.pause = Duration::from_millis(pause);
     config
+}
+
+#[test]
+fn attention_applies_what_waits_at_once_and_follows_changes_interactively() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(patient(&place, 60_000, 60_000)).unwrap();
+    settled(&engine);
+    engine.changed(vec![place.path("~/Documents")]).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(engine.counters().tasks, 0, "Background lets it settle");
+    engine.set_attention(true).unwrap();
+    until(&engine, |e| e.counters().tasks == 1);
+    settled(&engine);
+    assert!(engine.freshness().unwrap().is_current());
+    engine.changed(vec![place.path("~/Library/Logs")]).unwrap();
+    until(&engine, |e| e.counters().tasks == 2);
+    engine.set_attention(false).unwrap();
+    engine
+        .changed(vec![place.path("~/Library/Caches")])
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(engine.counters().tasks, 2, "Background again");
+    assert_eq!(
+        engine.freshness().unwrap().state,
+        EngineState::Updating { pending: 1 },
+        "a deferred change never looks current"
+    );
+}
+
+#[test]
+fn attention_does_not_watch_what_background_analysis_leaves_alone() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    settled(&engine);
+    let woken = engine.counters().wakeups;
+    engine.set_background(false).unwrap();
+    engine.set_attention(true).unwrap();
+    until(&engine, |e| e.counters().wakeups >= woken + 2);
+    let freshness = engine.freshness().unwrap();
+    assert_eq!(freshness.state, EngineState::Off);
+    assert!(
+        !freshness.watching,
+        "both commands handled, nothing watched"
+    );
 }
 
 #[test]

@@ -174,6 +174,9 @@ pub struct Counters {
     /// Times the scheduler woke up: for a command, an event batch or a
     /// deadline. An idle engine does not wake up.
     pub wakeups: u64,
+    /// FSEvents streams started: one at opening, and one more for each
+    /// change of latency.
+    pub streams: u64,
 }
 
 impl Counters {
@@ -185,6 +188,7 @@ impl Counters {
             batches: self.batches.saturating_sub(earlier.batches),
             events: self.events.saturating_sub(earlier.events),
             wakeups: self.wakeups.saturating_sub(earlier.wakeups),
+            streams: self.streams.saturating_sub(earlier.streams),
         }
     }
 }

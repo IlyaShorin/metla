@@ -26,6 +26,9 @@ pub enum PowerProfile {
 pub struct Profile {
     /// Scan threads.
     pub threads: usize,
+    /// How long the FSEvents stream holds events back before it hands
+    /// them over at once: the longer, the fewer wake-ups.
+    pub latency: Duration,
     /// How changes are coalesced; `None` watches nothing.
     pub timing: Option<Timing>,
     /// The pause between two batches of rescans.
@@ -53,6 +56,7 @@ pub const INTERACTIVE_THREADS: usize = 8;
 /// `Off`: no threads, no watching, no scans of its own.
 pub const OFF: Profile = Profile {
     threads: 0,
+    latency: Duration::ZERO,
     timing: None,
     pause: Duration::ZERO,
     full_scans: false,
@@ -70,7 +74,12 @@ impl Profile {
 }
 
 impl Profiles {
-    /// The profiles for a machine with `cores` cores.
+    /// The profiles for a machine with `cores` cores. Interactive follows
+    /// within seconds. Background and Saver apply changes at most once a
+    /// minute and every three minutes (the pause between batches), so a
+    /// busy desktop wakes the engine rarely while nobody looks
+    /// (PERFORMANCE.md, M5 idle); their streams hold events back for
+    /// 15 s, the longest macOS was measured to honour.
     pub fn standard(cores: usize) -> Profiles {
         let timing = |settle: u64, cap: u64, batch: usize, max_dirs: usize| Timing {
             settle: Duration::from_secs(settle),
@@ -83,6 +92,7 @@ impl Profiles {
         Profiles {
             interactive: Profile {
                 threads: cores.saturating_sub(2).clamp(1, INTERACTIVE_THREADS),
+                latency: Duration::from_secs(1),
                 timing: Some(timing(1, 30, 256, 4096)),
                 pause: Duration::ZERO,
                 full_scans: true,
@@ -90,15 +100,17 @@ impl Profiles {
             },
             background: Profile {
                 threads: 2,
-                timing: Some(timing(2, 60, 64, 4096)),
-                pause: Duration::from_millis(100),
+                latency: Duration::from_secs(15),
+                timing: Some(timing(30, 300, 1024, 4096)),
+                pause: Duration::from_secs(60),
                 full_scans: true,
                 throttled: false,
             },
             saver: Profile {
                 threads: 1,
-                timing: Some(timing(10, 300, 16, 1024)),
-                pause: Duration::from_secs(1),
+                latency: Duration::from_secs(15),
+                timing: Some(timing(60, 900, 256, 1024)),
+                pause: Duration::from_secs(180),
                 full_scans: false,
                 throttled: true,
             },

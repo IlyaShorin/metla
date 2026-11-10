@@ -461,11 +461,20 @@ impl Engine {
     /// would start on its own.
     pub fn set_power_profile(&self, profile: PowerProfile) -> Result<(), EngineError> {
         lock(&self.shared.status).profile = profile;
-        if !self.shared.profile().full_scans {
+        if !self.shared.power().full_scans {
             self.shared.cancel_background_scan();
         }
         self.shared.notify(Changed::Activity);
         self.send(Command::Profile)
+    }
+
+    /// Whether someone looks at the picture (the app's window or panel is
+    /// visible). While they do, changes are followed as `Interactive`
+    /// follows them and what waits is applied at once; then the power
+    /// profile applies again.
+    pub fn set_attention(&self, looking: bool) -> Result<(), EngineError> {
+        self.shared.update(|s| s.attention = looking);
+        self.send(Command::Attention)
     }
 
     /// Background analysis on or off (a setting, kept).
@@ -551,7 +560,7 @@ impl Engine {
             cleaner.set_settings(clean_settings(&self.shared.home, &settings));
         }
         *lock(&self.shared.settings) = settings;
-        if !self.shared.profile().full_scans {
+        if !self.shared.power().full_scans {
             self.shared.cancel_background_scan();
         }
         self.shared.notify(Changed::Settings);

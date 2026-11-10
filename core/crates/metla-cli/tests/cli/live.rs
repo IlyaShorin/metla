@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use metla_cli::{
-    BURST, Bench, CHURN, Command, LATENCY, PATIENCE, Place, freshness_line, parse, profiles, spent,
+    BURST, Bench, CHURN, Command, PATIENCE, Place, freshness_line, parse, profiles, spent,
     state_text,
 };
 use metla_core::domain::{Bytes, ProgressSnapshot, UnixTime};
@@ -23,7 +23,7 @@ fn place(profile: PowerProfile) -> Place {
         root: PathBuf::from("/r"),
         data_dir: PathBuf::from("/d"),
         home: None,
-        latency: LATENCY,
+        latency: None,
         settle: None,
         profile,
         patience: PATIENCE,
@@ -43,7 +43,7 @@ fn watch_takes_where_how_and_for_how_long() {
                 --settle-ms 7 --profile saver --wait-s 30";
     let expected = Place {
         home: Some(PathBuf::from("/h")),
-        latency: Duration::from_millis(20),
+        latency: Some(Duration::from_millis(20)),
         settle: Some(Duration::from_millis(7)),
         patience: Duration::from_secs(30),
         ..place(PowerProfile::Saver)
@@ -55,7 +55,6 @@ fn watch_takes_where_how_and_for_how_long() {
             limit: Some(Duration::from_secs(5)),
         })
     );
-    assert_eq!(LATENCY, Duration::from_secs(1));
     assert_eq!(PATIENCE, Duration::from_secs(600));
 }
 
@@ -135,6 +134,7 @@ fn the_freshness_line_says_what_was_done_and_whether_it_may_be_out_of_date() {
         batches: 3,
         events: 40,
         wakeups: 9,
+        streams: 1,
     };
     let fresh = Freshness {
         full_scan: Some(UnixTime(100)),
@@ -192,19 +192,29 @@ fn what_was_spent_is_the_difference_of_two_samples() {
 }
 
 #[test]
-fn the_settle_time_can_be_set_for_every_profile() {
-    let standard = profiles(None);
+fn the_settle_time_and_the_latency_can_be_set_for_every_profile() {
+    let standard = profiles(None, None);
     assert_eq!(standard.background.threads, 2);
     assert_eq!(
         standard,
         Profiles::standard(standard.interactive.threads + 2)
     );
-    let quick = profiles(Some(Duration::from_millis(5)));
+    let quick = profiles(Some(Duration::from_millis(5)), None);
     for profile in [quick.interactive, quick.background, quick.saver] {
         let timing = profile.timing.unwrap();
         assert_eq!(timing.settle, Duration::from_millis(5));
         assert_eq!(timing.cap, Duration::from_millis(40));
         assert_eq!(profile.pause, Duration::ZERO);
+    }
+    assert_eq!(quick.saver.latency, standard.saver.latency, "latency kept");
+    let prompt = profiles(None, Some(Duration::from_millis(20)));
+    for (profile, kept) in [
+        (prompt.interactive, standard.interactive),
+        (prompt.background, standard.background),
+        (prompt.saver, standard.saver),
+    ] {
+        assert_eq!(profile.latency, Duration::from_millis(20));
+        assert_eq!(profile.timing, kept.timing, "settle times kept");
     }
 }
 

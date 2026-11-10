@@ -39,6 +39,9 @@ pub struct Status {
     /// A scan was cancelled: no full scan starts on its own until the
     /// user asks for one.
     pub held: bool,
+    /// Someone looks at the picture: changes are followed as
+    /// `Interactive` follows them.
+    pub attention: bool,
 }
 
 pub struct Shared {
@@ -78,8 +81,24 @@ impl Shared {
         }
     }
 
-    pub fn profile(&self) -> Profile {
+    /// The profile of the power state: it decides the engine's own full
+    /// scans.
+    pub fn power(&self) -> Profile {
         self.profiles.of(self.effective())
+    }
+
+    /// The profile changes are followed with: `Interactive` while someone
+    /// looks, if anything is followed at all.
+    pub fn profile(&self) -> Profile {
+        let power = self.power();
+        let attention = lock(&self.status).attention;
+        match (attention, power.timing) {
+            (true, Some(_)) => Profile {
+                full_scans: power.full_scans,
+                ..self.profiles.interactive
+            },
+            _ => power,
+        }
     }
 
     pub fn update(&self, change: impl FnOnce(&mut Status)) {
@@ -107,7 +126,7 @@ impl Shared {
     /// What the engine is doing while it neither scans nor cleans.
     fn between_scans(&self, status: Status) -> EngineState {
         let effective = self.effective();
-        let deferred = status.needs_full_scan && !self.profiles.of(effective).full_scans;
+        let deferred = status.needs_full_scan && !self.power().full_scans;
         let due = status.pending > 0 || status.needs_full_scan && !status.held;
         match (effective, deferred, due) {
             (PowerProfile::Off, _, _) => EngineState::Off,

@@ -60,7 +60,8 @@
 | **Event history** | The FSEvents record of changes on a volume, with ids and a UUID. The engine stores the id after which nothing is pending; a restart resumes there when the UUID is the same and the id is not ahead. Otherwise the history is *lost* and a full scan is needed. |
 | **Hold** | After the user cancels a scan, the engine starts no full scan on its own until the user starts one. |
 | **Removability** | What a list shows about a worktree: unknown (not computed yet), removable, or blocked with the reasons. For display only. |
-| **Power profile** | `Interactive`, `Background`, `Saver` or `Off`: how many threads, how long changes settle, how big a batch, the pause between batches, whether the engine may start a full scan on its own and at what priority. One table. |
+| **Attention** | Someone looks at the picture (the app's window or panel is visible). While they do, the engine follows changes as `Interactive` follows them and applies what waits at once; otherwise the power profile decides. |
+| **Power profile** | `Interactive`, `Background`, `Saver` or `Off`: how many threads, how long the stream holds events back, how long changes settle, how big a batch, the pause between batches, whether the engine may start a full scan on its own and at what priority. One table. |
 | **Worktree status** | The result of inspecting a linked Git worktree with stock Git commands: removable, or blocked for at least one reason (uncommitted, untracked, unpushed, locked, prunable, an operation in progress, in use, managed by another tool, not listed, inspection failed). |
 | **Managed worktree** | A worktree owned by another tool: Codex Desktop (`~/.codex/worktrees/…`) or Claude Code (`…/.claude/worktrees/…`). Shown, never removed; its build output is never preselected and is cleaned only when confirmed by itself. |
 | **Cleaned directory** | A directory a cleanup acted on since the last scan; the index offers nothing at or below it until the next scan. |

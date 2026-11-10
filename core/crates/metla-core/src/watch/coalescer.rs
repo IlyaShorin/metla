@@ -40,6 +40,15 @@ pub struct Timing {
     pub max_dirs: usize,
 }
 
+impl Timing {
+    /// The settle time after `settle` for one more event: multiplied by
+    /// the factor, and never shorter than the settle time or longer than
+    /// the cap.
+    fn longer(&self, settle: Duration) -> Duration {
+        (settle * self.factor).clamp(self.settle, self.cap)
+    }
+}
+
 /// One file-system event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Event {
@@ -78,7 +87,7 @@ impl Wait {
 
     fn grow(&mut self, now: Duration, id: u64, timing: &Timing) {
         self.last = self.last.max(now);
-        self.settle = (self.settle * timing.factor).min(timing.cap);
+        self.settle = timing.longer(self.settle);
         self.since = self.since.min(id);
     }
 
@@ -204,6 +213,18 @@ impl Coalescer {
         tasks.into_iter().map(|(_, task)| task).collect()
     }
 
+    /// Makes every waiting change due at its last event, so the next
+    /// `due` hands it out; a later event settles again.
+    pub fn expedite(&mut self) {
+        let waits = self
+            .full
+            .iter_mut()
+            .chain(self.dirty.values_mut().map(|d| &mut d.wait));
+        for wait in waits {
+            wait.settle = Duration::ZERO;
+        }
+    }
+
     /// When the next task becomes due, if any is waiting.
     pub fn next_deadline(&self) -> Option<Duration> {
         let timing = self.timing?;
@@ -278,9 +299,7 @@ impl Coalescer {
     /// was rescanned less than a cap ago.
     fn start_settle(&self, path: &Path, now: Duration, timing: &Timing) -> Duration {
         let recent = self.cooling.get(path).filter(|c| c.recent(now, timing));
-        recent.map_or(timing.settle, |c| {
-            (c.settle * timing.factor).min(timing.cap)
-        })
+        recent.map_or(timing.settle, |c| timing.longer(c.settle))
     }
 
     /// Merges every entry below `path` into it.
