@@ -13,7 +13,8 @@ use super::lineage::Lineage;
 use super::writer::{current_picture, set_meta, write_coverage, write_kinds, write_rows};
 use super::{IndexError, PictureId};
 use crate::domain::{
-    Bytes, Coverage, DirId, DirState, GapAt, KindTotals, OwnTotals, Rescanned, TreeTotals, UnixTime,
+    Bytes, Coverage, DirId, DirRecord, DirState, GapAt, KindTotals, OwnTotals, Rescanned,
+    TreeTotals, UnixTime,
 };
 
 /// Applies `change` to the picture `picture`; false, and nothing changed,
@@ -41,16 +42,27 @@ fn replace(conn: &Connection, change: &Rescanned) -> Result<KindTotals, IndexErr
         remove_subtree(conn, *id, &mut kinds)?;
     }
     for row in &change.rows {
-        if let Some(own) = own_kinds(conn, row.id)? {
-            kinds.remove(&own);
-            forget(conn, row.id)?;
-        }
-        if let DirState::Read(own) = &row.state {
-            kinds.merge(&own.kinds);
-        }
+        swap_kinds(conn, row, &mut kinds)?;
     }
     write_rows(conn, "INSERT INTO dirs", &change.rows)?;
     Ok(kinds)
+}
+
+/// Forgets what the picture holds for `row` and counts the row's own
+/// kinds instead of the stored ones.
+fn swap_kinds(
+    conn: &Connection,
+    row: &DirRecord,
+    kinds: &mut KindTotals,
+) -> Result<(), IndexError> {
+    if let Some(own) = own_kinds(conn, row.id)? {
+        kinds.remove(&own);
+        forget(conn, row.id)?;
+    }
+    if let DirState::Read(own) = &row.state {
+        kinds.merge(&own.kinds);
+    }
+    Ok(())
 }
 
 fn remove_subtree(conn: &Connection, id: DirId, kinds: &mut KindTotals) -> Result<(), IndexError> {
@@ -204,21 +216,22 @@ fn coverage(conn: &Connection) -> Result<Coverage, IndexError> {
     let limit = meta::<i64>(conn, "gap_limit")?.unwrap_or_default();
     let mut coverage = Coverage::new(usize::try_from(limit).unwrap_or_default());
     let mut lineage = Lineage::new(conn, root.clone())?;
+    for (id, state) in unread_rows(conn)? {
+        count_unread(&mut coverage, &mut lineage, &root, id, state)?;
+    }
+    Ok(coverage)
+}
+
+/// The table's unread directories, in id order.
+fn unread_rows(conn: &Connection) -> Result<Vec<(DirId, DirState)>, IndexError> {
     let mut statement = conn.prepare(
         "SELECT id, flags FROM dirs INDEXED BY dirs_unread WHERE flags & 255 != 0 ORDER BY id",
     )?;
     let rows = statement.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
-    for row in rows {
-        let (id, flags) = row?;
-        count_unread(
-            &mut coverage,
-            &mut lineage,
-            &root,
-            DirId(id),
-            unread(flags)?,
-        )?;
-    }
-    Ok(coverage)
+    let rows = rows.collect::<Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(id, flags)| Ok((DirId(id), unread(flags)?)))
+        .collect()
 }
 
 /// Counts one unread directory: a skip by kind, a gap with its depth and

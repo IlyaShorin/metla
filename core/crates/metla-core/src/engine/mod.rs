@@ -17,7 +17,7 @@ mod worktrees;
 use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
@@ -217,6 +217,43 @@ fn share(
     (shared, worktrees)
 }
 
+/// Starts the engine's thread: the scheduler with a reader of its own and
+/// the writer, and a coalescer that ignores the data directory and what
+/// the scan's scope leaves out.
+fn start_scheduler(
+    shared: &Arc<Shared>,
+    (data_dir, index): (PathBuf, PathBuf),
+    writer: IndexWriter,
+    root: ScanRoot,
+    watching: Watching,
+    (sender, commands): (&Sender<Command>, Receiver<Command>),
+) -> Result<JoinHandle<()>, EngineError> {
+    let scope = setup(root.path(), ScanScope::detect(&root))?;
+    let mut ignored = vec![data_dir];
+    ignored.extend(scope.excluded().map(Path::to_path_buf));
+    let coalescer = Coalescer::new(root.path(), ignored, shared.profile().timing);
+    let scheduler = Scheduler {
+        shared: Arc::clone(shared),
+        reader: IndexReader::open(&index)?,
+        writer,
+        root,
+        scope,
+        coalescer,
+        watching,
+        commands,
+        sender: sender.clone(),
+        stream: None,
+        origin: None,
+        clock: Instant::now(),
+        next_batch: None,
+    };
+    let thread = thread::Builder::new().name("metla-engine".into());
+    setup(
+        Path::new("engine thread"),
+        thread.spawn(move || scheduler.run()),
+    )
+}
+
 /// The parts of a configuration that move into the shared state.
 struct Parts {
     home: PathBuf,
@@ -242,7 +279,6 @@ impl Engine {
         let settings = stored_settings(&mut reader)?;
         let root = setup(&config.root, ScanRoot::new(&config.root))?;
         let needs_full_scan = needs_full_scan(&mut reader, &root, &config, &settings)?;
-        let scope = setup(&config.root, ScanScope::detect(&root))?;
         let watching = config.watching;
         let parts = Parts {
             home: config.home,
@@ -254,37 +290,16 @@ impl Engine {
             profile: config.profile,
         };
         let (shared, worktrees) = share(parts, &root, settings, needs_full_scan);
-        let mut ignored = vec![data_dir];
-        ignored.extend(scope.excluded().map(Path::to_path_buf));
-        let coalescer = Coalescer::new(root.path(), ignored, shared.profile().timing);
         let (commands, queue) = mpsc::channel();
         let editor = writer.editor();
-        let scheduler = Scheduler {
-            shared: Arc::clone(&shared),
-            reader: IndexReader::open(&index)?,
-            writer,
-            root,
-            scope,
-            coalescer,
-            watching,
-            commands: queue,
-            sender: commands.clone(),
-            stream: None,
-            origin: None,
-            clock: Instant::now(),
-            next_batch: None,
-        };
-        let thread = thread::Builder::new().name("metla-engine".into());
-        let scheduler = setup(
-            Path::new("engine thread"),
-            thread.spawn(move || scheduler.run()),
-        )?;
+        let files = (data_dir, index);
+        let thread = start_scheduler(&shared, files, writer, root, watching, (&commands, queue));
         Ok(Engine {
             shared,
             reader: Mutex::new(reader),
             editor,
             commands,
-            scheduler: Some(scheduler),
+            scheduler: Some(thread?),
             worktrees: Some(worktrees),
         })
     }
