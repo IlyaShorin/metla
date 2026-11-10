@@ -4,6 +4,7 @@ mod cleanable;
 mod cleantext;
 mod commands;
 mod fixture;
+mod live;
 mod overview;
 mod parsing;
 mod rendering;

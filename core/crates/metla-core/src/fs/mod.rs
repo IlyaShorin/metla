@@ -15,7 +15,8 @@ mod volume;
 
 pub use dir::{DirHandle, ListError, entry_at, list_dir, list_dir_classic};
 pub use process::{
-    background_thread, now, peak_rss, raise_open_file_limit, raised_open_file_limit,
+    Usage, background_thread, now, peak_rss, raise_open_file_limit, raised_open_file_limit,
+    thread_cpu, usage,
 };
 pub use remove::{Removal, Survey, remove_contents, survey};
 pub use sys::retry_interrupted;

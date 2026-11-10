@@ -6,20 +6,25 @@
 //! app's own index.
 
 mod args;
+mod bench;
 mod cleaned;
 mod commands;
 mod fixture;
 mod format;
+mod live;
 mod overview;
 mod report;
 
 use std::ffi::OsString;
 use std::io::Write;
 
-pub use args::{CANDIDATE_LIMIT, Command, Edit, TOP_LIMIT, USAGE, parse};
+pub use args::{
+    BURST, Bench, CANDIDATE_LIMIT, CHURN, Command, Edit, LATENCY, TOP_LIMIT, USAGE, parse,
+};
 pub use cleaned::{Cleaned, clean_text, outcome_text};
 pub use commands::{ScanHow, default_threads};
 pub use format::{ago, bytes, count, per_second, signed_bytes};
+pub use live::{Place, freshness_line, profiles, spent, state_text};
 pub use overview::{
     Edited, Freshness, Overview, Shown, candidates_json, candidates_text, edited_text,
     summary_json, summary_text,
@@ -37,7 +42,7 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             return 2;
         }
     };
-    match execute(command) {
+    match execute(command, out) {
         Ok(text) => {
             let _ = write!(out, "{text}");
             0
@@ -57,7 +62,7 @@ fn rendered<T>(data: &T, json: bool, text: fn(&T) -> String, as_json: fn(&T) -> 
     }
 }
 
-fn execute(command: Command) -> Result<String, String> {
+fn execute(command: Command, out: &mut dyn Write) -> Result<String, String> {
     match command {
         Command::Scan {
             root,
@@ -102,5 +107,11 @@ fn execute(command: Command) -> Result<String, String> {
             category,
             yes,
         } => commands::clean(&index, &root, category, yes).map(|done| clean_text(&done)),
+        Command::Watch { place, limit } => live::watch(&place, limit, out).map(|()| String::new()),
+        Command::Bench { place, bench } => match bench {
+            Bench::Open => live::bench_open(&place),
+            Bench::Churn { length, per_burst } => bench::bench_churn(&place, length, per_burst),
+            Bench::Refresh => bench::bench_refresh(&place),
+        },
     }
 }

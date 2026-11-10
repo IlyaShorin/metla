@@ -3,8 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use metla_core::domain::Category;
+use metla_core::engine::PowerProfile;
+
+use crate::live::Place;
 
 /// The default number of rows `top` prints.
 pub const TOP_LIMIT: usize = 20;
@@ -21,8 +25,20 @@ pub const USAGE: &str = "usage:
   metla-cli exclude    add|remove|list --index <file> [<path>]
   metla-cli fixture    create <dir>
   metla-cli clean      --index <file> --root <fixture> [--category <c>] [--yes]
+  metla-cli watch      --root <dir> --data-dir <dir> [engine options] [--seconds N]
+  metla-cli bench      open|churn|refresh --root <dir> --data-dir <dir> [engine options]
+                       [--seconds N] [--files N]
+engine options: [--home <dir>] [--profile p] [--latency-ms N] [--settle-ms N]
 categories: app-cache, dev-cache, build, log, worktree, temp
-clean works only on a root marked .metla-fixture; without --yes it only previews";
+profiles: interactive, background, saver, off
+clean works only on a root marked .metla-fixture; without --yes it only previews;
+bench churn and refresh write only into a root marked .metla-fixture";
+
+/// The FSEvents latency `watch` and `bench` use unless told otherwise.
+pub const LATENCY: Duration = Duration::from_secs(1);
+/// How long `bench churn` churns, and how many files per burst.
+pub const CHURN: Duration = Duration::from_secs(120);
+pub const BURST: usize = 400;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -72,6 +88,27 @@ pub enum Command {
         category: Option<Category>,
         yes: bool,
     },
+    /// Runs the engine on a root and prints every batch it applies.
+    Watch {
+        place: Place,
+        /// `None`: until the process is stopped.
+        limit: Option<Duration>,
+    },
+    Bench {
+        place: Place,
+        bench: Bench,
+    },
+}
+
+/// What `bench` measures.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Bench {
+    /// Opening the engine on a saved picture and the first snapshot.
+    Open,
+    /// Following a churn of files, and how soon the picture is right.
+    Churn { length: Duration, per_burst: usize },
+    /// How soon a small change shows.
+    Refresh,
 }
 
 /// What `exclude` does.
@@ -82,7 +119,7 @@ pub enum Edit {
     List,
 }
 
-const VALUE_FLAGS: [&str; 7] = [
+const VALUE_FLAGS: [&str; 13] = [
     "--root",
     "--index",
     "--threads",
@@ -90,6 +127,19 @@ const VALUE_FLAGS: [&str; 7] = [
     "--limit",
     "--home",
     "--category",
+    "--data-dir",
+    "--seconds",
+    "--latency-ms",
+    "--profile",
+    "--files",
+    "--settle-ms",
+];
+
+const PROFILES: [(&str, PowerProfile); 4] = [
+    ("interactive", PowerProfile::Interactive),
+    ("background", PowerProfile::Background),
+    ("saver", PowerProfile::Saver),
+    ("off", PowerProfile::Off),
 ];
 const SWITCHES: [&str; 4] = ["--json", "--no-rules", "--yes", "--classic"];
 
@@ -136,6 +186,38 @@ impl Parsed {
             .transpose()
     }
 
+    fn profile(&mut self) -> Result<PowerProfile, String> {
+        let Some(name) = self.take("--profile") else {
+            return Ok(PowerProfile::Background);
+        };
+        let known = PROFILES.iter().find(|(known, _)| name == *known);
+        let profile = known.map(|(_, profile)| *profile);
+        profile.ok_or_else(|| format!("unknown profile {}", name.to_string_lossy()))
+    }
+
+    fn seconds(&mut self) -> Result<Option<Duration>, String> {
+        Ok(self
+            .number("--seconds")?
+            .map(|s| Duration::from_secs(s as u64)))
+    }
+
+    fn millis(&mut self, flag: &str) -> Result<Option<Duration>, String> {
+        Ok(self
+            .number(flag)?
+            .map(|ms| Duration::from_millis(ms as u64)))
+    }
+
+    fn place(&mut self) -> Result<Place, String> {
+        Ok(Place {
+            root: self.path("--root")?,
+            data_dir: self.path("--data-dir")?,
+            home: self.take("--home").map(PathBuf::from),
+            latency: self.millis("--latency-ms")?.unwrap_or(LATENCY),
+            settle: self.millis("--settle-ms")?,
+            profile: self.profile()?,
+        })
+    }
+
     /// The next positional argument, if any.
     fn next(&mut self) -> Option<OsString> {
         (!self.positional.is_empty()).then(|| self.positional.remove(0))
@@ -167,7 +249,7 @@ pub fn parse(args: &[OsString]) -> Result<Command, String> {
 
 type Parser = fn(&mut Parsed) -> Result<Command, String>;
 
-const COMMANDS: [(&str, Parser); 8] = [
+const COMMANDS: [(&str, Parser); 10] = [
     ("scan", scan),
     ("top", top),
     ("ls", ls),
@@ -176,6 +258,8 @@ const COMMANDS: [(&str, Parser); 8] = [
     ("exclude", exclude),
     ("fixture", fixture),
     ("clean", clean),
+    ("watch", watch),
+    ("bench", bench),
 ];
 
 fn command(name: &OsStr, parsed: &mut Parsed) -> Result<Command, String> {
@@ -282,4 +366,26 @@ fn clean(parsed: &mut Parsed) -> Result<Command, String> {
         category: parsed.category()?,
         yes: parsed.switch("--yes"),
     })
+}
+
+fn watch(parsed: &mut Parsed) -> Result<Command, String> {
+    Ok(Command::Watch {
+        place: parsed.place()?,
+        limit: parsed.seconds()?,
+    })
+}
+
+fn bench(parsed: &mut Parsed) -> Result<Command, String> {
+    let what = parsed.next();
+    let place = parsed.place()?;
+    let bench = match what.as_ref().and_then(|w| w.to_str()) {
+        Some("open") => Bench::Open,
+        Some("churn") => Bench::Churn {
+            length: parsed.seconds()?.unwrap_or(CHURN),
+            per_burst: parsed.number("--files")?.unwrap_or(BURST),
+        },
+        Some("refresh") => Bench::Refresh,
+        _ => return Err("bench needs open, churn or refresh".into()),
+    };
+    Ok(Command::Bench { place, bench })
 }

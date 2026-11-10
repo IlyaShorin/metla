@@ -177,6 +177,17 @@ impl Snapshot<'_> {
         self.meta(&note_key(key))
     }
 
+    /// Every directory of the picture with its path, in id order.
+    pub fn rows(&self) -> Result<Vec<(PathBuf, DirRecord)>, IndexError> {
+        let sql = format!("SELECT {COLUMNS} FROM dirs ORDER BY id");
+        let mut lineage = self.lineage()?;
+        let mut rows = Vec::new();
+        for row in self.records(&sql, [])? {
+            rows.push((lineage.path(row.id)?.unwrap_or_default(), row));
+        }
+        Ok(rows)
+    }
+
     /// The directory `id`, if the picture has it.
     pub fn record(&self, id: DirId) -> Result<Option<DirRecord>, IndexError> {
         let sql = format!("SELECT {COLUMNS} FROM dirs WHERE id = ?1");

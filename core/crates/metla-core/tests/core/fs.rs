@@ -327,3 +327,23 @@ fn the_bulk_listing_describes_mount_points_and_firmlinks_by_what_they_lead_to() 
         assert_eq!(bulk, classic, "{system}");
     }
 }
+
+#[test]
+fn usage_counts_cpu_time_switches_and_the_peak_rss() {
+    let thread = metla_core::fs::thread_cpu();
+    let before = metla_core::fs::usage();
+    let started = std::time::Instant::now();
+    let mut spin = 0u64;
+    while started.elapsed() < std::time::Duration::from_millis(30) {
+        spin = spin.wrapping_mul(31).wrapping_add(1);
+        std::hint::black_box(spin);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let after = metla_core::fs::usage();
+    let spent = metla_core::fs::thread_cpu() - thread;
+    assert!(spent >= std::time::Duration::from_millis(10), "{spent:?}");
+    assert!(after.user + after.system >= before.user + before.system + spent / 2);
+    assert!(after.switches > before.switches);
+    assert!(after.peak_rss.0 > 1 << 20);
+    assert_eq!(peak_rss(), metla_core::fs::usage().peak_rss);
+}

@@ -1,5 +1,5 @@
 use std::mem::MaybeUninit;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::sys::check;
 use crate::domain::{Bytes, UnixTime};
@@ -16,13 +16,58 @@ pub fn now() -> UnixTime {
     UnixTime(i64::try_from(since_epoch.as_secs()).unwrap_or(i64::MAX))
 }
 
-/// The process's peak resident set size (macOS reports it in bytes).
-pub fn peak_rss() -> Bytes {
+/// What the process has used so far.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub user: Duration,
+    pub system: Duration,
+    /// Context switches, voluntary (the thread waited) and not: a
+    /// measure of how often the process woke up.
+    pub switches: u64,
+    /// The peak resident set size.
+    pub peak_rss: Bytes,
+}
+
+fn rusage() -> libc::rusage {
     let mut usage = MaybeUninit::<libc::rusage>::zeroed();
     // SAFETY: `usage` is writable rusage storage; RUSAGE_SELF cannot fail.
     unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
     // SAFETY: zero-initialised and then filled by getrusage.
-    Bytes(unsafe { usage.assume_init() }.ru_maxrss.unsigned_abs())
+    unsafe { usage.assume_init() }
+}
+
+fn duration(time: libc::timeval) -> Duration {
+    let micros = time.tv_usec.unsigned_abs();
+    Duration::from_secs(time.tv_sec.unsigned_abs()) + Duration::from_micros(u64::from(micros))
+}
+
+/// The process's CPU time, context switches and peak RSS so far.
+pub fn usage() -> Usage {
+    let usage = rusage();
+    Usage {
+        user: duration(usage.ru_utime),
+        system: duration(usage.ru_stime),
+        switches: (usage.ru_nvcsw + usage.ru_nivcsw).unsigned_abs(),
+        peak_rss: Bytes(usage.ru_maxrss.unsigned_abs()),
+    }
+}
+
+/// The process's peak resident set size (macOS reports it in bytes).
+pub fn peak_rss() -> Bytes {
+    usage().peak_rss
+}
+
+/// The CPU time the calling thread has used.
+pub fn thread_cpu() -> Duration {
+    let mut time = MaybeUninit::<libc::timespec>::zeroed();
+    // SAFETY: `time` is writable timespec storage.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, time.as_mut_ptr()) };
+    // SAFETY: zero-initialised and then filled by clock_gettime.
+    let time = unsafe { time.assume_init() };
+    Duration::new(
+        time.tv_sec.unsigned_abs(),
+        time.tv_nsec.unsigned_abs() as u32,
+    )
 }
 
 /// The soft open-file limit to ask for, if the current one is lower: as

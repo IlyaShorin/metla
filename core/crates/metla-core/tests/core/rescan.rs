@@ -136,6 +136,11 @@ fn every_row_round_trips_through_the_index() {
         let found = reader.read(|snap| snap.nearest(path)).unwrap();
         assert_eq!(found, Some((path.clone(), record.clone())));
     }
+    let rows = reader.read(|snap| snap.rows()).unwrap();
+    assert_eq!(rows.len(), scanned.records.len());
+    for (path, row) in rows {
+        assert_eq!(scanned.records.get(&path), Some(&row), "{}", path.display());
+    }
     let next = reader.read(|snap| snap.next_id()).unwrap();
     let largest = scanned.records.values().map(|r| r.id.0).max().unwrap();
     assert_eq!(next, DirId(largest + 1));

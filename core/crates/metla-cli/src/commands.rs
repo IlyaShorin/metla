@@ -33,7 +33,7 @@ pub fn default_threads(cores: usize) -> usize {
 }
 
 /// The number of cores, or 0 when it cannot be known.
-fn cores() -> usize {
+pub(crate) fn cores() -> usize {
     std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or_default()
@@ -50,9 +50,9 @@ pub struct ScanHow {
     pub classic: bool,
 }
 
-/// The rule set for `home` (default: `$HOME`), for the user `$USER` (or
-/// the home directory's name).
-fn rule_set(home: Option<&Path>) -> Result<RuleSet, String> {
+/// The home directory `home` (default: `$HOME`), canonical, and the user
+/// `$USER` (or the home directory's name).
+pub(crate) fn home_and_user(home: Option<&Path>) -> Result<(PathBuf, OsString), String> {
     let home = home
         .map(Path::to_path_buf)
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
@@ -61,6 +61,12 @@ fn rule_set(home: Option<&Path>) -> Result<RuleSet, String> {
     let user = std::env::var_os("USER")
         .or_else(|| home.file_name().map(OsString::from))
         .unwrap_or_default();
+    Ok((home, user))
+}
+
+/// The rule set for [`home_and_user`].
+fn rule_set(home: Option<&Path>) -> Result<RuleSet, String> {
+    let (home, user) = home_and_user(home)?;
     Ok(RuleSet::new(&home, &user))
 }
 
