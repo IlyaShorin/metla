@@ -173,6 +173,31 @@ fn a_preview_groups_items_by_how_they_are_removed() {
 }
 
 #[test]
+fn only_the_latest_preview_can_be_executed() {
+    let world = world();
+    let found = world.scan();
+    let mut cleaner = world.cleaner();
+    let older = cleaner.preview(world.picked(&found, &[TARGET]), next_year());
+    let latest = cleaner.preview(world.picked(&found, &[TARGET]), next_year());
+    assert_ne!(older.id, latest.id);
+    let context = Context {
+        now: next_year(),
+        exclusions: &[],
+    };
+    let control = CleanControl::new();
+    let none = Confirmation::default();
+    let stale = cleaner.execute(older.id, &none, &context, &control, &world.trash);
+    assert_eq!(stale.unwrap_err(), CleanError::UnknownPreview(older.id));
+    assert!(world.path(TARGET).join("debug/app").exists());
+    let report = world.execute(&mut cleaner, &latest, &none, &[]);
+    assert_eq!(report.items[0].outcome, Outcome::Removed);
+    let next = cleaner.preview(Vec::new(), next_year());
+    assert_eq!(next.id, PreviewId(latest.id.0 + 1));
+    let used = cleaner.execute(latest.id, &none, &context, &control, &world.trash);
+    assert_eq!(used.unwrap_err(), CleanError::UnknownPreview(latest.id));
+}
+
+#[test]
 fn a_preview_lists_each_candidate_once() {
     let world = world();
     let found = world.scan();
@@ -593,11 +618,14 @@ fn an_item_nested_in_another_is_set_aside_with_the_one_that_holds_it() {
     inner.id = DirId(outer.id.0 + 1000);
     inner.path = outer.path.join("x");
     outer.bytes = Bytes(1);
-    let preview = world
-        .cleaner()
-        .preview(vec![inner.clone(), outer.clone()], next_year());
-    assert_eq!(preview.items.len(), 1);
-    assert_eq!(preview.items[0].candidate.id, outer.id);
+    // Sorts between the two as text ('-' before '/'), but not by path.
+    let mut sibling = outer.clone();
+    sibling.id = DirId(outer.id.0 + 2000);
+    sibling.path = outer.path.with_file_name("com.example.app-2");
+    let picked = vec![inner.clone(), sibling.clone(), outer.clone()];
+    let preview = world.cleaner().preview(picked, next_year());
+    let kept: Vec<DirId> = preview.items.iter().map(|i| i.candidate.id).collect();
+    assert_eq!(kept, [outer.id, sibling.id], "equal sizes keep path order");
     assert_eq!(preview.rejected.len(), 1);
     assert_eq!(preview.rejected[0].candidate, inner);
     assert_eq!(

@@ -11,7 +11,6 @@ mod check;
 mod control;
 mod preview;
 
-use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -77,7 +76,7 @@ pub enum CleanError {
     NotAFixture(PathBuf),
     /// The root cannot be opened, or is no longer the directory it was.
     Root(String),
-    /// No preview with this id was made.
+    /// No preview with this id was made, or a newer one replaced it.
     UnknownPreview(PreviewId),
     /// The preview was executed already.
     PreviewUsed(PreviewId),
@@ -152,8 +151,11 @@ pub struct Cleaner {
     rules: Arc<RuleSet>,
     git: Git,
     settings: CleanSettings,
-    /// Every preview made: `Some` until it is executed.
-    previews: BTreeMap<PreviewId, Option<CleanupPreview>>,
+    /// How many previews were made: the next one's id follows.
+    made: u64,
+    /// The latest preview, `Some` until it is executed. Only it can be
+    /// executed, so a cleaner holds one preview however long it lives.
+    latest: Option<(PreviewId, Option<CleanupPreview>)>,
 }
 
 impl Cleaner {
@@ -174,14 +176,17 @@ impl Cleaner {
             rules,
             git,
             settings,
-            previews: BTreeMap::new(),
+            made: 0,
+            latest: None,
         })
     }
 
     /// The preview of `candidates`: worktrees that cannot be removed now
-    /// and items inside other items are set aside with the reason.
+    /// and items inside other items are set aside with the reason. It
+    /// replaces the previous preview, which can no longer be executed.
     pub fn preview(&mut self, candidates: Vec<Candidate>, now: UnixTime) -> CleanupPreview {
-        let id = PreviewId(self.previews.len() as u64 + 1);
+        self.made += 1;
+        let id = PreviewId(self.made);
         let recency = Recency::new(now, self.settings.recent_age);
         let inspect = |c: &Candidate| {
             inspect_worktree(
@@ -193,7 +198,7 @@ impl Cleaner {
             )
         };
         let preview = preview::build(id, candidates, inspect, &recency);
-        self.previews.insert(id, Some(preview.clone()));
+        self.latest = Some((id, Some(preview.clone())));
         preview
     }
 
@@ -270,13 +275,12 @@ impl Cleaner {
         self.execute(preview.id, &nothing_else, context, control, trash)
     }
 
-    /// The preview `id`, which can be taken once.
+    /// The preview `id`, which can be taken once, and only while it is
+    /// the latest.
     fn take(&mut self, id: PreviewId) -> Result<CleanupPreview, CleanError> {
-        let slot = self
-            .previews
-            .get_mut(&id)
-            .ok_or(CleanError::UnknownPreview(id))?;
-        slot.take().ok_or(CleanError::PreviewUsed(id))
+        let slot = self.latest.as_mut().filter(|(latest, _)| *latest == id);
+        let (_, preview) = slot.ok_or(CleanError::UnknownPreview(id))?;
+        preview.take().ok_or(CleanError::PreviewUsed(id))
     }
 
     fn available(&self) -> Bytes {

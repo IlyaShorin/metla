@@ -53,15 +53,17 @@ fn blocked(
 }
 
 /// The candidates no other candidate holds, largest first, and the
-/// others with the one that holds them.
+/// others with the one that holds them. Sorted by path (component by
+/// component), a directory's descendants follow it directly, so only the
+/// last candidate kept can hold the next one.
 fn outermost(mut candidates: Vec<Candidate>) -> (Vec<Candidate>, Vec<Rejected>) {
     candidates.sort_by(|a, b| a.path.cmp(&b.path));
     let mut kept: Vec<Candidate> = Vec::new();
     let mut nested = Vec::new();
     for candidate in candidates {
         let outer = kept
-            .iter()
-            .find(|outer| candidate.path.starts_with(&outer.path));
+            .last()
+            .filter(|outer| candidate.path.starts_with(&outer.path));
         match outer.map(|outer| outer.id) {
             Some(inside) => nested.push(Rejected {
                 why: Rejection::Nested { inside },
