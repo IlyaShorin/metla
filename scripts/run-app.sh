@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Starts the built Metla.app (scripts/build-app.sh) on a fixture, with its
+# index beside it, and passes its arguments on (for example
+# `--capture <dir>`). Without METLA_ROOT it makes a fixture with metla-cli
+# first, so a development run never reads or writes anything real.
+#
+# Environment: METLA_BUILD as for build-app.sh; METLA_ROOT, METLA_HOME and
+# METLA_DATA_DIR to choose another fixture or data directory.
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+build="${METLA_BUILD:-$repo/target/app}"
+app="$build/Metla.app"
+[[ -x "$app/Contents/MacOS/Metla" ]] || { echo "no $app: run scripts/build-app.sh" >&2; exit 1; }
+
+if [[ -z "${METLA_ROOT:-}" ]]; then
+    export METLA_ROOT="$build/fixture"
+    if [[ ! -e "$METLA_ROOT/.metla-fixture" ]]; then
+        (cd "$repo/core" && cargo build -q -p metla-cli)
+        "$repo/core/target/debug/metla-cli" fixture create "$METLA_ROOT" >&2
+    fi
+    export METLA_HOME="${METLA_HOME:-$METLA_ROOT/home}"
+fi
+export METLA_DATA_DIR="${METLA_DATA_DIR:-$build/data}"
+
+exec "$app/Contents/MacOS/Metla" "$@"
