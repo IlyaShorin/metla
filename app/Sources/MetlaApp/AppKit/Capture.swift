@@ -1,4 +1,6 @@
 import AppKit
+import CoreImage
+import IOSurface
 import QuartzCore
 import MetlaCoreFFI
 import MetlaKit
@@ -8,10 +10,10 @@ import SwiftUI
 /// and dark, to PNG files, from a fixture engine, then the app quits.
 ///
 /// It draws the app's own layers in-process (no screen recording, which
-/// needs a permission). On macOS 26 the window server composes Liquid
-/// Glass (the sidebar, toolbar items, checkbox marks) from layers this
-/// process cannot draw, so those parts come out empty; the screens'
-/// content is drawn as it is shown.
+/// needs a permission): sidebar, title, toolbar and the screens' content
+/// as they are shown. On macOS 26 the window server composes Liquid Glass
+/// itself: the glass surfaces (the sidebar's and toolbar items' panes,
+/// the blur behind them) and the marks of checked boxes are left out.
 @MainActor
 enum Capture {
     static let screens: [(String, Screen)] = [
@@ -212,29 +214,58 @@ enum LayerPainter {
             return nil
         }
         let object = contents as AnyObject
-        if CFGetTypeID(object) == CGImage.typeID {
-            return (object as! CGImage, nil)
+        if let image = image(object) {
+            return (image, nil)
         }
         let name = object_getClass(object).map(NSStringFromClass) ?? "?"
         let drawing = NSStringFromClass(type(of: layer)).contains("Drawing")
-        guard name == "CATintedImage", drawing else {
+        guard name == "CATintedImage", drawing,
+            let inner = object.perform(NSSelectorFromString("image"))?.takeUnretainedValue(),
+            let image = image(inner)
+        else {
             return nil
         }
-        let image = object.perform(NSSelectorFromString("image"))?.takeUnretainedValue()
         let tint = object.perform(NSSelectorFromString("tint"))?.takeUnretainedValue()
-        guard let image, CFGetTypeID(image) == CGImage.typeID else {
-            return nil
-        }
         let color = tint.flatMap { CFGetTypeID($0) == CGColor.typeID ? ($0 as! CGColor) : nil }
-        return (image as! CGImage, color)
+        // Without a tint of its own the window server colours it (vibrancy):
+        // the label colour of the appearance being drawn.
+        return (image, color ?? NSColor.labelColor.cgColor)
     }
 
-    /// Blurs and mirrors the window server composes from other layers:
-    /// they hold nothing of their own.
+    /// A `CGImage`, or an IOSurface's pixels as one.
+    static func image(_ object: AnyObject) -> CGImage? {
+        if CFGetTypeID(object) == CGImage.typeID {
+            return (object as! CGImage)
+        }
+        guard CFGetTypeID(object) == IOSurfaceGetTypeID() else {
+            return nil
+        }
+        let surface = object as! IOSurfaceRef
+        let image = CIImage(ioSurface: surface)
+        return CIContext().createCGImage(image, from: image.extent)
+    }
+
+    /// Blurs, mirrors and glass shapes the window server composes from
+    /// other layers: what they hold is a mask, not what is shown.
     static func effect(_ layer: CALayer) -> Bool {
         let name = NSStringFromClass(type(of: layer))
         let owner = layer.delegate.map { NSStringFromClass(type(of: $0)) } ?? ""
-        return name.contains("Backdrop") || name.contains("Portal") || owner.hasPrefix("_NSCoreHostingView")
+        return name.contains("Backdrop") || name.contains("Portal") || name.contains("SDF")
+            || owner.hasPrefix("_NSCoreHostingView")
+    }
+
+    /// Whether the layer's own drawing shows on screen: a view's layer
+    /// without contents shows nothing of its own, and one whose pixels sit
+    /// in a content sublayer shows them there (drawing it as well would
+    /// draw a title twice).
+    static func drawn(_ layer: CALayer) -> Bool {
+        guard NSStringFromClass(type(of: layer)) == "NSViewBackingLayer" else {
+            return true
+        }
+        let content = (layer.sublayers ?? []).contains {
+            NSStringFromClass(type(of: $0)).contains("NSViewBackingLayerContents")
+        }
+        return layer.contents != nil && !content
     }
 
     /// What the layer itself shows: its background, its image or its own
@@ -260,7 +291,7 @@ enum LayerPainter {
                 context.draw(image, in: bounds)
             }
             context.restoreGState()
-        } else {
+        } else if drawn(layer) {
             context.saveGState()
             let previous = NSGraphicsContext.current
             NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: flipped)
