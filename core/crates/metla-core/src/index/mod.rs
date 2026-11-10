@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use crate::domain::{Coverage, KindTotals, UnixTime};
 
 pub use reader::{IndexReader, Page, Snapshot};
-pub use writer::{IndexWriter, ScanWriter};
+pub use writer::{IndexEditor, IndexWriter, ScanWriter};
 
 /// What the index says about scanning.
 #[derive(Clone, Debug, PartialEq, Eq)]

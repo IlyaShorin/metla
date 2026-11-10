@@ -463,3 +463,42 @@ fn index_errors_explain_themselves() {
     assert!(messages[3].starts_with("index: "));
     assert_eq!(messages[4], "index writer stopped");
 }
+
+#[test]
+fn notes_are_kept_apart_from_the_index_own_metadata() {
+    let fx = Fixture::new();
+    let index = fx.path("index.sqlite");
+    let writer = IndexWriter::open(&index).unwrap();
+    let editor = writer.editor();
+    editor.set_note("events", b"42 uuid").unwrap();
+    editor.set_note("schema_version", b"not a number").unwrap();
+    editor.set_note("events", b"43 uuid").unwrap();
+    let mut reader = reader(&index);
+    let note = |reader: &mut IndexReader, key| reader.read(|s| s.note(key)).unwrap();
+    assert_eq!(note(&mut reader, "events"), Some(b"43 uuid".to_vec()));
+    assert_eq!(note(&mut reader, "missing"), None);
+    drop(writer);
+    assert!(
+        IndexWriter::open(&index).is_ok(),
+        "the schema version is untouched"
+    );
+}
+
+#[test]
+fn an_editor_works_from_another_thread_until_the_writer_is_gone() {
+    let fx = Fixture::new();
+    let index = fx.path("index.sqlite");
+    let writer = IndexWriter::open(&index).unwrap();
+    let editor = writer.editor();
+    let kept = metla_core::domain::Exclusion::new(Path::new("/kept")).unwrap();
+    let added = std::thread::spawn({
+        let editor = editor.clone();
+        let kept = kept.clone();
+        move || editor.exclude(&kept).unwrap()
+    });
+    assert!(added.join().unwrap());
+    let kept_now = reader(&index).read(|s| s.exclusions()).unwrap();
+    assert_eq!(kept_now, std::slice::from_ref(&kept));
+    drop(writer);
+    assert!(matches!(editor.include(&kept), Err(IndexError::WriterGone)));
+}

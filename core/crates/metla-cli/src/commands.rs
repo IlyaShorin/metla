@@ -12,7 +12,9 @@ use metla_core::domain::{
 };
 use metla_core::fs::{DirHandle, list_dir, now, peak_rss, volume};
 use metla_core::git::{Git, WorktreeSettings, verify_outputs};
-use metla_core::index::{IndexError, IndexReader, IndexWriter, Page, PictureId, Snapshot};
+use metla_core::index::{
+    IndexEditor, IndexError, IndexReader, IndexWriter, Page, PictureId, Snapshot,
+};
 use metla_core::rules::RuleSet;
 use metla_core::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
 
@@ -250,15 +252,15 @@ pub fn exclude(index: &Path, edit: &Edit) -> Result<Edited, String> {
     match edit {
         Edit::List => Ok(Edited::Listed(read(index, |snap| snap.exclusions())?)),
         Edit::Add(path) => {
-            change(index, path, IndexWriter::exclude).map(|(e, c)| Edited::Added(e, c))
+            change(index, path, IndexEditor::exclude).map(|(e, c)| Edited::Added(e, c))
         }
         Edit::Remove(path) => {
-            change(index, path, IndexWriter::include).map(|(e, c)| Edited::Removed(e, c))
+            change(index, path, IndexEditor::include).map(|(e, c)| Edited::Removed(e, c))
         }
     }
 }
 
-type Change = fn(&IndexWriter, &Exclusion) -> Result<bool, IndexError>;
+type Change = fn(&IndexEditor, &Exclusion) -> Result<bool, IndexError>;
 
 /// Applies one exclusion edit through the index's writer.
 fn change(index: &Path, path: &Path, change: Change) -> Result<(Exclusion, bool), String> {

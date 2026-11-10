@@ -13,6 +13,7 @@ use super::codec::{
 };
 use super::lineage::Lineage;
 use super::schema::open_for_reading;
+use super::writer::note_key;
 use super::{IndexError, Picture, ScanRecord};
 use crate::domain::{
     Bytes, Candidate, Category, Coverage, DirId, DirRecord, Exclusion, GapAt, GapKind, KindTotals,
@@ -169,6 +170,11 @@ impl Snapshot<'_> {
             found = child;
         }
         Ok(Some((at, found)))
+    }
+
+    /// The value kept under `key` with `IndexEditor::set_note`.
+    pub fn note(&self, key: &str) -> Result<Option<Vec<u8>>, IndexError> {
+        self.meta(&note_key(key))
     }
 
     /// The directory `id`, if the picture has it.

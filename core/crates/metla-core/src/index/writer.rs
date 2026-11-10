@@ -34,13 +34,24 @@ enum Command {
     Include(Exclusion, Reply<bool>),
     Verdicts(PictureId, Vec<(DirId, Verdict)>, Reply<bool>),
     Cleaned(PictureId, Vec<DirId>, Reply<bool>),
+    Note(String, Vec<u8>, Reply<()>),
+    Stop,
 }
 
 /// The only writer of an index. Dropping it stops its thread after the
-/// commands already sent.
+/// commands already sent. Its [`IndexEditor`] methods are available on
+/// it directly.
 pub struct IndexWriter {
-    commands: Option<SyncSender<Command>>,
+    editor: IndexEditor,
     thread: Option<JoinHandle<()>>,
+}
+
+/// Small edits through the index's writer, from any thread: exclusions,
+/// Git's verdicts, cleaned directories, in-place updates and notes. A
+/// scan session needs the [`IndexWriter`] itself.
+#[derive(Clone)]
+pub struct IndexEditor {
+    commands: SyncSender<Command>,
 }
 
 impl IndexWriter {
@@ -53,7 +64,7 @@ impl IndexWriter {
             .spawn(move || serve(conn, queue))
             .map_err(|_| IndexError::WriterGone)?;
         Ok(IndexWriter {
-            commands: Some(commands),
+            editor: IndexEditor { commands },
             thread: Some(thread),
         })
     }
@@ -66,6 +77,21 @@ impl IndexWriter {
         Ok(ScanWriter { writer: self })
     }
 
+    /// A handle for edits that other threads can hold.
+    pub fn editor(&self) -> IndexEditor {
+        self.editor.clone()
+    }
+}
+
+impl std::ops::Deref for IndexWriter {
+    type Target = IndexEditor;
+
+    fn deref(&self) -> &IndexEditor {
+        &self.editor
+    }
+}
+
+impl IndexEditor {
     /// Brings the picture `picture` up to date with one rescan, in one
     /// transaction: the totals above the rescanned directory, the bytes by
     /// kind and the coverage are recomputed, and `now` is recorded as the
@@ -102,15 +128,21 @@ impl IndexWriter {
     }
 
     /// Records that the directories `cleaned` of the picture `picture` were
-    /// cleaned: until the next scan they and everything below them are no
-    /// longer offered. False, and nothing stored, when another picture has
-    /// replaced it.
+    /// cleaned: until they are rescanned they and everything below them
+    /// are no longer offered. False, and nothing stored, when another
+    /// picture has replaced it.
     pub fn mark_cleaned(
         &self,
         picture: PictureId,
         cleaned: Vec<DirId>,
     ) -> Result<bool, IndexError> {
         self.ask(|reply| Command::Cleaned(picture, cleaned, reply))
+    }
+
+    /// Keeps `value` under `key` in a space of its own, apart from the
+    /// index's metadata; read back with `Snapshot::note`.
+    pub fn set_note(&self, key: &str, value: &[u8]) -> Result<(), IndexError> {
+        self.ask(|reply| Command::Note(key.to_owned(), value.to_vec(), reply))
     }
 
     fn ask<T>(&self, command: impl FnOnce(Reply<T>) -> Command) -> Result<T, IndexError> {
@@ -120,14 +152,15 @@ impl IndexWriter {
     }
 
     fn send(&self, command: Command) -> Result<(), IndexError> {
-        let commands = self.commands.as_ref().ok_or(IndexError::WriterGone)?;
-        commands.send(command).map_err(|_| IndexError::WriterGone)
+        self.commands
+            .send(command)
+            .map_err(|_| IndexError::WriterGone)
     }
 }
 
 impl Drop for IndexWriter {
     fn drop(&mut self) {
-        self.commands.take();
+        let _ = self.editor.send(Command::Stop);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -173,6 +206,9 @@ fn serve(conn: Connection, queue: Receiver<Command>) {
         failure: None,
     };
     for command in queue {
+        if let Command::Stop = command {
+            return;
+        }
         server.handle(command);
     }
 }
@@ -201,6 +237,10 @@ impl Server {
                 let rows = cleaned.iter().map(|id| [id.0]);
                 answer(reply, mark(&self.conn, picture, CLEANED, rows))
             }
+            Command::Note(key, value, reply) => {
+                answer(reply, set_meta(&self.conn, &note_key(&key), value))
+            }
+            Command::Stop => {}
         }
     }
 
@@ -221,6 +261,11 @@ impl Server {
             None => swap(&self.conn, summary),
         }
     }
+}
+
+/// Where a note lives in `meta`: apart from the index's own keys.
+pub(super) fn note_key(key: &str) -> String {
+    format!("note:{key}")
 }
 
 /// Sends a result back; a requester that stopped waiting needs none.
