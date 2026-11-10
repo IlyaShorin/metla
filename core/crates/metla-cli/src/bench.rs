@@ -2,13 +2,14 @@
 //! fixture only.
 
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use metla_core::domain::{DirId, DirRecord};
+use metla_core::domain::{BLOCK_SIZE, Bytes, DirId, DirRecord};
 use metla_core::engine::{DirRef, Engine};
 use metla_core::fs::{now, thread_cpu, usage};
 use metla_core::index::{IndexReader, IndexWriter, Page};
@@ -194,8 +195,10 @@ fn scanned(place: &Place) -> Result<Engine, String> {
     Ok(engine)
 }
 
-/// Writes 1 MiB to `file`; how long until the root's total shows it.
-/// Returns once the engine is idle again.
+/// Writes 1 MiB to `file`; how long until the root's total shows all of
+/// it (FSEvents may report one write in two deliveries, so a total that
+/// merely changed can still miss part of it, and the next round would
+/// start from a wrong total). Returns once the engine is idle again.
 fn shown_after_write(engine: &Engine, place: &Place, file: &Path) -> Result<String, String> {
     let root = DirRef::Path(place.root.clone());
     // No entries: only the directory's own totals are read.
@@ -206,7 +209,9 @@ fn shown_after_write(engine: &Engine, place: &Place, file: &Path) -> Result<Stri
     let total = || engine.children(&root, none).ok().map(|f| f.dir.tree.bytes);
     let before = total();
     fs::write(file, vec![9u8; 1 << 20]).map_err(|e| e.to_string())?;
-    let shown = waited(place.patience, || total() != before);
+    let written = fs::symlink_metadata(file).map_err(|e| e.to_string())?;
+    let expected = before.map(|bytes| bytes + Bytes(written.blocks() * BLOCK_SIZE));
+    let shown = waited(place.patience, || total() == expected);
     waited(place.patience, || idle(engine)).ok_or("never idle")?;
     let precise = |shown: Duration| format!("{:.3} s", shown.as_secs_f64());
     Ok(shown.map_or("never".to_owned(), precise))
