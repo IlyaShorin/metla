@@ -186,12 +186,17 @@ pub fn bench_refresh(place: &Place) -> Result<String, String> {
     Ok(lines)
 }
 
-/// The engine on a fixture root, once its first full scan has ended.
+/// The engine on a fixture root, once the full scan asked for here has
+/// ended: an engine without a picture runs one of its own first, and
+/// between the two it is idle, so being idle is not enough.
 fn scanned(place: &Place) -> Result<Engine, String> {
     fixture(&place.root)?;
     let (engine, _) = open(place)?;
+    waited(place.patience, || idle(&engine)).ok_or("the engine's scan did not end")?;
+    let scans = engine.counters().full_scans;
     engine.start_scan().map_err(|e| e.to_string())?;
-    waited(place.patience, || idle(&engine)).ok_or("the first scan did not end")?;
+    let ours = || engine.counters().full_scans > scans && idle(&engine);
+    waited(place.patience, ours).ok_or("the first scan did not end")?;
     Ok(engine)
 }
 
@@ -207,10 +212,10 @@ fn shown_after_write(engine: &Engine, place: &Place, file: &Path) -> Result<Stri
         limit: usize::MIN,
     };
     let total = || engine.children(&root, none).ok().map(|f| f.dir.tree.bytes);
-    let before = total();
+    let before = total().ok_or("the root is not in the picture")?;
     fs::write(file, vec![9u8; 1 << 20]).map_err(|e| e.to_string())?;
     let written = fs::symlink_metadata(file).map_err(|e| e.to_string())?;
-    let expected = before.map(|bytes| bytes + Bytes(written.blocks() * BLOCK_SIZE));
+    let expected = Some(before + Bytes(written.blocks() * BLOCK_SIZE));
     let shown = waited(place.patience, || total() == expected);
     waited(place.patience, || idle(engine)).ok_or("never idle")?;
     let precise = |shown: Duration| format!("{:.3} s", shown.as_secs_f64());
