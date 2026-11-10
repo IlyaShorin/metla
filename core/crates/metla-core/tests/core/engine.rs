@@ -406,10 +406,12 @@ fn settings_are_kept_and_switching_background_analysis_off_stops_watching() {
 }
 
 #[test]
-fn a_folder_lists_its_subdirectories_and_files_largest_first() {
+fn a_folder_lists_its_subdirectories_and_files_largest_first_then_by_name() {
     let place = Place::new(&["top/small/x=1", "top/big/y=2"]);
     write_file(&place.path("top/big/z"), 50_000);
     write_file(&place.path("top/file"), 20_000);
+    write_file(&place.path("top/twin-b"), 8_000);
+    write_file(&place.path("top/twin-a"), 8_000);
     let engine = place.open();
     settled(&engine);
     let folder = engine
@@ -423,8 +425,8 @@ fn a_folder_lists_its_subdirectories_and_files_largest_first() {
             FolderEntry::File { name, .. } => name.to_string_lossy().into_owned(),
         })
         .collect();
-    assert_eq!(names, ["big/", "file", "small/"]);
-    assert_eq!(folder.total, 3);
+    assert_eq!(names, ["big/", "file", "twin-a", "twin-b", "small/"]);
+    assert_eq!(folder.total, 5);
     let by_id = engine.children(
         &DirRef::Id(folder.dir.id),
         Page {

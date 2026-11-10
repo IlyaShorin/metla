@@ -94,17 +94,19 @@ impl Shared {
     /// What the engine is doing now.
     pub fn state(&self) -> EngineState {
         let status = *lock(&self.status);
-        let effective = self.effective();
+        if status.cleaning {
+            return EngineState::Cleaning;
+        }
         let scanning = lock(&self.scan).as_ref().map(|scan| EngineState::Scanning {
             progress: scan.control.progress(),
             interactive: scan.interactive,
         });
-        if status.cleaning {
-            return EngineState::Cleaning;
-        }
-        if let Some(scanning) = scanning {
-            return scanning;
-        }
+        scanning.unwrap_or_else(|| self.between_scans(status))
+    }
+
+    /// What the engine is doing while it neither scans nor cleans.
+    fn between_scans(&self, status: Status) -> EngineState {
+        let effective = self.effective();
         let deferred = status.needs_full_scan && !self.profiles.of(effective).full_scans;
         let due = status.pending > 0 || status.needs_full_scan && !status.held;
         match (effective, deferred, due) {

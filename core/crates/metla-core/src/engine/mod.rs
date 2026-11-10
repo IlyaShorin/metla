@@ -136,6 +136,98 @@ fn open_index(index: &Path) -> Result<IndexWriter, EngineError> {
     }
 }
 
+/// The data directory, made if needed and canonical, and the index in it.
+fn data_files(data_dir: &Path) -> Result<(PathBuf, PathBuf), EngineError> {
+    setup(data_dir, std::fs::create_dir_all(data_dir))?;
+    let data_dir = setup(data_dir, std::fs::canonicalize(data_dir))?;
+    let index = data_dir.join(INDEX_FILE);
+    Ok((data_dir, index))
+}
+
+/// The settings kept in the index, or the defaults.
+fn stored_settings(reader: &mut IndexReader) -> Result<Settings, EngineError> {
+    let note = reader.read(|snap| snap.note(SETTINGS_NOTE))?;
+    let text = note.map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    Ok(text.map_or_else(Settings::default, |text| Settings::decode(&text)))
+}
+
+/// Whether only a full scan makes the picture right: there is no picture
+/// of this root, its last scan never finished, or the event history it
+/// would resume from is lost.
+fn needs_full_scan(
+    reader: &mut IndexReader,
+    root: &ScanRoot,
+    config: &EngineConfig,
+    settings: &Settings,
+) -> Result<bool, EngineError> {
+    let scan = reader.read(|snap| snap.scan())?;
+    let current = scan.as_ref().is_some_and(|scan| scan.is_current());
+    let pictured = scan.and_then(|scan| scan.picture);
+    let usable = current && pictured.is_some_and(|picture| picture.root == root.path());
+    let streams = config.watching != Watching::Manual;
+    let timing = config.profiles.of(config.profile).timing;
+    let watched = settings.background && timing.is_some();
+    let follows = !(streams && watched) || resumable(reader, root.device()).is_some();
+    Ok(!usable || !follows)
+}
+
+/// What the engine shares between its threads, and the worktree worker.
+fn share(
+    parts: Parts,
+    root: &ScanRoot,
+    settings: Settings,
+    needs_full_scan: bool,
+) -> (Arc<Shared>, JoinHandle<()>) {
+    let rules = Arc::new(RuleSet::new(&parts.home, &parts.user));
+    let cleaner = Cleaner::new(
+        root.path(),
+        parts.production,
+        Arc::clone(&rules),
+        parts.git.clone(),
+        clean_settings(&parts.home, &settings),
+    );
+    let observer = shared::ObserverSlot::default();
+    let ready = Arc::clone(&observer);
+    let (statuses, worktrees) = Statuses::start(parts.git.clone(), move || {
+        if let Some(observer) = lock(&ready).clone() {
+            observer.changed(Changed::Worktrees);
+        }
+    });
+    let shared = Arc::new(Shared {
+        root: root.path().to_path_buf(),
+        home: parts.home,
+        rules,
+        git: parts.git,
+        profiles: parts.profiles,
+        trash: parts.trash,
+        observer,
+        status: Mutex::new(Status {
+            profile: parts.profile,
+            needs_full_scan,
+            ..Status::default()
+        }),
+        scan: Mutex::default(),
+        cleanup: Mutex::default(),
+        report: Mutex::default(),
+        settings: Mutex::new(settings),
+        cleaner: Mutex::new(cleaner),
+        statuses,
+        counters: Mutex::default(),
+    });
+    (shared, worktrees)
+}
+
+/// The parts of a configuration that move into the shared state.
+struct Parts {
+    home: PathBuf,
+    user: OsString,
+    git: Git,
+    production: Option<Production>,
+    trash: Arc<dyn TrashHost + Send + Sync>,
+    profiles: Profiles,
+    profile: PowerProfile,
+}
+
 fn setup<T>(what: &Path, result: std::io::Result<T>) -> Result<T, EngineError> {
     result.map_err(|e| EngineError::Setup(format!("{}: {e}", what.display())))
 }
@@ -144,65 +236,29 @@ impl Engine {
     /// Opens the engine: the saved picture answers at once; watching and
     /// any full scan that is needed start on the engine's thread.
     pub fn open(config: EngineConfig) -> Result<Engine, EngineError> {
-        setup(&config.data_dir, std::fs::create_dir_all(&config.data_dir))?;
-        let data_dir = setup(&config.data_dir, std::fs::canonicalize(&config.data_dir))?;
-        let index = data_dir.join(INDEX_FILE);
+        let (data_dir, index) = data_files(&config.data_dir)?;
         let writer = open_index(&index)?;
         let mut reader = IndexReader::open(&index)?;
-        let settings = reader.read(|snap| snap.note(SETTINGS_NOTE))?;
-        let settings = settings.map_or_else(Settings::default, |bytes| {
-            Settings::decode(&String::from_utf8_lossy(&bytes))
-        });
+        let settings = stored_settings(&mut reader)?;
         let root = setup(&config.root, ScanRoot::new(&config.root))?;
-        let scan = reader.read(|snap| snap.scan())?;
-        let current = scan.as_ref().is_some_and(|scan| scan.is_current());
-        let pictured = scan.and_then(|scan| scan.picture);
-        let usable = current && pictured.is_some_and(|picture| picture.root == root.path());
-        let streams = config.watching != Watching::Manual;
-        let timing = config.profiles.of(config.profile).timing;
-        let watched = settings.background && timing.is_some();
-        let follows = !(streams && watched) || resumable(&mut reader, root.device()).is_some();
+        let needs_full_scan = needs_full_scan(&mut reader, &root, &config, &settings)?;
         let scope = setup(&config.root, ScanScope::detect(&root))?;
-        let rules = Arc::new(RuleSet::new(&config.home, &config.user));
-        let cleaner = Cleaner::new(
-            root.path(),
-            config.production,
-            Arc::clone(&rules),
-            config.git.clone(),
-            clean_settings(&config.home, &settings),
-        );
-        let observer = shared::ObserverSlot::default();
-        let ready = Arc::clone(&observer);
-        let (statuses, worktrees) = Statuses::start(config.git.clone(), move || {
-            if let Some(observer) = lock(&ready).clone() {
-                observer.changed(Changed::Worktrees);
-            }
-        });
-        let shared = Arc::new(Shared {
-            root: root.path().to_path_buf(),
+        let watching = config.watching;
+        let parts = Parts {
             home: config.home,
-            rules,
+            user: config.user,
             git: config.git,
-            profiles: config.profiles,
+            production: config.production,
             trash: config.trash,
-            observer,
-            status: Mutex::new(Status {
-                profile: config.profile,
-                needs_full_scan: !usable || !follows,
-                ..Status::default()
-            }),
-            scan: Mutex::default(),
-            cleanup: Mutex::default(),
-            report: Mutex::default(),
-            settings: Mutex::new(settings),
-            cleaner: Mutex::new(cleaner),
-            statuses,
-            counters: Mutex::default(),
-        });
+            profiles: config.profiles,
+            profile: config.profile,
+        };
+        let (shared, worktrees) = share(parts, &root, settings, needs_full_scan);
         let mut ignored = vec![data_dir];
         ignored.extend(scope.excluded().map(Path::to_path_buf));
         let coalescer = Coalescer::new(root.path(), ignored, shared.profile().timing);
         let (commands, queue) = mpsc::channel();
+        let editor = writer.editor();
         let scheduler = Scheduler {
             shared: Arc::clone(&shared),
             reader: IndexReader::open(&index)?,
@@ -210,7 +266,7 @@ impl Engine {
             root,
             scope,
             coalescer,
-            watching: config.watching,
+            watching,
             commands: queue,
             sender: commands.clone(),
             stream: None,
@@ -218,12 +274,10 @@ impl Engine {
             clock: Instant::now(),
             next_batch: None,
         };
-        let editor = scheduler.writer.editor();
+        let thread = thread::Builder::new().name("metla-engine".into());
         let scheduler = setup(
             Path::new("engine thread"),
-            thread::Builder::new()
-                .name("metla-engine".into())
-                .spawn(move || scheduler.run()),
+            thread.spawn(move || scheduler.run()),
         )?;
         Ok(Engine {
             shared,

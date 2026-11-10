@@ -2,9 +2,9 @@
 //! in the picture, rescan it with what the picture says about it, and
 //! write the change in one transaction.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::domain::{DirRecord, DirState, RescanTask, UnixTime};
+use crate::domain::{DirRecord, DirState, RescanTask, Rescanned, UnixTime};
 use crate::index::{IndexError, IndexReader, IndexWriter, PictureId, Snapshot};
 use crate::scan::{Inherited, ScanControl, ScanError, ScanOptions, Stored, Target, rescan};
 
@@ -50,6 +50,13 @@ struct Plan {
     size: u64,
 }
 
+/// What one attempt at a task came to.
+enum Step {
+    Done(Refreshed),
+    /// The directory is not there: rescan its parent shallowly.
+    Parent(PathBuf),
+}
+
 /// Applies `task` to the picture of `options`' root. A directory that is
 /// no longer there makes its parent the one rescanned.
 pub fn refresh(
@@ -65,29 +72,56 @@ pub fn refresh(
         RescanTask::Shallow(path) => (path.clone(), false),
         RescanTask::Recursive(path) => (path.clone(), true),
     };
+    let mut ctx = Attempt {
+        options,
+        reader,
+        writer,
+        control,
+        now,
+    };
     loop {
-        let Some(plan) = reader.read(|snap| plan(snap, &path, whole, options))? else {
-            return Ok(Refreshed::NoPicture);
+        match ctx.attempt(&path, whole)? {
+            Step::Done(done) => return Ok(done),
+            Step::Parent(parent) => (path, whole) = (parent, false),
+        }
+    }
+}
+
+/// What every attempt at a task uses.
+struct Attempt<'a> {
+    options: &'a ScanOptions,
+    reader: &'a mut IndexReader,
+    writer: &'a IndexWriter,
+    control: &'a ScanControl,
+    now: UnixTime,
+}
+
+impl Attempt<'_> {
+    /// Rescans `path` once, as the picture describes it.
+    fn attempt(&mut self, path: &Path, whole: bool) -> Result<Step, RefreshError> {
+        let options = self.options;
+        let Some(plan) = self.reader.read(|snap| plan(snap, path, whole, options))? else {
+            return Ok(Step::Done(Refreshed::NoPicture));
         };
         let root = plan.target.parent.is_none();
         if plan.target.stored.is_none() && (root || plan.size > MAX_SUBTREE) {
-            return Ok(Refreshed::NeedsFullScan);
+            return Ok(Step::Done(Refreshed::NeedsFullScan));
         }
         let parent = plan.target.path.parent().map(Path::to_path_buf);
-        match rescan(options, plan.target, plan.next_id, control)? {
-            Some(change) => {
-                let applied = writer.apply(plan.picture, change, now)?;
-                return Ok(match applied {
-                    true => Refreshed::Applied,
-                    false => Refreshed::NoPicture,
-                });
-            }
-            None if root => return Ok(Refreshed::NeedsFullScan),
-            None => {
-                path = parent.unwrap_or_default();
-                whole = false;
-            }
+        let changed = rescan(options, plan.target, plan.next_id, self.control)?;
+        match (changed, parent) {
+            (Some(change), _) => self.write(plan.picture, change),
+            (None, Some(parent)) if !root => Ok(Step::Parent(parent)),
+            (None, _) => Ok(Step::Done(Refreshed::NeedsFullScan)),
         }
+    }
+
+    fn write(&self, picture: PictureId, change: Rescanned) -> Result<Step, RefreshError> {
+        let applied = self.writer.apply(picture, change, self.now)?;
+        Ok(Step::Done(match applied {
+            true => Refreshed::Applied,
+            false => Refreshed::NoPicture,
+        }))
     }
 }
 
@@ -108,8 +142,23 @@ fn plan(
     let Some((at, row)) = snap.nearest(path)? else {
         return Ok(None);
     };
-    let read = matches!(row.state, DirState::Read(_));
-    let whole = whole && at == path || !read;
+    let whole = whole && at == path || !matches!(row.state, DirState::Read(_));
+    Ok(Some(Plan {
+        picture: picture.id(),
+        next_id: snap.next_id()?,
+        size: row.tree.dirs,
+        target: target(snap, at, row, whole, options)?,
+    }))
+}
+
+/// The rescan target for the row `row` at `at`.
+fn target(
+    snap: &Snapshot<'_>,
+    at: PathBuf,
+    row: DirRecord,
+    whole: bool,
+    options: &ScanOptions,
+) -> Result<Target, IndexError> {
     let inherited = match row.parent {
         Some(parent) => inherited(snap, parent)?,
         None => options.root_inherits(),
@@ -121,18 +170,13 @@ fn plan(
             row: row.clone(),
         }),
     };
-    Ok(Some(Plan {
-        picture: picture.id(),
-        next_id: snap.next_id()?,
-        size: row.tree.dirs,
-        target: Target {
-            path: at,
-            id: row.id,
-            parent: row.parent,
-            inherited,
-            stored,
-        },
-    }))
+    Ok(Target {
+        path: at,
+        id: row.id,
+        parent: row.parent,
+        inherited,
+        stored,
+    })
 }
 
 /// What the directory `parent` hands down to its children: what it passed
