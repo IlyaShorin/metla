@@ -30,10 +30,6 @@ impl Flags {
         Flags(bits)
     }
 
-    pub fn bits(self) -> u32 {
-        self.0
-    }
-
     /// Whether every bit of `other` is set.
     pub fn contains(self, other: Flags) -> bool {
         self.0 & other.0 == other.0

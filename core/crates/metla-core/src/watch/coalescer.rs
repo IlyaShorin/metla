@@ -49,26 +49,40 @@ pub struct Event {
     pub id: u64,
 }
 
-/// A directory with changes not yet rescanned.
+/// How long a change waits: since its first and latest event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Dirty {
-    recursive: bool,
-    /// The first and the latest event since the last rescan.
+struct Wait {
     first: Duration,
     last: Duration,
     settle: Duration,
-    /// The id of the first event not yet applied.
+    /// The id of the first event not yet handed out.
     since: u64,
 }
 
-impl Dirty {
+/// A directory with changes not yet handed out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Dirty {
+    recursive: bool,
+    wait: Wait,
+}
+
+impl Wait {
+    fn new(now: Duration, settle: Duration, id: u64) -> Wait {
+        Wait {
+            first: now,
+            last: now,
+            settle,
+            since: id,
+        }
+    }
+
     fn grow(&mut self, now: Duration, id: u64, timing: &Timing) {
         self.last = self.last.max(now);
         self.settle = (self.settle * timing.factor).min(timing.cap);
         self.since = self.since.min(id);
     }
 
-    fn merge(&mut self, other: &Dirty) {
+    fn merge(&mut self, other: &Wait) {
         self.first = self.first.min(other.first);
         self.last = self.last.max(other.last);
         self.settle = self.settle.max(other.settle);
@@ -88,12 +102,19 @@ struct Cooling {
     settle: Duration,
 }
 
+impl Cooling {
+    /// Handed out less than a cap ago: a new change backs off further.
+    fn recent(&self, now: Duration, timing: &Timing) -> bool {
+        now < self.fired + timing.cap
+    }
+}
+
 pub struct Coalescer {
     root: PathBuf,
     ignored: Vec<PathBuf>,
     timing: Option<Timing>,
     dirty: BTreeMap<PathBuf, Dirty>,
-    full: Option<Dirty>,
+    full: Option<Wait>,
     cooling: BTreeMap<PathBuf, Cooling>,
     /// The id of the latest event seen.
     latest: Option<u64>,
@@ -163,15 +184,15 @@ impl Coalescer {
         let mut due: Vec<(Duration, PathBuf)> = self
             .dirty
             .iter()
-            .filter(|(_, d)| d.due(&timing) <= now)
-            .map(|(path, d)| (d.due(&timing), path.clone()))
+            .filter(|(_, d)| d.wait.due(&timing) <= now)
+            .map(|(path, d)| (d.wait.due(&timing), path.clone()))
             .collect();
         due.sort();
         due.truncate(timing.batch);
         let mut tasks: Vec<(usize, RescanTask)> = Vec::new();
         for (_, path) in due {
             let dirty = self.dirty.remove(&path).unwrap_or_else(|| unreachable!());
-            self.cool(&path, dirty.settle, now, &timing);
+            self.cool(&path, dirty.wait.settle, now, &timing);
             let depth = path.components().count();
             let task = match dirty.recursive {
                 true => RescanTask::Recursive(path),
@@ -187,7 +208,7 @@ impl Coalescer {
     pub fn next_deadline(&self) -> Option<Duration> {
         let timing = self.timing?;
         let full = self.full.iter().map(|f| f.due(&timing));
-        let dirs = self.dirty.values().map(|d| d.due(&timing));
+        let dirs = self.dirty.values().map(|d| d.wait.due(&timing));
         full.chain(dirs).min()
     }
 
@@ -199,8 +220,8 @@ impl Coalescer {
     /// The id of the last event whose change has been handed out with
     /// everything before it: where a restarted stream resumes.
     pub fn settled(&self) -> Option<u64> {
-        let waiting = self.full.iter().chain(self.dirty.values());
-        match waiting.map(|d| d.since).min() {
+        let dirs = self.dirty.values().map(|d| &d.wait);
+        match self.full.iter().chain(dirs).map(|w| w.since).min() {
             Some(since) => Some(since.saturating_sub(1)),
             None => self.latest,
         }
@@ -214,16 +235,9 @@ impl Coalescer {
     }
 
     fn mark_full(&mut self, id: u64, now: Duration, timing: &Timing) {
-        let fresh = Dirty {
-            recursive: true,
-            first: now,
-            last: now,
-            settle: timing.settle,
-            since: id,
-        };
-        let mut full = self.full.unwrap_or(fresh);
+        let mut full = self.full.unwrap_or(Wait::new(now, timing.settle, id));
         for dirty in self.dirty.values() {
-            full.merge(dirty);
+            full.merge(&dirty.wait);
         }
         full.grow(now, id, timing);
         self.dirty.clear();
@@ -242,18 +256,15 @@ impl Coalescer {
             .find(|a| self.dirty.get(*a).is_some_and(|d| d.recursive))
             .map(Path::to_path_buf);
         if let Some(dirty) = covering.and_then(|a| self.dirty.get_mut(&a)) {
-            return dirty.grow(now, id, timing);
+            return dirty.wait.grow(now, id, timing);
         }
         let settle = self.start_settle(&path, now, timing);
         let entry = self.dirty.entry(path.clone()).or_insert(Dirty {
             recursive,
-            first: now,
-            last: now,
-            settle,
-            since: id,
+            wait: Wait::new(now, settle, id),
         });
-        if entry.first < now || entry.recursive != recursive {
-            entry.grow(now, id, timing);
+        if entry.wait.first < now || entry.recursive != recursive {
+            entry.wait.grow(now, id, timing);
         }
         entry.recursive |= recursive;
         if recursive {
@@ -266,10 +277,7 @@ impl Coalescer {
     /// The settle time a new entry starts with: longer when the directory
     /// was rescanned less than a cap ago.
     fn start_settle(&self, path: &Path, now: Duration, timing: &Timing) -> Duration {
-        let recent = self
-            .cooling
-            .get(path)
-            .filter(|c| now < c.fired + timing.cap);
+        let recent = self.cooling.get(path).filter(|c| c.recent(now, timing));
         recent.map_or(timing.settle, |c| {
             (c.settle * timing.factor).min(timing.cap)
         })
@@ -287,7 +295,7 @@ impl Coalescer {
         for inner in below {
             let dirty = self.dirty.remove(&inner).unwrap_or_else(|| unreachable!());
             if let Some(outer) = self.dirty.get_mut(path) {
-                outer.merge(&dirty);
+                outer.wait.merge(&dirty.wait);
             }
         }
     }
@@ -317,12 +325,12 @@ impl Coalescer {
             .filter(|p| p.starts_with(parent))
             .cloned()
             .collect();
-        let mut merged: Option<Dirty> = None;
+        let mut merged: Option<Wait> = None;
         for path in below {
             let dirty = self.dirty.remove(&path).unwrap_or_else(|| unreachable!());
-            merged.get_or_insert(dirty).merge(&dirty);
+            merged.get_or_insert(dirty.wait).merge(&dirty.wait);
         }
-        let Some(mut merged) = merged else {
+        let Some(merged) = merged else {
             return;
         };
         match parent == self.root {
@@ -333,8 +341,11 @@ impl Coalescer {
                 }
             }
             false => {
-                merged.recursive = true;
-                self.dirty.insert(parent.to_path_buf(), merged);
+                let dirty = Dirty {
+                    recursive: true,
+                    wait: merged,
+                };
+                self.dirty.insert(parent.to_path_buf(), dirty);
             }
         }
     }
@@ -354,7 +365,7 @@ impl Coalescer {
     }
 
     fn cool(&mut self, path: &Path, settle: Duration, now: Duration, timing: &Timing) {
-        self.cooling.retain(|_, c| now < c.fired + timing.cap);
+        self.cooling.retain(|_, c| c.recent(now, timing));
         if self.cooling.len() >= timing.max_dirs {
             return;
         }

@@ -11,14 +11,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use metla_core::domain::{
-    Area, Bytes, DirFacts, DirId, DirRecord, DirState, FileKind, KindTotals, Passed, RescanTask,
-    Rescanned, Stamp, UnixTime,
+    Area, Bytes, DirFacts, DirId, DirRecord, DirState, FileKind, Gap, KindTotals, Passed,
+    RescanTask, Rescanned, Skip, Stamp, UnixTime,
 };
-use metla_core::engine::{Refreshed, refresh};
+use metla_core::engine::{MAX_SUBTREE, Refreshed, refresh};
 use metla_core::index::{IndexReader, IndexWriter};
 use metla_core::rules::RuleSet;
 use metla_core::scan::{
-    DirObserver, Inherited, ScanControl, ScanOptions, Stored, Target, rescan, run,
+    DirObserver, Inherited, ScanControl, ScanOptions, ScanRoot, ScanScope, Stored, Target, rescan,
+    run,
 };
 
 use crate::scan::{options, scan_with};
@@ -169,7 +170,6 @@ fn target(scanned: &BTreeMap<PathBuf, DirRecord>, path: &Path, shallow: bool) ->
         path: path.to_path_buf(),
         id: row.id,
         parent: row.parent,
-        depth: 1,
         inherited: Inherited {
             passed: parent.passed.clone(),
             grandparent_markers: Vec::new(),
@@ -317,7 +317,23 @@ fn a_change_for_a_picture_that_was_replaced_is_not_applied() {
         removed: vec![root.id],
         rows: Vec::new(),
     };
-    assert!(!writer.apply(picture, change, UnixTime(3)).unwrap());
+    assert!(!writer.apply(picture, change.clone(), UnixTime(3)).unwrap());
+    let current = reader
+        .read(|snap| snap.scan())
+        .unwrap()
+        .unwrap()
+        .picture
+        .unwrap()
+        .id();
+    let keep = Rescanned {
+        removed: Vec::new(),
+        rows: vec![root.clone()],
+        ..change
+    };
+    assert!(
+        writer.apply(current, keep, UnixTime(3)).unwrap(),
+        "the current picture"
+    );
     assert!(
         reader.read(|snap| snap.root()).unwrap().is_some(),
         "nothing removed"
@@ -386,4 +402,83 @@ fn a_cleaned_directory_is_offered_again_once_its_parent_is_rescanned() {
         .query_row("SELECT count(*) FROM stale", [], |r| r.get(0))
         .unwrap();
     assert_eq!(stale, 0);
+}
+
+#[test]
+fn a_child_the_picture_could_not_read_or_skipped_otherwise_is_walked_again() {
+    let fx = Fixture::new();
+    fx.build(&[
+        "top/was_denied/x=1",
+        "top/placeholder/y=2",
+        "top/still/y=2",
+        "top/kept/z=3",
+    ]);
+    let root = ScanRoot::new(fx.root()).unwrap();
+    let scope = ScanScope::new(root.device())
+        .exclude(fx.path("top/placeholder"))
+        .exclude(fx.path("top/still"));
+    let options = ScanOptions::new(root, scope);
+    let mut scanned = scan_with(&options, &ScanControl::new(0)).records;
+    let denied = fx.path("top/was_denied");
+    let placeholder = fx.path("top/placeholder");
+    scanned.get_mut(&denied).unwrap().state = DirState::Gap(Gap::Denied);
+    scanned.get_mut(&placeholder).unwrap().state = DirState::Skipped(Skip::Dataless);
+    let aimed = target(&scanned, &fx.path("top"), true);
+    let change = rescan(&options, aimed, DirId(100), &ScanControl::new(0))
+        .unwrap()
+        .unwrap();
+    let mut removed = change.removed.clone();
+    removed.sort();
+    let mut expected = vec![scanned[&denied].id, scanned[&placeholder].id];
+    expected.sort();
+    assert_eq!(
+        removed, expected,
+        "kept: `kept`, and `still`, excluded as before"
+    );
+    let state = |name: &str| change.rows.iter().find(|r| r.name == name).unwrap().state;
+    assert!(matches!(state("was_denied"), DirState::Read(_)));
+    assert_eq!(state("placeholder"), DirState::Skipped(Skip::Excluded));
+}
+
+#[test]
+fn a_vanished_directory_makes_its_parent_the_one_rescanned_shallowly() {
+    let fx = Fixture::new();
+    fx.build(&["a/b/c=1", "a/x/y=2"]);
+    let reads = Arc::new(Reads::default());
+    let options = options(fx.root()).observer(reads.clone());
+    let (_aux, index, writer) = written(&fx, &options);
+    let mut reader = IndexReader::open(&index).unwrap();
+    fs::remove_dir_all(fx.path("a/b")).unwrap();
+    reads.0.lock().unwrap().clear();
+    let task = RescanTask::Shallow(fx.path("a/b"));
+    let control = ScanControl::new(0);
+    let done = refresh(&task, &options, &mut reader, &writer, &control, UnixTime(3)).unwrap();
+    assert_eq!(done, Refreshed::Applied);
+    assert_eq!(*reads.0.lock().unwrap(), [fx.path("a")], "not a/x");
+    assert_eq!(reader.read(|snap| snap.dir(&fx.path("a/b"))).unwrap(), None);
+}
+
+#[test]
+fn a_subtree_larger_than_the_limit_is_scanned_again_whole() {
+    for (dirs, expected) in [
+        (MAX_SUBTREE, Refreshed::Applied),
+        (MAX_SUBTREE + 1, Refreshed::NeedsFullScan),
+    ] {
+        let fx = Fixture::new();
+        fx.build(&["big/x/y=1"]);
+        let options = options(fx.root());
+        let mut scanned = scan_with(&options, &ScanControl::new(0));
+        scanned.records.get_mut(&fx.path("big")).unwrap().tree.dirs = dirs;
+        let aux = Fixture::new();
+        let index = aux.path("index.sqlite");
+        let mut writer = IndexWriter::open(&index).unwrap();
+        let session = writer.start_scan(UnixTime(1)).unwrap();
+        session.send(scanned.records.into_values().collect());
+        session.finish(&scanned.summary).unwrap();
+        let mut reader = IndexReader::open(&index).unwrap();
+        let task = RescanTask::Recursive(fx.path("big"));
+        let control = ScanControl::new(0);
+        let done = refresh(&task, &options, &mut reader, &writer, &control, UnixTime(3));
+        assert_eq!(done.unwrap(), expected, "{dirs} directories");
+    }
 }

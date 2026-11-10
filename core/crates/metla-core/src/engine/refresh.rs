@@ -76,8 +76,11 @@ pub fn refresh(
         let parent = plan.target.path.parent().map(Path::to_path_buf);
         match rescan(options, plan.target, plan.next_id, control)? {
             Some(change) => {
-                writer.apply(plan.picture, change, now)?;
-                return Ok(Refreshed::Applied);
+                let applied = writer.apply(plan.picture, change, now)?;
+                return Ok(match applied {
+                    true => Refreshed::Applied,
+                    false => Refreshed::NoPicture,
+                });
             }
             None if root => return Ok(Refreshed::NeedsFullScan),
             None => {
@@ -118,9 +121,6 @@ fn plan(
             row: row.clone(),
         }),
     };
-    let depth = at
-        .strip_prefix(&picture.root)
-        .map_or(0, |p| p.components().count());
     Ok(Some(Plan {
         picture: picture.id(),
         next_id: snap.next_id()?,
@@ -129,7 +129,6 @@ fn plan(
             path: at,
             id: row.id,
             parent: row.parent,
-            depth: u32::try_from(depth).unwrap_or(u32::MAX),
             inherited,
             stored,
         },

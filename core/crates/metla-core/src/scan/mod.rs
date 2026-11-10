@@ -224,8 +224,6 @@ pub struct Target {
     pub path: PathBuf,
     pub id: DirId,
     pub parent: Option<DirId>,
-    /// Levels below the scan root.
-    pub depth: u32,
     pub inherited: Inherited,
     /// `Some`: a shallow rescan, which re-reads the directory and walks
     /// only the subdirectories that changed. `None`: the directory and
@@ -260,7 +258,9 @@ pub fn rescan(
         above,
         skip: options.scope.decide(&target.path, &meta),
         path: target.path,
-        depth: target.depth,
+        // A rescan's own coverage is not used: the index counts it again
+        // from its rows, so depths below the origin need no offset.
+        depth: 0,
         mtime: meta.mtime,
         identity: Identity {
             device: meta.device,

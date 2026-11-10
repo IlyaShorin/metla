@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use metla_core::domain::{
-    Bytes, Coverage, DirId, DirRecord, DirState, Errno, Gap, GapAt, KindTotals, OwnTotals, Passed,
-    ScanSummary, Skip, Stamp, TreeTotals, UnixTime,
+    Area, Bytes, Coverage, DirId, DirRecord, DirState, Errno, FileKind, Gap, GapAt, KindTotals,
+    OwnTotals, Passed, ScanSummary, Skip, Stamp, TreeTotals, UnixTime,
 };
 use metla_core::index::{IndexError, IndexReader, IndexWriter};
 
@@ -399,6 +399,68 @@ fn the_stored_state_codes_are_a_stable_file_format() {
         .map(Result::unwrap)
         .collect();
     assert_eq!(counts, [(1, 1), (16, 1)]);
+}
+
+#[test]
+fn what_a_directory_hands_down_and_its_kinds_are_a_stable_file_format() {
+    let fx = Fixture::new();
+    let index = fx.path("index.sqlite");
+    let mut kinds = KindTotals::default();
+    kinds.add(FileKind::Media, Bytes(300));
+    kinds.add(FileKind::Other, Bytes(1));
+    let mut rich = read(2, Some(1), "rich", 301, tree(301, 2, 1));
+    if let DirState::Read(own) = &mut rich.state {
+        own.kinds = kinds;
+    }
+    rich.passed = Passed {
+        markers: vec!["Cargo.toml".into(), "package.json".into()],
+        in_repo: true,
+        in_candidate: true,
+        area: Area::Applications,
+    };
+    let plain = read(1, None, "", 0, tree(301, 2, 2));
+    write(&index, vec![plain.clone(), rich.clone()], true);
+    let conn = rusqlite::Connection::open(&index).unwrap();
+    let row = |id: i64| -> (i64, Option<String>, Option<String>, i64, i64, Option<i64>) {
+        conn.query_row(
+            "SELECT flags, quote(markers), quote(kinds), mtime, changed, own_mtime FROM dirs
+             WHERE id = ?1",
+            [id],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .unwrap()
+    };
+    let markers = "Cargo.toml\0package.json\0".bytes();
+    let markers: String = markers.map(|b| format!("{b:02X}")).collect();
+    let markers = format!("X'{markers}'");
+    assert_eq!(
+        row(2),
+        (
+            1 << 8 | 2 << 8 | 2 << 10,
+            Some(markers),
+            Some("X'02AC020601'".to_owned()),
+            40,
+            40_000_000_123,
+            Some(45),
+        ),
+        "in a repository, in a candidate, Applications; Media 300, Other 1"
+    );
+    let null = Some("NULL".to_owned());
+    assert_eq!(
+        row(1),
+        (0, null.clone(), null, 40, 40_000_000_123, Some(45))
+    );
+    let stored = reader(&index).read(|snap| snap.record(DirId(2))).unwrap();
+    assert_eq!(stored, Some(rich));
 }
 
 #[test]

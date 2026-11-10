@@ -121,12 +121,34 @@ fn a_directory_rescanned_recently_backs_off_and_later_starts_afresh() {
     changed(&mut c, "/r/a", 6.0);
     assert_eq!(c.next_deadline(), Some(secs(10.0)), "settle 4 s");
     assert_eq!(c.due(secs(10.0)).len(), 1);
-    changed(&mut c, "/r/a", 40.0);
+    changed(&mut c, "/r/a", 26.0);
     assert_eq!(
         c.next_deadline(),
-        Some(secs(41.0)),
-        "a cap later: 1 s again"
+        Some(secs(27.0)),
+        "exactly a cap later: 1 s again"
     );
+}
+
+#[test]
+fn only_as_many_recent_rescans_as_tracked_directories_are_remembered() {
+    let two = Timing {
+        max_dirs: 2,
+        ..timing()
+    };
+    let mut c = Coalescer::new(Path::new(ROOT), Vec::new(), Some(two));
+    for (name, at) in [("a", 0.0), ("b", 2.0), ("c", 4.0)] {
+        changed(&mut c, &format!("/r/{name}"), at);
+        assert_eq!(c.due(secs(at + 1.0)).len(), 1);
+    }
+    changed(&mut c, "/r/c", 6.0);
+    assert_eq!(
+        c.next_deadline(),
+        Some(secs(7.0)),
+        "/r/c was not remembered"
+    );
+    assert_eq!(c.due(secs(7.0)).len(), 1);
+    changed(&mut c, "/r/b", 8.0);
+    assert_eq!(c.next_deadline(), Some(secs(10.0)), "/r/b was");
 }
 
 #[test]
@@ -241,7 +263,9 @@ fn lost_events_and_a_changed_root_ask_for_a_full_rescan_that_replaces_the_rest()
         changed(&mut c, "/r/b", 0.7);
         assert_eq!(c.pending(), 1, "{flags:?}: covered by the full rescan");
         assert!(c.due(secs(0.9)).is_empty());
-        assert_eq!(c.due(secs(100.0)), [RescanTask::Full], "{flags:?}");
+        let due = c.next_deadline().unwrap();
+        assert_eq!(due, secs(0.7 + 4.0), "{flags:?}: settle 1, 2, 4 s");
+        assert_eq!(c.due(due), [RescanTask::Full], "{flags:?}");
         assert_eq!(c.pending(), 0);
     }
 }

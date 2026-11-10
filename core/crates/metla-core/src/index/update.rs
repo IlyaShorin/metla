@@ -186,9 +186,7 @@ fn coverage(conn: &Connection) -> Result<Coverage, IndexError> {
             DirState::Skipped(skip) => coverage.record_skip(skip),
             DirState::Gap(gap) => {
                 let path = lineage.path(DirId(id))?.unwrap_or_default();
-                let below = path
-                    .strip_prefix(&root)
-                    .map_or(0, |p| p.components().count());
+                let below = (path.components().count()).saturating_sub(root.components().count());
                 let depth = u32::try_from(below).unwrap_or(u32::MAX);
                 coverage.record_gap(GapAt { depth, path, gap });
             }
