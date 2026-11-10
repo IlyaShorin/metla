@@ -22,7 +22,9 @@ pub struct Usage {
     pub user: Duration,
     pub system: Duration,
     /// Context switches, voluntary (the thread waited) and not: a
-    /// measure of how often the process woke up.
+    /// measure of how often the process woke up. macOS leaves the
+    /// voluntary count at 0 and counts every switch as involuntary
+    /// (measured); both are summed in case it ever reports them apart.
     pub switches: u64,
     /// The peak resident set size.
     pub peak_rss: Bytes,
@@ -47,7 +49,10 @@ pub fn usage() -> Usage {
     Usage {
         user: duration(usage.ru_utime),
         system: duration(usage.ru_stime),
-        switches: (usage.ru_nvcsw + usage.ru_nivcsw).unsigned_abs(),
+        switches: [usage.ru_nvcsw, usage.ru_nivcsw]
+            .into_iter()
+            .sum::<libc::c_long>()
+            .unsigned_abs(),
         peak_rss: Bytes(usage.ru_maxrss.unsigned_abs()),
     }
 }

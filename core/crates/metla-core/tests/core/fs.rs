@@ -526,3 +526,21 @@ fn usage_reads_the_cpu_time_the_system_reports() {
     assert!(after - used.user < std::time::Duration::from_millis(500));
     assert!(used.user >= seconds.saturating_sub(std::time::Duration::from_millis(1)));
 }
+
+fn raw_usage() -> libc::rusage {
+    let mut raw = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    unsafe {
+        libc::getrusage(libc::RUSAGE_SELF, raw.as_mut_ptr());
+        raw.assume_init()
+    }
+}
+
+#[test]
+fn usage_counts_the_context_switches_the_system_reports() {
+    let switches = |raw: &libc::rusage| (raw.ru_nvcsw + raw.ru_nivcsw).unsigned_abs();
+    let before = raw_usage();
+    let counted = metla_core::fs::usage().switches;
+    let after = raw_usage();
+    assert!(switches(&before) > 0, "the process was switched out");
+    assert!(switches(&before) <= counted && counted <= switches(&after));
+}
