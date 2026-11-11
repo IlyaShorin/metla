@@ -502,6 +502,40 @@ fn the_profile_in_force_and_its_priority_for_every_power_profile() {
     assert_eq!(looked_at.threads, table.interactive.threads);
 }
 
+/// The engine's own full scan: the first of a root (no picture) under
+/// Interactive or Background takes Interactive's threads and priority,
+/// and keeps the power profile's timing, pause, latency and say on full
+/// scans; Saver keeps its one thread, Off scans nothing, and once a
+/// picture exists every profile scans with its own.
+#[test]
+fn the_first_full_scan_takes_interactive_threads_unless_saving_or_off() {
+    use metla_core::scan::Priority::{Background as Low, Normal};
+    let table = Profiles::standard(12);
+    let rows = [
+        (PowerProfile::Interactive, false, 8, Normal),
+        (PowerProfile::Background, false, 8, Normal),
+        (PowerProfile::Saver, false, 1, Low),
+        (PowerProfile::Off, false, 0, Low),
+        (PowerProfile::Interactive, true, 8, Normal),
+        (PowerProfile::Background, true, 2, Normal),
+        (PowerProfile::Saver, true, 1, Low),
+        (PowerProfile::Off, true, 0, Low),
+    ];
+    for (power, picture, threads, priority) in rows {
+        let profile = table.full_scan(power, picture);
+        let own = table.of(power);
+        let case = format!("{power:?}, picture {picture}");
+        assert_eq!(profile.threads, threads, "{case}");
+        assert_eq!(profile.priority(), priority, "{case}");
+        let rest = Profile {
+            threads: own.threads,
+            throttled: own.throttled,
+            ..profile
+        };
+        assert_eq!(rest, own, "{case}: only threads and priority change");
+    }
+}
+
 #[test]
 fn engine_errors_explain_themselves() {
     let cases = [
@@ -564,6 +598,7 @@ fn settings_are_kept_and_switching_background_analysis_off_stops_watching() {
 fn counters_since_earlier_ones_are_what_was_done_in_between() {
     let earlier = metla_core::engine::Counters {
         full_scans: 1,
+        scan_threads: 8,
         tasks: 7,
         batches: 3,
         events: 40,
@@ -572,6 +607,7 @@ fn counters_since_earlier_ones_are_what_was_done_in_between() {
     };
     let later = metla_core::engine::Counters {
         full_scans: 2,
+        scan_threads: 10,
         tasks: 17,
         batches: 8,
         events: 140,
@@ -581,13 +617,14 @@ fn counters_since_earlier_ones_are_what_was_done_in_between() {
     let done = later.since(&earlier);
     let fields = [
         done.full_scans,
+        done.scan_threads,
         done.tasks,
         done.batches,
         done.events,
         done.wakeups,
         done.streams,
     ];
-    assert_eq!(fields, [1, 10, 5, 100, 21, 3]);
+    assert_eq!(fields, [1, 2, 10, 5, 100, 21, 3]);
     assert_eq!(earlier.since(&later), Default::default(), "never negative");
 }
 

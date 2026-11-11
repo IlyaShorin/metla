@@ -121,8 +121,10 @@ the gates in [QUALITY.md](QUALITY.md).
 23. **The first scan of the real disk through the app was measured once
     each way** (199 s taken over as the user's scan; not ended after
     27 minutes before), with the app behind other windows; never with
-    the app active. The scan the app takes over keeps the two threads the
-    engine started it with.
+    the app active. Since 0.7.1 the engine starts that first scan on
+    `Interactive`'s threads (8 on the machine measured) instead of
+    `Background`'s two; its time through the app on the real disk has
+    not been measured again.
 24. **Most app measurements on the real disk are single runs or were not
     taken** (idle in the menu bar, churn with the app running, a full
     rescan, repeated launches): see [PERFORMANCE.md](PERFORMANCE.md).

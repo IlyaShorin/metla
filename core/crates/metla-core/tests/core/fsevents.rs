@@ -301,6 +301,32 @@ fn a_lost_history_matters_only_once_the_engine_watches() {
     until(&engine, |e| e.counters().full_scans == 1);
 }
 
+/// The engine's own first scan of a root runs on Interactive's threads;
+/// a later one, with a picture to show meanwhile, on the profile's own.
+#[test]
+fn the_first_scan_runs_on_interactive_threads_and_a_later_one_on_the_profiles() {
+    let place = Place::new(HOME);
+    let mut table = profiles();
+    table.interactive.threads = 3;
+    let first = EngineConfig {
+        profiles: table,
+        ..place.config(PowerProfile::Background)
+    };
+    let manual = Engine::open(first).unwrap();
+    settled(&manual);
+    assert_eq!(manual.counters().full_scans, 1);
+    assert_eq!(manual.counters().scan_threads, 3, "the first scan");
+    drop(manual);
+    let later = Engine::open(real(&place, Duration::from_millis(20), table)).unwrap();
+    settled(&later);
+    assert_eq!(later.counters().full_scans, 1, "no stored event");
+    assert_eq!(
+        later.counters().scan_threads,
+        table.background.threads as u64,
+        "a later scan"
+    );
+}
+
 #[test]
 fn a_stored_event_from_another_history_or_none_at_all_means_a_full_scan() {
     let place = Place::new(HOME);

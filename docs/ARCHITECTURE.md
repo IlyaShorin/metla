@@ -625,6 +625,16 @@ come from the thread sweep in PERFORMANCE.md.
 | `Saver`       | 1       | 15 s    | 60 s / 900 s | 256   | 1,024        | 180 s | no (`Paused`)     | background, throttled I/O |
 | `Off`         | 0       | —       | —            | —     | —            | —     | no                | — (nothing is watched) |
 
+**The first scan.** A full scan the engine starts on its own for a
+root with no picture yet (the first run, a lost index) runs with
+`Interactive`'s threads and priority under `Interactive` and
+`Background`, since nothing can be shown until it ends; its latency,
+timing, pause and say on full scans stay the power profile's
+(`Profiles::full_scan`, a pure table). `Saver` keeps its one throttled
+thread and `Off` scans nothing. Once a picture exists, the engine's
+full scans use the power profile's own row. `Counters::scan_threads`
+adds up the threads each full scan was given.
+
 The pause between batches sets how often Background and Saver change
 the picture: about once a minute and every three minutes. Their streams
 hold events back for 15 s; macOS was measured to deliver every 15 s or
@@ -639,7 +649,7 @@ app's window or panel is visible): changes are followed as
 threads), what waits is due at once (`Coalescer::expedite`, which also
 forgets how far busy directories had backed off, so changes that come
 in afterwards settle for the base time), and the pause is forgotten; full scans the engine starts on its own still
-follow the power profile. `set_attention(false)` returns to the power
+follow the power profile (the first scan aside, above). `set_attention(false)` returns to the power
 profile. Attention watches nothing that `Off` leaves alone.
 
 Every profile multiplies the settle time by 2 per event and collapses

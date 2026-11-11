@@ -363,13 +363,16 @@ impl Scheduler {
     }
 
     /// A full scan with the user's threads (`interactive`) or the
-    /// profile's. A scan cancelled while a picture exists is given up and
-    /// the picture kept; without one it becomes a partial picture.
+    /// profile's, `Interactive`'s for the first one (Profiles::full_scan).
+    /// A scan cancelled while a picture exists is given up and the
+    /// picture kept; without one it becomes a partial picture.
     fn full_scan(&mut self, interactive: bool) {
+        let had_picture = self.picture().ok().flatten().is_some();
         let profile = if interactive {
             self.shared.profiles.interactive
         } else {
-            self.shared.power()
+            let power = self.shared.effective();
+            self.shared.profiles.full_scan(power, had_picture)
         };
         self.watch();
         let control = Arc::new(ScanControl::new(LIVE_LIMIT));
@@ -379,7 +382,6 @@ impl Scheduler {
         });
         self.shared.notify(Changed::Activity);
         let options = self.options(&profile);
-        let had_picture = self.picture().ok().flatten().is_some();
         let scanned = scan_into(&mut self.writer, &options, &control, had_picture);
         self.shared.update(|s| s.failure = scanned.err());
         let finished = scanned.unwrap_or_default();
@@ -389,7 +391,10 @@ impl Scheduler {
         }
         // Counted before it stops showing as running: a reader that sees
         // no scan running sees this one counted.
-        self.shared.count(|c| c.full_scans += 1);
+        self.shared.count(|c| {
+            c.full_scans += 1;
+            c.scan_threads += profile.threads as u64;
+        });
         *lock(&self.shared.scan) = None;
         let cancelled = control.is_cancelled();
         if finished {

@@ -140,4 +140,22 @@ impl Profiles {
             _ => power,
         }
     }
+
+    /// The profile the engine's own full scan runs with under `power`:
+    /// its own, but the first scan of a root (no `picture` yet) under
+    /// `Interactive` or `Background` takes `Interactive`'s threads and
+    /// priority, since nothing can be shown until it ends. Timing, pause,
+    /// latency and the say on full scans stay `power`'s; `Saver` keeps
+    /// its one thread and `Off` scans nothing. A pure table.
+    pub fn full_scan(&self, power: PowerProfile, picture: bool) -> Profile {
+        let own = self.of(power);
+        match (power, picture) {
+            (PowerProfile::Interactive | PowerProfile::Background, false) => Profile {
+                threads: self.interactive.threads,
+                throttled: self.interactive.throttled,
+                ..own
+            },
+            _ => own,
+        }
+    }
 }

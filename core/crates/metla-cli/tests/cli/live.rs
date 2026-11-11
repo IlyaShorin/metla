@@ -155,6 +155,7 @@ fn the_state_reads_in_a_few_words() {
 fn the_freshness_line_says_what_was_done_and_whether_it_may_be_out_of_date() {
     let counters = Counters {
         full_scans: 1,
+        scan_threads: 2,
         tasks: 7,
         batches: 3,
         events: 40,

@@ -535,7 +535,10 @@ level) and a sample showed both scan threads waiting in `openat`; the
 first minute's numbers came on time, the rest of the scan crawled. The
 scan the app now takes over keeps the two threads it started with (the
 profile's thread count applies to the next scan), but runs at normal
-priority. For comparison, `metla-cli scan --root /` (8 threads, from a
+priority. Since 0.7.1 the engine starts the first scan of a root with no
+picture on `Interactive`'s threads and priority (ARCHITECTURE section
+7), so it no longer starts on two; that scan's time through the app on
+the real disk has **not** been measured again. For comparison, `metla-cli scan --root /` (8 threads, from a
 terminal) took 90 to 97 s in M5. Index after the scan: 276.6 MB.
 
 **Launch with the saved picture of the real disk** (plain release app,

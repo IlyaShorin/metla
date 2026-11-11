@@ -216,6 +216,9 @@ pub struct Folder {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Counters {
     pub full_scans: u64,
+    /// The threads full scans were given, added up: each full scan adds
+    /// its thread count.
+    pub scan_threads: u64,
     /// Rescan tasks applied in place.
     pub tasks: u64,
     /// Batches of tasks.
@@ -235,6 +238,7 @@ impl Counters {
     pub fn since(&self, earlier: &Counters) -> Counters {
         Counters {
             full_scans: self.full_scans.saturating_sub(earlier.full_scans),
+            scan_threads: self.scan_threads.saturating_sub(earlier.scan_threads),
             tasks: self.tasks.saturating_sub(earlier.tasks),
             batches: self.batches.saturating_sub(earlier.batches),
             events: self.events.saturating_sub(earlier.events),
