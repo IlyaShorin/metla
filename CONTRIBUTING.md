@@ -5,10 +5,15 @@ Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 
 ## Ground rules
 
-* **Never delete real data while developing.** Deletion code runs only
-  against synthetic trees under a temporary directory. Scanning the real
-  disk is read-only. Real paths, names and listings never enter the
-  repository — not in tests, fixtures, docs, screenshots or commit messages.
+* **Never delete real data while developing.** Removal code runs only
+  against fixtures: synthetic trees under `$TMPDIR` that tests make, or
+  ones `metla-cli fixture create <dir>` makes, each marked by a
+  `.metla-fixture` file. The debug app, the CLI and every test build
+  refuse to clean a root without that marker (the `Production`
+  capability exists only in the release app's build); start a release
+  build only with `METLA_ROOT` on a fixture. Scanning the real disk is
+  read-only. Real paths, names and listings never enter the repository —
+  not in tests, fixtures, docs, screenshots or commit messages.
 * **Test first.** Write the failing test, watch it fail for the expected
   reason, make it pass with the smallest change. Tests exercise behaviour
   through the public interface of a module.
@@ -63,6 +68,26 @@ of `MetlaKit` reported by `llvm-cov` — `scripts/quality-swift.sh`. See
 [docs/QUALITY.md](docs/QUALITY.md) for what each gate covers and what it
 does not.
 
+## Running the gates
+
+```
+export TMPDIR=<a directory on a volume with a few GB free>
+scripts/quality.sh                      # differential: changed functions and survivors
+MUTATE_ALL=1 scripts/quality.sh         # every mutant again: the gate a milestone ends with
+QUALITY_STEPS=tests scripts/quality.sh  # fmt, clippy, tests, slow group, stability only
+scripts/quality-swift.sh                # the Swift gates
+scripts/fresh-clone-check.sh <new dir>  # every script from a fresh clone, as a newcomer runs them
+scripts/architecture.sh                 # uml-viewer's IR of the module tree (needs Clojure)
+```
+
+The full mutation run takes hours (two workers by default,
+`MUTATOR_WORKERS`). It counts only when it ends with a verdict for every
+file: a run stopped by a full disk (exit 3, `DISK FULL`) or a file whose
+unmutated baseline failed is a lost verdict, to be run again, never a
+pass. Keep `TMPDIR` and the build directories (`target/`, `core/target/`)
+off a nearly full disk; the tests write synthetic trees and indexes
+there.
+
 ## The app
 
 ```
@@ -74,13 +99,17 @@ scripts/build-app.sh --release --plain   # the same, linked with the plain libra
                                  # fixtures only; for measuring on the real disk
 scripts/build-app.sh --debug     # the debug app: cleans fixtures only
 scripts/run-app.sh         # starts the debug app on a fixture metla-cli makes
-scripts/run-app.sh --capture <dir>   # PNGs of the screens, light and dark
+scripts/run-app.sh --capture <dir>   # PNGs of the screens, light and dark (started with
+                                     # `open`, so the app is active while it draws)
 scripts/run-scenarios.sh   # the cleanup flows end to end on fresh fixtures
 ```
 
 Only the release build of the app can clean a root that is not a
 fixture. Develop, test and capture with the debug build; never start a
-release build without `METLA_ROOT` pointing at a fixture.
+release build without `METLA_ROOT` pointing at a fixture. To measure the
+app on the real disk, use `build-app.sh --release --plain`: the release
+app without the capability to clean anything but a fixture. A release
+build fails when a binary holds a local path (`scripts/no-local-paths.sh`).
 
 `swift build` and `swift test` in `app/` need the generated bindings
 (`build-core.sh`) and the library's directory on the linker's path
