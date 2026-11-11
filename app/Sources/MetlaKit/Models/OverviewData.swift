@@ -39,9 +39,12 @@ public struct OverviewData: Equatable, Sendable {
         public let segments: [Part]
     }
 
-    /// The partial-analysis banner, or "Scanning…" while a scan runs.
+    /// The partial-analysis banner; "Scanning…" while the first scan
+    /// runs, "Refreshing…" while a scan runs and the last picture stays
+    /// shown and usable.
     public enum Banner: Equatable, Sendable {
         case scanning
+        case refreshing
         case partial(denied: UInt64, missing: UInt64)
     }
 
@@ -54,7 +57,8 @@ public struct OverviewData: Equatable, Sendable {
     public let categories: [Part]
     public let largest: [Part]
     public let kinds: [Part]
-    /// Totals still growing: a scan runs.
+    /// Totals still growing: the first scan runs (a later one leaves the
+    /// last picture's totals as they are until it ends).
     public let growing: Bool
 
     /// Worked out from one snapshot, the largest folders and the volume;
@@ -73,12 +77,12 @@ public struct OverviewData: Equatable, Sendable {
             categories: categories,
             largest: folderParts(largest, home: home),
             kinds: kindParts(overview, names),
-            growing: scanning)
+            growing: scanning && overview.freshness.picture == .missing)
     }
 
     static func banner(_ overview: Overview, scanning: Bool) -> Banner? {
         if scanning {
-            return .scanning
+            return overview.freshness.picture == .missing ? .scanning : .refreshing
         }
         guard overview.freshness.picture == .partial, let coverage = overview.coverage else {
             return nil

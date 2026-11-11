@@ -23,14 +23,24 @@ import Testing
 
     @Test func aScanSaysHowFarItGotAndCanBeStopped() {
         let progress = ProgressSnapshot(dirs: 10, files: 1_900_000, bytes: 610, denied: 0)
-        let scanning = freshness(.scanning(progress: progress, interactive: true))
+        let scanning = freshness(.scanning(progress: progress, interactive: true), picture: .missing)
         let known = line(scanning, expected: 1000)
         #expect(known == StatusLine(text: "Scanning 61% · 1.9M files", tone: .working, canStop: true))
         #expect(line(scanning).text == "Scanning · 1.9M files", "no share without a size to head for")
         #expect(line(scanning, expected: 0).text == "Scanning · 1.9M files")
         let past = ProgressSnapshot(dirs: 10, files: 1, bytes: 5000, denied: 0)
-        #expect(line(freshness(.scanning(progress: past, interactive: false)), expected: 1000).text
+        #expect(line(freshness(.scanning(progress: past, interactive: false), picture: .missing), expected: 1000).text
             == "Scanning 99% · 1 file", "never 100% while it runs")
+    }
+
+    @Test func aScanWithAPictureToShowSaysItRefreshes() {
+        let progress = ProgressSnapshot(dirs: 10, files: 1_900_000, bytes: 610, denied: 0)
+        for picture in [Completeness.complete, .partial] {
+            let refreshing = freshness(.scanning(progress: progress, interactive: false), picture: picture)
+            #expect(line(refreshing, expected: 1000)
+                == StatusLine(text: "Refreshing 61% · 1.9M files", tone: .working, canStop: true))
+            #expect(line(refreshing).text == "Refreshing · 1.9M files")
+        }
     }
 
     @Test func workBetweenScansReads() {
@@ -60,8 +70,12 @@ import Testing
     @Test func russianReadsAsWell() {
         let russian = Strings(language: "ru", region: "RU")
         let progress = ProgressSnapshot(dirs: 10, files: 1_900_000, bytes: 610, denied: 0)
-        let text = StatusLine.of(freshness(.scanning(progress: progress, interactive: true)), expected: 1000, now: now, russian).text
+        let text = StatusLine.of(
+            freshness(.scanning(progress: progress, interactive: true), picture: .missing),
+            expected: 1000, now: now, russian).text
         #expect(text == "Сканирование: 61% · 1,9\u{00A0}млн файлов")
+        let again = StatusLine.of(freshness(.scanning(progress: progress, interactive: false)), expected: nil, now: now, russian).text
+        #expect(again == "Обновление · 1,9\u{00A0}млн файлов")
         let partial = StatusLine.of(freshness(.idle, picture: .partial), expected: nil, now: now, russian).text
         #expect(partial == "Обновлено 2 мин. назад · анализ неполный")
     }

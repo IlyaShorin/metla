@@ -21,7 +21,10 @@ is shipped as a localisation.
 **Toolbar** (all screens)
 
 * Scan status: a coloured dot plus text. States:
-  `Scanning 61% · 1.9M files` (with a Stop button),
+  `Scanning 61% · 1.9M files` (with a Stop button) for a first scan,
+  `Refreshing 61% · 1.9M files` for a full scan while a picture exists
+  (the last picture stays shown and usable, Clean included: a cleanup
+  starts at once and the scan is done again after it),
   `Updated 2 min ago`, `Updated 2 min ago · partial`,
   `Never scanned`, `Background analysis off`.
 * **Refresh** (⌘R, a full scan run as `Interactive`) and **Clean…** (⌘⌫,
@@ -36,7 +39,9 @@ is shipped as a localisation.
 1. Partial-analysis banner when `Coverage` has gaps: what is missing, why,
    buttons "Show folders" (opens the list of inaccessible areas) and
    "Open access settings". Never shown as an error when the scan is merely
-   in progress — that state says "Scanning…".
+   in progress — that state says "Scanning…" (the numbers grow) for a
+   first scan and "Refreshing in the background…" when the last picture
+   stays shown.
 2. Disk card: volume name, used / total, free (red when under 10 %), a
    stacked bar (one segment per cleanable category, "Other data", free) and
    a legend.
@@ -112,7 +117,8 @@ group, "Show all N" for the rest (a lazy list). Return and Esc cancel;
 
 During cleanup: progress bar, "N of M", removed so far, the current
 item, Cancel (the cleanup stops before the next entry; the report says
-what was done). The bytes removed grow while an item is being removed,
+what was done). Until the engine has started it the bar is
+indeterminate. The bytes removed grow while an item is being removed,
 and the bar shows the larger of the share of items done and the share
 of the preview's estimate removed, so one big cache does not look
 frozen. Afterwards a report: three numbers side by side —

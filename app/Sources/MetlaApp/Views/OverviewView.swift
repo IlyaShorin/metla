@@ -77,6 +77,10 @@ struct BannerView: View {
                 ProgressView().controlSize(.small)
                 Text(strings.text("overview.scanning"))
                 Spacer()
+            case .refreshing:
+                ProgressView().controlSize(.small)
+                Text(strings.text("overview.refreshing"))
+                Spacer()
             case .partial(let denied, let missing):
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     .accessibilityHidden(true)

@@ -108,9 +108,14 @@ import Testing
         #expect(partial.banner == .partial(denied: 2, missing: 1))
         #expect(!partial.growing)
         let progress = ProgressSnapshot(dirs: 1, files: 1, bytes: 1, denied: 0)
-        let scanning = make(overview(state: .scanning(progress: progress, interactive: false), picture: .partial))
-        #expect(scanning.banner == .scanning, "a scan that runs is not shown as partial")
-        #expect(scanning.growing, "totals still growing")
+        let first = make(overview(state: .scanning(progress: progress, interactive: false), picture: .missing))
+        #expect(first.banner == .scanning)
+        #expect(first.growing, "totals still growing")
+        for picture in [Completeness.partial, .complete] {
+            let again = make(overview(state: .scanning(progress: progress, interactive: false), picture: picture))
+            #expect(again.banner == .refreshing, "a scan that runs is not shown as partial")
+            #expect(!again.growing, "the last picture's totals stay as they are")
+        }
         #expect(make(overview()).banner == nil)
     }
 }

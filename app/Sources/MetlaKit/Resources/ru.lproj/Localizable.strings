@@ -63,6 +63,8 @@
 
 "status.scanning" = "Сканирование · %@";
 "status.scanningShare" = "Сканирование: %1$d%% · %2$@";
+"status.refreshing" = "Обновление · %@";
+"status.refreshingShare" = "Обновление: %1$d%% · %2$@";
 "status.updating" = "Обновление…";
 "status.cleaning" = "Очистка…";
 "status.paused" = "Полное сканирование ждёт питания";
@@ -85,6 +87,7 @@
 "overview.found" = "из %@ найденных";
 "overview.rowsNote" = "В строках — что даст очистка отмеченного по умолчанию; всего найдено — там, где это отличается.";
 "overview.scanning" = "Сканирование… Числа растут по мере подсчёта папок.";
+"overview.refreshing" = "Обновление в фоне. Последний снимок остаётся на экране, и из него можно чистить.";
 "overview.partialTitle" = "Анализ неполный.";
 "overview.partialLowerBound" = "Размеры ниже — нижняя оценка.";
 "overview.showFolders" = "Показать папки";

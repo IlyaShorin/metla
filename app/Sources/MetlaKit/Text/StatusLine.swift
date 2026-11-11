@@ -31,7 +31,9 @@ public struct StatusLine: Equatable, Sendable {
     ) -> StatusLine {
         switch freshness.state {
         case .scanning(let progress, _):
-            return StatusLine(text: scanning(progress, expected, strings), tone: .working, canStop: true)
+            let refreshing = freshness.picture != .missing
+            return StatusLine(
+                text: scanning(progress, expected, refreshing: refreshing, strings), tone: .working, canStop: true)
         case .updating:
             return StatusLine(text: strings.text("status.updating"), tone: .working, canStop: false)
         case .cleaning:
@@ -48,14 +50,18 @@ public struct StatusLine: Equatable, Sendable {
     }
 
     /// "Scanning 61% · 1.9M files", without the share when the size it is
-    /// heading for is not known.
-    static func scanning(_ progress: ProgressSnapshot, _ expected: UInt64?, _ strings: Strings) -> String {
+    /// heading for is not known; "Refreshing …" when a picture exists,
+    /// which stays shown and usable meanwhile.
+    static func scanning(
+        _ progress: ProgressSnapshot, _ expected: UInt64?, refreshing: Bool, _ strings: Strings
+    ) -> String {
         let files = strings.format("status.files", Int(clamping: progress.files), Format.count(progress.files, strings))
+        let key = refreshing ? "status.refreshing" : "status.scanning"
         guard let expected, expected > 0 else {
-            return strings.format("status.scanning", files)
+            return strings.format(key, files)
         }
         let share = Int(Format.share(progress.bytes, of: expected) * 100)
-        return strings.format("status.scanningShare", min(share, 99), files)
+        return strings.format(key + "Share", min(share, 99), files)
     }
 
     static func failed(_ failure: Failure, _ strings: Strings) -> String {

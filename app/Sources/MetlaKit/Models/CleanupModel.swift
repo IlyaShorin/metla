@@ -23,6 +23,12 @@ public struct CleanupProgressData: Equatable, Sendable {
 
     /// How far the bar is: the larger of the items done and the bytes
     /// removed of those planned, so one big item moves it too.
+    /// The bar's value: none (an indeterminate bar) until the cleanup has
+    /// started on the engine's thread, then the share.
+    public static func bar(_ progress: CleanupProgressData?) -> Double? {
+        progress?.share
+    }
+
     public var share: Double {
         let byItems = items == 0 ? 0 : Double(done) / Double(items)
         let byBytes = planned == 0 ? 0 : Double(removed) / Double(planned)

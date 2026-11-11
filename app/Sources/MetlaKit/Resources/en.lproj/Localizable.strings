@@ -63,6 +63,8 @@
 
 "status.scanning" = "Scanning · %@";
 "status.scanningShare" = "Scanning %1$d%% · %2$@";
+"status.refreshing" = "Refreshing · %@";
+"status.refreshingShare" = "Refreshing %1$d%% · %2$@";
 "status.updating" = "Updating…";
 "status.cleaning" = "Cleaning…";
 "status.paused" = "Full scan waits for power";
@@ -85,6 +87,7 @@
 "overview.found" = "of %@ found";
 "overview.rowsNote" = "Each row: what cleaning its checked items would do; found in all where that differs.";
 "overview.scanning" = "Scanning… The numbers grow as folders are counted.";
+"overview.refreshing" = "Refreshing in the background. The last picture stays shown, and you can clean from it.";
 "overview.partialTitle" = "Partial analysis.";
 "overview.partialLowerBound" = "Sizes below are a lower bound.";
 "overview.showFolders" = "Show folders";

@@ -228,7 +228,7 @@ struct ProgressPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(strings.text("progress.title")).font(.headline)
-            ProgressView(value: progress?.share ?? 0)
+            ProgressView(value: CleanupProgressData.bar(progress))
             HStack {
                 Text(progress.map { strings.format("progress.items", Int($0.done), Int($0.items)) } ?? "")
                     .monospacedDigit()

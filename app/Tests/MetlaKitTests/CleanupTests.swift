@@ -244,6 +244,14 @@ import Testing
         }
     }
 
+    @Test func theBarHasNoValueUntilTheCleanupHasStarted() {
+        #expect(CleanupProgressData.bar(nil) == nil, "an indeterminate bar while it waits")
+        let started = CleanupProgressData(done: 0, items: 2, removed: 0, planned: 100, current: nil)
+        #expect(CleanupProgressData.bar(started) == 0)
+        let half = CleanupProgressData(done: 1, items: 2, removed: 0, planned: 100, current: nil)
+        #expect(CleanupProgressData.bar(half) == 0.5)
+    }
+
     @Test func theSystemTrashMovesAndSaysWhyNot() throws {
         let missing = Fixture.scratch().appendingPathComponent("not-there").path
         guard case .refused(let reason) = SystemTrash().trash(path: missing) else {
