@@ -158,16 +158,19 @@ impl Removal {
 }
 
 /// One entry of a directory being emptied in parallel: done already, or a
-/// subdirectory to empty and then remove.
+/// subdirectory (at its path) to open, empty and then remove.
 enum Part {
     Done(Removal, bool),
-    Child(DirHandle, PathBuf),
+    Child(PathBuf),
 }
 
 /// Empties `dir` (at `path`, `depth` levels below the top): its files go
 /// first, on this thread, then its subdirectories in parallel, each then
-/// removed when it kept nothing. The parts are joined in the order the
-/// sequential walk visits them, the listing from its end.
+/// removed when it kept nothing. A subdirectory is opened by the worker
+/// that empties it, so the descriptors open at once are bounded by the
+/// threads times the depth, not by how many subdirectories a directory
+/// has. The parts are joined in the order the sequential walk visits
+/// them, the listing from its end.
 fn parallel<C, R>(dir: DirHandle, path: PathBuf, depth: usize, walk: &Walk<'_, C, R>) -> Emptied
 where
     C: Fn() -> bool + Sync + ?Sized,
@@ -198,10 +201,7 @@ where
         .into_par_iter()
         .map(|part| match part {
             Part::Done(removal, kept) => (removal, kept),
-            Part::Child(child, at) => {
-                let emptied = parallel(child, at.clone(), depth + 1, walk);
-                close_child(&dir, at, emptied)
-            }
+            Part::Child(at) => child(&dir, at, depth + 1, walk),
         })
         .collect();
     let mut removal = Removal::default();
@@ -214,7 +214,28 @@ where
     Emptied { removal, kept }
 }
 
-/// Unlinks a non-directory now, or opens a subdirectory to empty.
+/// Opens the subdirectory at `at` of `dir`, empties it and removes it
+/// unless it stays.
+fn child<C, R>(dir: &DirHandle, at: PathBuf, depth: usize, walk: &Walk<'_, C, R>) -> (Removal, bool)
+where
+    C: Fn() -> bool + Sync + ?Sized,
+    R: Fn(Bytes) + Sync + ?Sized,
+{
+    let name = at.file_name().unwrap_or_default();
+    match open_on(dir, name, walk.device) {
+        Ok(opened) => {
+            let emptied = parallel(opened, at.clone(), depth, walk);
+            close_child(dir, at, emptied)
+        }
+        Err(problem) => {
+            let mut removal = Removal::default();
+            let kept = leave(&mut removal, at, problem);
+            (removal, kept)
+        }
+    }
+}
+
+/// Unlinks a non-directory now, or names a subdirectory to empty.
 fn part<C, R>(dir: &DirHandle, path: &std::path::Path, entry: Entry, walk: &Walk<'_, C, R>) -> Part
 where
     C: Fn() -> bool + Sync + ?Sized,
@@ -222,9 +243,7 @@ where
 {
     let at = path.join(&entry.name);
     let outcome = match entry.meta.kind {
-        EntryKind::Dir => {
-            open_on(dir, &entry.name, walk.device).map(|child| Part::Child(child, at.clone()))
-        }
+        EntryKind::Dir => Ok(Part::Child(at.clone())),
         kind => dir
             .remove(&entry.name, kind)
             .map_err(Problem::Failed)

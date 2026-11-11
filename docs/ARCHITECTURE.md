@@ -735,7 +735,10 @@ inode, and the marker, are checked again every time it executes.
      top `PARALLEL_DEPTH` (32) levels a directory's files are unlinked
      and its subdirectories emptied in parallel on a rayon pool made
      once per cleanup (at most `REMOVAL_THREADS` threads, measured in
-     PERFORMANCE.md), each then removed when it kept nothing; deeper
+     PERFORMANCE.md), each then removed when it kept nothing. A
+     subdirectory is opened by the worker that empties it, so at most
+     threads × depth descriptors are open at once, however many
+     subdirectories a directory has; deeper
      subtrees are emptied by the iterative walk (`fs::remove_contents`,
      no recursion on the stack). Symlinks are unlinked, never followed;
      a directory on another device is left and reported; nothing is

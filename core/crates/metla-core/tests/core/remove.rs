@@ -504,3 +504,41 @@ fn a_remover_of_one_thread_empties_the_tree() {
     assert_eq!(removal.leftovers.failures, 3);
     assert_eq!(entries(&c), ["d", "locked1"]);
 }
+
+/// Subdirectories a directory holds beyond the descriptor limit below.
+const MANY_DIRS: usize = 300;
+
+/// Run by the test below in a process of its own whose descriptor limit
+/// is 64, hard and soft: a directory with more subdirectories than that
+/// is emptied without a leftover. Anywhere else (`--ignored`) it does
+/// nothing, since the limit is the process's.
+#[test]
+#[ignore = "run in a process with a low descriptor limit by the test below"]
+fn emptied_with_few_descriptors() {
+    if std::env::var_os("METLA_FEW_DESCRIPTORS").is_none() {
+        return;
+    }
+    let fx = Fixture::new();
+    for i in 0..MANY_DIRS {
+        put(&fx.path(&format!("top/d{i}/inner/f")), 10);
+    }
+    let (removal, _) = remove_with(&fx.path("top"), 4);
+    assert!(removal.leftovers.is_empty(), "{:?}", removal.leftovers);
+    assert_eq!(removal.unlinked, 3 * MANY_DIRS as u64);
+    assert_eq!(fs::read_dir(fx.path("top")).unwrap().count(), 0);
+}
+
+#[test]
+fn a_directory_with_more_subdirectories_than_descriptors_is_emptied() {
+    let exe = std::env::current_exe().unwrap();
+    let run = "ulimit -n 64 && exec \"$0\" --ignored --exact remove::emptied_with_few_descriptors";
+    let out = std::process::Command::new("/bin/sh")
+        .args(["-c", run])
+        .arg(exe)
+        .env("METLA_FEW_DESCRIPTORS", "1")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("1 passed"), "{said}");
+}
