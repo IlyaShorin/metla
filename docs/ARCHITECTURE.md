@@ -937,7 +937,10 @@ another user owns it stays `InspectionFailed` (a worktree) or
   can be driven against a fixture with a separate index; `run-app.sh`
   makes a fixture when none is given and refuses a root that is not one.
   Only the release build can clean a root that is not a fixture (§10);
-  it is never started on anything but a fixture while developing.
+  it is never started on anything but a fixture while developing. The
+  app is measured on the real disk with the release build linked with
+  the plain library (`build-app.sh --release --plain`), which prints
+  which library it has.
 * The engine can run on the real root for measurements (scan, watch,
   snapshot): without the `Production` capability its cleaner refuses a
   root without the fixture marker, and the CLI's engine moves nothing to
@@ -950,9 +953,12 @@ another user owns it stays `InspectionFailed` (a worktree) or
 
 Rust: `cargo test`, `clippy -D warnings`, and the ub-mode tools — crapper
 (every function CRAP < 10), dryer (no duplication ≥ 0.8), mutator (no
-uncovered sites, no survivors), uml-viewer (dependency rule) —
-`scripts/quality.sh`. These tools do not understand Swift. Swift is
+uncovered sites, no survivors) — `scripts/quality.sh`; the dependency
+rule is a test (`tests/core/architecture.rs`) and a picture
+(`scripts/architecture.sh` writes uml-viewer's IR from
+`docs/architecture/metla.policy.edn`). These tools do not understand Swift. Swift is
 checked with the Swift 6 compiler in strict concurrency mode, warnings as
 errors, `swift test` and llvm-cov coverage of `MetlaKit`
 (`scripts/quality-swift.sh`); [QUALITY.md](QUALITY.md) states the
-boundary.
+boundary. `scripts/fresh-clone-check.sh` runs every script from a fresh
+clone, as a newcomer would.
