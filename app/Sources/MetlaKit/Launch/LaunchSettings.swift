@@ -40,14 +40,14 @@ public struct LaunchSettings: Equatable, Sendable {
         user: String,
         exists: (String) -> Bool
     ) -> LaunchSettings {
-        let root = environment["METLA_ROOT"] ?? "/"
+        let root = canonical(environment["METLA_ROOT"] ?? "/")
         let support = (home as NSString).appendingPathComponent("Library/Application Support/Metla")
         let marker = (root as NSString).appendingPathComponent(fixtureMarker)
         let capture = value(after: "--capture", in: arguments)
         let scenario = value(after: "--scenario", in: arguments)
         return LaunchSettings(
             root: root,
-            home: environment["METLA_HOME"] ?? home,
+            home: canonical(environment["METLA_HOME"] ?? home),
             user: user,
             dataDir: environment["METLA_DATA_DIR"] ?? support,
             isFixture: exists(marker),
@@ -76,6 +76,16 @@ public struct LaunchSettings: Equatable, Sendable {
         EngineOptions(
             root: root, home: home, user: user, dataDir: dataDir,
             profile: .background, follow: follow)
+    }
+
+    /// The path with every link resolved, as the engine names the root
+    /// (`realpath`); a path that does not resolve stays as given.
+    static func canonical(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else {
+            return path
+        }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     static func value(after flag: String, in arguments: [String]) -> String? {

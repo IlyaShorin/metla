@@ -23,6 +23,22 @@ import Testing
         #expect(!settings.isFixture && !settings.printLaunchTiming && settings.language == nil)
     }
 
+    /// The engine reads the root's canonical path; the app names it and
+    /// the home the same way, or "~" and the scenarios' paths would not
+    /// match what the engine lists.
+    @Test func aRootAndHomeNamedThroughALinkAreTheirCanonicalPaths() throws {
+        let real = Fixture.scratch()
+        let home = real.appendingPathComponent("home")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let link = Fixture.scratch().appendingPathComponent("link").path
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: real.path)
+        let settings = LaunchSettings.read(
+            environment: ["METLA_ROOT": link, "METLA_HOME": link + "/home"], arguments: ["Metla"],
+            home: "/Users/u", user: "u", exists: { FileManager.default.fileExists(atPath: $0) })
+        let canonical = try #require(realpath(real.path, nil).map { String(cString: $0) })
+        #expect(settings.root == canonical && settings.home == canonical + "/home")
+    }
+
     @Test func aCaptureNamesItsDirectoryAndFollowsNothing() {
         let settings = LaunchSettings.read(environment: [:], arguments: ["Metla", "--capture", "/shots"], home: "/h", user: "u", exists: { _ in true })
         #expect(settings.capture == "/shots")
