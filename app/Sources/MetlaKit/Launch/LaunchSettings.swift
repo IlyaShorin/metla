@@ -80,6 +80,18 @@ public struct LaunchSettings: Equatable, Sendable {
         )
     }
 
+    /// The `UserDefaults` suite the app keeps its own preferences in:
+    /// none (the standard domain) on the real disk, a suite of its own on
+    /// a fixture, so a development run never writes the user's settings.
+    public var preferencesSuite: String? {
+        isFixture ? "org.metla.Metla.dev" : nil
+    }
+
+    /// The preferences of a run with these settings.
+    public var preferences: StandardPreferences {
+        StandardPreferences(preferencesSuite.flatMap(UserDefaults.init(suiteName:)) ?? .standard)
+    }
+
     /// The engine's options.
     public var options: EngineOptions {
         EngineOptions(

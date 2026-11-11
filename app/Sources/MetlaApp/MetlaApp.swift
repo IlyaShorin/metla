@@ -12,7 +12,8 @@ struct MetlaApp: App {
     init() {
         let settings = LaunchSettings.current()
         self.settings = settings
-        let model = AppModel(settings: settings, strings: Strings(language: settings.language))
+        let model = AppModel(
+            settings: settings, strings: Strings(language: settings.language), preferences: settings.preferences)
         _model = State(initialValue: model)
         _bridge = State(initialValue: Bridge(model: model))
     }
@@ -59,7 +60,7 @@ struct MetlaApp: App {
 /// "Show in menu bar" is off.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        !GeneralModel.showsInMenuBar(StandardPreferences())
+        !GeneralModel.showsInMenuBar(LaunchSettings.current().preferences)
     }
 }
 

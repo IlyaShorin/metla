@@ -47,6 +47,17 @@ import Testing
         #expect(measured.rescanAtLaunch && measured.menuBarOnly && measured.follow)
     }
 
+    /// A development run on a fixture keeps its preferences apart from the
+    /// user's: the app's settings on the real disk are never written by it.
+    @Test func aFixtureRunKeepsItsPreferencesApart() {
+        let fixture = LaunchSettings.read(
+            environment: ["METLA_ROOT": "/fx"], arguments: ["Metla"], home: "/h", user: "u",
+            exists: { $0 == "/fx/.metla-fixture" })
+        let real = LaunchSettings.read(environment: [:], arguments: ["Metla"], home: "/h", user: "u", exists: { _ in false })
+        #expect(fixture.preferencesSuite == "org.metla.Metla.dev")
+        #expect(real.preferencesSuite == nil, "the standard domain")
+    }
+
     @Test func aCaptureNamesItsDirectoryAndFollowsNothing() {
         let settings = LaunchSettings.read(environment: [:], arguments: ["Metla", "--capture", "/shots"], home: "/h", user: "u", exists: { _ in true })
         #expect(settings.capture == "/shots")
