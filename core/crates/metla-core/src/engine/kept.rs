@@ -283,15 +283,19 @@ fn plain(tag: &str, fields: &mut Fields) -> Option<Outcome> {
 fn failure(fields: &mut Fields) -> Option<ActionFailure> {
     let failure = match fields.text()?.as_str() {
         "unlisted" => ActionFailure::Unlisted,
-        "trash" => ActionFailure::TrashRefused {
-            refused: fields.number()?,
-            of: fields.number()?,
-            said: fields.text()?,
-        },
+        "trash" => trash_refused(fields)?,
         "git" => ActionFailure::GitRefused(fields.text()?),
         _ => return None,
     };
     fields.end().map(|()| failure)
+}
+
+fn trash_refused(fields: &mut Fields) -> Option<ActionFailure> {
+    Some(ActionFailure::TrashRefused {
+        refused: fields.number()?,
+        of: fields.number()?,
+        said: fields.text()?,
+    })
 }
 
 fn skip(fields: &mut Fields) -> Option<SkipReason> {

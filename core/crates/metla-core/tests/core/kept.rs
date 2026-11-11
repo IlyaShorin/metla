@@ -150,6 +150,14 @@ fn what_is_not_a_report_is_not_read_as_one() {
     };
     for outcome in [
         "failed",
+        "failed\tbogus",
+        "failed\tunlisted\textra",
+        "failed\ttrash\t1",
+        "failed\ttrash\t1\t2",
+        "failed\ttrash\tone\t2\tno",
+        "failed\ttrash\t1\t2\tno\textra",
+        "failed\tgit",
+        "failed\tgit\tno\textra",
         "skipped",
         "skipped\tskip",
         "skipped\tskip\t13",
@@ -170,4 +178,5 @@ fn what_is_not_a_report_is_not_read_as_one() {
     }
     assert!(cut("skipped\tblocked\t0\t!git failed").is_some());
     assert!(cut("partial\t1\t1\t0").is_some());
+    assert!(cut("failed\ttrash\t1\t2\tno").is_some());
 }
