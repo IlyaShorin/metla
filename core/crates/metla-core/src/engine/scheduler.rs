@@ -258,7 +258,8 @@ impl Scheduler {
     }
 
     /// Applies one batch; the status keeps its pending count until the
-    /// batch is applied, so the engine reads as updating meanwhile.
+    /// batch is applied, so the engine reads as updating meanwhile. The
+    /// batch is counted only once the status shows it.
     fn batch(&mut self, tasks: &[RescanTask], profile: &Profile) {
         let options = self.options(profile);
         let mut full = false;
@@ -266,15 +267,15 @@ impl Scheduler {
         for task in tasks {
             full |= !self.apply(task, &options, &mut written);
         }
-        self.shared.count(|c| {
-            c.batches += 1;
-            c.tasks += tasks.len() as u64;
-        });
         self.after_change(&written);
         let pending = self.coalescer.pending() as u64;
         self.shared.update(|s| {
             s.pending = pending;
             s.needs_full_scan |= full;
+        });
+        self.shared.count(|c| {
+            c.batches += 1;
+            c.tasks += tasks.len() as u64;
         });
         let now = self.shared.profile();
         self.full_scan_if_due(&now);

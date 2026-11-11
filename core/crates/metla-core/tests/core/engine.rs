@@ -1236,7 +1236,7 @@ fn a_first_scan_without_disk_space_fails_once_and_waits_for_the_user() {
     until(&engine, |e| e.freshness().unwrap().state == failed);
 }
 
-/// Profiles whose settle time is `settle`, with `pause` between batches/// Profiles whose settle time is `settle`, with `pause` between batches
+/// Profiles whose settle time is `settle`, with `pause` between batches
 /// of one task.
 fn patient(place: &Place, settle: u64, pause: u64) -> EngineConfig {
     let mut config = place.config(PowerProfile::Background);
@@ -1326,6 +1326,28 @@ fn batches_are_apart_by_the_profile_pause() {
         first.elapsed()
     );
     assert_eq!(engine.counters().batches, 2);
+}
+
+/// A counted batch is no longer pending: the counters move once the
+/// status shows the batch, not while Git is still asked about the
+/// project output it wrote (here a Git that takes a second).
+#[test]
+fn a_counted_batch_is_no_longer_pending() {
+    let place = Place::new(&["code/app/Cargo.toml", "code/app/target/x=1"]);
+    fs::create_dir(place.path("code/app/.git")).unwrap();
+    let slow = crate::repo::script(&place.aux.path("slow-git"), "sleep 1\nexit 1");
+    let config = EngineConfig {
+        git: metla_core::git::Git::new(slow),
+        ..place.config(PowerProfile::Background)
+    };
+    let engine = Engine::open(config).unwrap();
+    settled(&engine);
+    place
+        .fx
+        .build(&["code/app/web/Cargo.toml", "code/app/web/target/x=1"]);
+    engine.changed(vec![place.path("code/app")]).unwrap();
+    until(&engine, |e| e.counters().tasks == 1);
+    assert_eq!(engine.freshness().unwrap().state, EngineState::Idle);
 }
 
 #[test]
