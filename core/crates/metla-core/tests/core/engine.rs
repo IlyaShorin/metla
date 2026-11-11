@@ -174,6 +174,36 @@ pub const HOME: &[&str] = &[
     "~/Documents/notes.txt=notes",
 ];
 
+/// A root and a home given by another name (through a symbolic link)
+/// are the directories they name: the scan reads the root's canonical
+/// path, so the home must be canonical too, or no rule under it (the
+/// caches, the worktrees Codex and Claude Code manage) would match.
+#[test]
+fn a_root_and_home_named_through_a_symbolic_link_are_read_as_the_directories_they_name() {
+    let place = Place::new(HOME);
+    let link = place.aux.path("link");
+    std::os::unix::fs::symlink(place.fx.root(), &link).unwrap();
+    let config = EngineConfig {
+        root: link.clone(),
+        home: link.join("home"),
+        ..place.config(PowerProfile::Background)
+    };
+    let engine = Engine::open(config).unwrap();
+    settled(&engine);
+    let snapshot = engine.snapshot().unwrap();
+    assert_eq!(snapshot.root, place.fx.root());
+    assert_eq!(
+        snapshot.categories[&Category::AppCache].count,
+        1,
+        "the home's cache"
+    );
+    let expected = [
+        "home/Library/Caches/com.example.app",
+        "home/Library/Logs/com.example.app",
+    ];
+    assert_eq!(offered(&engine, &place), expected.map(String::from).into());
+}
+
 #[test]
 fn a_first_opening_scans_and_a_later_one_answers_from_the_saved_picture() {
     let place = Place::new(HOME);

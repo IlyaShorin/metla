@@ -299,7 +299,9 @@ impl Engine {
         let needs_full_scan = needs_full_scan(&mut reader, &root, &config, &settings)?;
         let watching = config.watching;
         let parts = Parts {
-            home: config.home,
+            // The scan reads the root's canonical path: the home must be
+            // spelled the same way, or no rule under it matches.
+            home: std::fs::canonicalize(&config.home).unwrap_or(config.home),
             user: config.user,
             git: config.git,
             production: config.production,
