@@ -77,6 +77,8 @@ rm -rf -- "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$products/Metla" "$app/Contents/MacOS/Metla"
 cp -R "$products/Metla_MetlaKit.bundle" "$app/Contents/Resources/"
+# The Dock and Finder icon, drawn by scripts/make-icon.sh and committed.
+cp "$repo/app/Icon/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat >"$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -85,6 +87,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleLocalizations</key><array><string>en</string><string>ru</string></array>
     <key>CFBundleExecutable</key><string>Metla</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIdentifier</key><string>org.metla.Metla</string>
     <key>CFBundleName</key><string>Metla</string>
     <key>CFBundleDisplayName</key><string>Metla</string>

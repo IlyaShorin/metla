@@ -122,6 +122,10 @@ development build with `METLA_ROOT` pointing at a fixture (`run-app.sh`
 does); `scripts/run-scenarios.sh` drives the cleanup flows end to end.
 [CONTRIBUTING.md](CONTRIBUTING.md) has the gates and the development rules.
 
+The icon is `app/Icon/AppIcon.icns`, committed; `scripts/make-icon.sh`
+draws it again from the shapes in `scripts/make-icon.swift`, every size
+at its own pixels, after a change to the drawing.
+
 ## Full Disk Access
 
 Without it macOS keeps Mail, Messages, Safari and other apps' data from
