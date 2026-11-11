@@ -1,0 +1,27 @@
+;; uml-viewer policy for Metla's Rust core (scripts/architecture.sh writes
+;; the IR into target/architecture/metla.edn). One class per Rust module
+;; file. metla-core's modules are the top-level segments (its lib.rs is
+;; the `metla` root); the two outer crates are `ffi` and `cli`. :levels
+;; follow the dependency rule of docs/ARCHITECTURE.md section 2, inner
+;; (higher-level) first: an arrow from an inner level to an outer one is
+;; a violation. The Swift app is not scanned (uml-viewer reads Clojure,
+;; TypeScript, Rust and Python).
+{:title "Metla"
+ :prefix "metla"
+ :out "target/architecture/metla.edn"
+ :hierarchical true
+ :sources [{:lang :rust :root "core/crates/metla-core/src" :prefix "metla"}
+           {:lang :rust :root "core/crates/metla-ffi/src" :prefix "metla.ffi"}
+           {:lang :rust :root "core/crates/metla-cli/src" :prefix "metla.cli"}]
+ :foreign [rusqlite rayon uniffi libc]
+ :order [cli ffi engine clean watch scan index git fs rules domain]
+ :levels [[domain]
+          [rules fs git index]
+          [scan watch clean]
+          [engine]
+          [ffi cli]]
+ ;; domain/mod.rs re-exports its own child module (`pub use scan::{...}`
+ ;; names domain::scan); the Rust scanner reads that path as the
+ ;; top-level scan module. The real rule is checked by
+ ;; core/crates/metla-core/tests/core/architecture.rs.
+ :omit-edges [[:domain :scan]]}
