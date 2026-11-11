@@ -52,7 +52,7 @@ with the `bindgen` feature and has no mutation site.
 
 **Rust numbers at M7.**
 
-* The only complete `MUTATE_ALL=1` run of M7 is the architect's at
+* The only complete `MUTATE_ALL=1` run of M7 is the one at
   88cd5b2 (a clean clone, 11:30 to 15:24 on 2026-11-11, the machine at a
   load average of 31 to 38): fmt, clippy and the tests (73 + 394 + 23)
   green, the slow group green, stability 5 of 5; crapper 901 functions,
@@ -84,7 +84,21 @@ with the `bindgen` feature and has no mutation site.
 * **There is no complete mutation run on the final commit**: long runs
   were stopped by the user's decision at the end of M7.
 
-final-commit gate: filled in by the architect
+* **The gate on the final Rust sources** (`STABLE_RUNS=3
+  scripts/quality.sh`, differential, in the clean clone of the complete
+  run, at 0dc38a6, the last commit that changes Rust; 16:12 to 16:24 on
+  2026-11-11 with nothing else running): fmt, clippy and the tests
+  (73 + 395 + 23) green, the slow group (1 + 10) green, stability 3 of 3
+  (491 tests each); crapper 906 functions (`metla-core` 709, `metla-cli`
+  145, `metla-ffi` 51, `uniffi-bindgen-swift` 1), worst CRAP 9.158
+  (`Scheduler::handle`); dryer 673 functions, highest similarity 0.79, no
+  pair at 0.8; mutator 83 files, 850 sites, 850 killed, 0 survived, 0
+  uncovered. Of those, 53 mutants were executed in this run, the ones in
+  functions changed since 88cd5b2 (`engine/kept.rs` 17, `clean/act.rs` 9,
+  `metla-cli/src/cleaned.rs` 7, `metla-ffi/src/engine.rs` 2,
+  `engine/mod.rs` 13 of 23, `domain/cleanup.rs` 5 of 16): all killed by a
+  failing test, none by timeout. The other 797 verdicts are the complete
+  run's, 18 of them kills by timeout under load, not checked again.
 
 ## Swift: what the ub-mode tools do not cover
 

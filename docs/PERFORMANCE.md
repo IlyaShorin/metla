@@ -491,7 +491,7 @@ root, read-only; the release app with the **production** library only
 on a fixture; release `metla-cli` (no LTO). No Full Disk Access, not
 root. Data directories, fixtures and indexes on the RAM disk (APFS,
 6 GB), deleted afterwards. Warm cache (purging it needs root). Nothing
-of ours or of the architect's ran meanwhile (one-minute load average
+else of this project ran meanwhile (one-minute load average
 2.4 to 6.3, the desktop in ordinary use); fseventsd at 0.0 to 4.6 % of a
 core. The apps were started from a terminal, so they were not the
 active app and their windows were behind others: App Nap applied to

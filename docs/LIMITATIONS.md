@@ -108,8 +108,11 @@ the gates in [QUALITY.md](QUALITY.md).
     before acting lists the same directory first.
 22. **No complete mutation run on the final commit.** Long runs were
     stopped by the user's decision at the end of M7: the last complete
-    `MUTATE_ALL` run is at 88cd5b2, and the Rust files changed since were
-    mutated one by one ([QUALITY.md](QUALITY.md)).
+    `MUTATE_ALL` run is at 88cd5b2 (850 of 852 mutants killed, the two
+    survivors fixed afterwards). On the final Rust sources only the 53
+    mutants in functions changed since ran again, all killed; the other
+    797 verdicts are that run's, 18 of them kills by timeout on a loaded
+    machine that were not checked again ([QUALITY.md](QUALITY.md)).
 23. **The first scan of the real disk through the app was measured once
     each way** (199 s taken over as the user's scan; not ended after
     27 minutes before), with the app behind other windows; never with
