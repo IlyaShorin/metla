@@ -170,7 +170,7 @@ enum Capture {
     /// only. `CGWindowListCreateImage` is marked obsoleted in the macOS 26
     /// SDK, so it is looked up by name; for a process's own windows it
     /// needs no screen-recording permission.
-    private static func composed(_ window: NSWindow) -> CGImage? {
+    static func composed(_ window: NSWindow) -> CGImage? {
         #if DEBUG
             typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
             guard let symbol = dlsym(dlopen(nil, RTLD_NOW), "CGWindowListCreateImage") else {

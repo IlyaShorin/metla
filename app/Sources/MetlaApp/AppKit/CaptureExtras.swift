@@ -60,14 +60,14 @@ enum CaptureExtras {
         _ = try? await client.addExclusion((root as NSString).appendingPathComponent("home/.codex"))
         await model.exclusions?.load()
         let hud = AppModel.hud(report, strings)
-        let realHUD = await drawHUD(hud, strings: strings, into: directory)
-        if realHUD == 0 {
-            shots.append(("hud", AnyView(HUDView(message: hud, strings: strings) {})))
-        }
         await model.refresh([.picture, .cleanup])
         let realPanel = await drawMenuBar(into: directory)
         if realPanel == 0 {
             shots.append(("menubar", AnyView(MenuBarPanel(model: model, actions: PanelActions()))))
+        }
+        let realHUD = await drawHUD(hud, strings: strings, into: directory)
+        if realHUD == 0 {
+            shots.append(("hud", AnyView(HUDView(message: hud, strings: strings) {})))
         }
         shots.append(("firstrun", AnyView(FirstRunSheet(access: model.access, strings: strings))))
         return realHUD + realPanel + (await draw(shots, into: directory))
@@ -123,10 +123,23 @@ enum CaptureExtras {
             FileHandle.standardError.write(Data("capture: the status item opened no panel\n".utf8))
             return 0
         }
+        // What is in the panel, said apart from its picture.
+        let content = panel.contentView
+        FileHandle.standardError.write(Data(
+            "capture: menu-bar panel \(panel.frame.size) at \(panel.backingScaleFactor)x, content \(content?.fittingSize ?? .zero), \(content?.subviews.count ?? 0) subviews\n".utf8))
         var written = 0
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             await Capture.appear(appearance, panel)
             try? await Task.sleep(for: .milliseconds(800))
+            // The panel was seen on screen with its content (window server
+            // pictures at 1x), but a later run got a blank image of it at
+            // 2x: no blank picture is written; the copy is drawn instead.
+            guard Capture.composed(panel) != nil else {
+                FileHandle.standardError.write(Data("capture: the menu-bar panel's picture is blank\n".utf8))
+                button.performClick(nil)
+                NSApp.appearance = nil
+                return 0
+            }
             let file = (directory as NSString).appendingPathComponent("menubar-\(suffix).png")
             if let png = await Capture.png(of: panel, appearance), (try? png.write(to: URL(fileURLWithPath: file))) != nil {
                 written += 1
