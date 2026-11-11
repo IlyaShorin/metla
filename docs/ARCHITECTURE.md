@@ -579,7 +579,11 @@ changes, `EngineState` (`Idle`, `Scanning { progress, interactive }`,
 scan waits for the profile, `Failed(reason)`, `Off`), the picture's
 completeness (`Missing`, `Partial`, `Complete`), whether changes are
 followed, and whether a full scan is needed; `is_current()` holds only
-when all of them say so.
+when all of them say so. It also counts the full scans that ended since
+the engine opened, completed, cancelled or failed
+(`full_scans_ended`, counted where a scan's end is recorded and before
+it stops showing as running), so whoever started one can tell when it
+is over without comparing times.
 
 A full scan or an update that fails keeps the picture as it was and
 records why (`Failure::NoSpace`: "not enough disk space to refresh";
@@ -899,7 +903,12 @@ another user owns it stays `InspectionFailed` (a worktree) or
   is taken over as the user's (`AppModel.takesOver`): without the
   activity, App Nap put an app behind other windows at background
   priority and its first scan of the full disk had not ended after
-  27 minutes.
+  27 minutes. The user's scan is over when the engine's count of ended
+  full scans has reached the one the app waits for (one more than when
+  the scan became the user's, two more if a full scan was running then,
+  as scans run one after another) and no full scan runs
+  (`AppModel.userScanOver`); a scan that cannot be started ends it at
+  once, and Stop ends it.
 * **Scenarios.** `--scenario <name>` drives the real view models end
   to end on a fixture and exits non-zero when the disk is not as the
   flow confirmed (`scripts/run-scenarios.sh` runs all four on fresh
