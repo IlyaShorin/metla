@@ -32,4 +32,21 @@ fi
 }
 export METLA_DATA_DIR="${METLA_DATA_DIR:-$build/data}"
 
-exec "$app/Contents/MacOS/Metla" "$@"
+if [[ " $* " != *" --capture "* ]]; then
+    exec "$app/Contents/MacOS/Metla" "$@"
+fi
+# A capture is started with `open`, so the app is the active one and its
+# windows are drawn as the user sees them while working in it (an app
+# started from a shell stays in the background: dimmed sidebar, grey
+# buttons). `open` passes on only the environment given to it.
+log="$(mktemp "${TMPDIR:-/tmp}/metla-capture.XXXXXX")"
+environment=()
+for name in METLA_ROOT METLA_HOME METLA_DATA_DIR METLA_LANGUAGE TMPDIR; do
+    [[ -n "${!name:-}" ]] && environment+=(--env "$name=${!name}")
+done
+open -n -W -a "$app" --stdout "$log" --stderr "$log" "${environment[@]}" --args "$@"
+cat "$log"
+grep -q '^capture: [0-9]* images' "$log"
+code=$?
+rm -f -- "$log"
+exit "$code"

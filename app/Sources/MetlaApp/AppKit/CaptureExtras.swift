@@ -122,11 +122,14 @@ enum CaptureExtras {
                 window.titlebarAppearsTransparent = true
                 window.titleVisibility = .hidden
                 window.appearance = NSAppearance(named: appearance)
+                // No title bar band: a sheet, the menu-bar panel and the
+                // hotkey's panel have none.
                 let host = NSHostingView(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
+                host.safeAreaRegions = []
                 window.contentView = host
                 window.setContentSize(host.fittingSize)
                 Capture.sharpest(window)
-                window.orderFront(nil)
+                window.makeKeyAndOrderFront(nil)
                 try? await Task.sleep(for: .milliseconds(800))
                 window.setContentSize(host.fittingSize)
                 window.displayIfNeeded()

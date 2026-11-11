@@ -45,6 +45,7 @@ enum Capture {
         // and the first painting of the window leaves them out: paint it
         // once and throw that away.
         sharpest(window)
+        window.makeKeyAndOrderFront(nil)
         await model.show(.overview)
         try? await Task.sleep(for: .seconds(2))
         _ = image(of: window)
