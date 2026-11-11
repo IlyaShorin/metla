@@ -15,14 +15,15 @@ struct MetlaApp: App {
         let model = AppModel(
             settings: settings, strings: Strings(language: settings.language), preferences: settings.preferences)
         _model = State(initialValue: model)
-        _bridge = State(initialValue: Bridge(model: model))
+        let bridge = Bridge(model: model)
+        _bridge = State(initialValue: bridge)
+        delegate.bridge = bridge
     }
 
     var body: some Scene {
         Window("Metla", id: "main") {
             MainWindow(model: model)
                 .background(WindowOpener(bridge: bridge))
-                .task { await bridge.launch() }
         }
         .defaultSize(width: 1120, height: 720)
         .commands {
@@ -47,7 +48,6 @@ struct MetlaApp: App {
         } label: {
             MenuBarIcon(scanning: model.scanning)
                 .background(WindowOpener(bridge: bridge))
-                .task { await bridge.launch() }
         }
         .menuBarExtraStyle(.window)
         Settings {
@@ -56,9 +56,17 @@ struct MetlaApp: App {
     }
 }
 
-/// Keeps the app in the menu bar when its last window closes, unless
-/// "Show in menu bar" is off.
+/// Starts the app once AppKit has finished launching, not when a scene's
+/// view appears: the window state macOS restores can bring up no window
+/// at all. Keeps the app in the menu bar when its last window closes,
+/// unless "Show in menu bar" is off.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var bridge: Bridge?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { await bridge?.launch() }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         !GeneralModel.showsInMenuBar(LaunchSettings.current().preferences)
     }
@@ -72,10 +80,7 @@ struct WindowOpener: View {
 
     var body: some View {
         Color.clear
-            .onAppear {
-                bridge.openWindow = openWindow
-                bridge.openSettings = openSettings
-            }
+            .onAppear { bridge.appeared(openWindow: openWindow, openSettings: openSettings) }
     }
 }
 

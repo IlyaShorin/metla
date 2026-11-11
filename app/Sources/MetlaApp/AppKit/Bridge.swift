@@ -27,14 +27,24 @@ final class Bridge {
         showsInMenuBar = GeneralModel.showsInMenuBar(model.preferences)
     }
 
-    /// Opens the engine once (from whichever scene comes up first); in
-    /// capture or scenario mode renders or runs and quits.
+    /// A scene's view is up: SwiftUI's window actions are taken from it,
+    /// and the first one says when the first window came up.
+    func appeared(openWindow: OpenWindowAction, openSettings: OpenSettingsAction) {
+        if self.openWindow == nil {
+            LaunchTiming.firstWindow(print: model.settings.printLaunchTiming)
+        }
+        self.openWindow = openWindow
+        self.openSettings = openSettings
+    }
+
+    /// Opens the engine once, when AppKit has finished launching; in
+    /// capture or scenario mode renders or runs and quits; otherwise ends
+    /// with the main window open, unless `--idle` closes it.
     func launch() async {
         guard !launched else { return }
         launched = true
         LaunchTiming.identify()
         let settings = model.settings
-        LaunchTiming.firstWindow(print: settings.printLaunchTiming)
         if let scenario = settings.scenario {
             let code = await Scenarios.run(scenario, settings: settings, strings: model.strings)
             fflush(stdout)
@@ -56,6 +66,10 @@ final class Bridge {
         }
         if settings.menuBarOnly {
             NSApp.windows.first { $0.identifier?.rawValue == "main" }?.close()
+        } else if !mainShown {
+            // The windows macOS restores (after a crash, or with "Close
+            // windows when quitting" off) need not include it.
+            showMain()
         }
         if settings.printLaunchTiming {
             Task { await Measure.follow(model) }
@@ -100,11 +114,16 @@ final class Bridge {
         openWindow?(id: "main")
     }
 
+    /// Whether the main window is on screen.
+    var mainShown: Bool {
+        NSApp.windows.contains { $0.identifier?.rawValue == "main" && $0.isVisible }
+    }
+
     /// The preview of the default selection, as a sheet of the main
     /// window when it is open, else in a window of its own.
     func showPreview() async {
         NSApp.activate()
-        let mainOpen = NSApp.windows.contains { $0.identifier?.rawValue == "main" && $0.isVisible }
+        let mainOpen = mainShown
         model.cleanupInWindow = !mainOpen
         if !mainOpen {
             openWindow?(id: "cleanup")
