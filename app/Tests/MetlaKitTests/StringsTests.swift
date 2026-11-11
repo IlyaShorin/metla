@@ -62,6 +62,21 @@ import Testing
         #expect(russian.format("preview.title", 9, "2 МБ") == "Удалить 9 объектов — около 2 МБ?")
     }
 
+    /// The app's bundle holds MetlaKit's resources in its Resources; the
+    /// strings come from there, not from the package build's directory.
+    @Test func theResourcesInsideTheAppAreTheOnesRead() throws {
+        let app = Fixture.scratch().appendingPathComponent("Test.app")
+        let resources = app.appendingPathComponent("Contents/Resources")
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        try Data("<plist version=\"1.0\"><dict/></plist>".utf8).write(to: app.appendingPathComponent("Contents/Info.plist"))
+        let inside = resources.appendingPathComponent("Metla_MetlaKit.bundle")
+        try FileManager.default.copyItem(at: Bundle.module.bundleURL, to: inside)
+        let found = Strings.bundle(inside: try #require(Bundle(url: app)))
+        #expect(found.bundleURL.resolvingSymlinksInPath().path == inside.resolvingSymlinksInPath().path)
+        let bare = try #require(Bundle(url: Fixture.scratch()))
+        #expect(Strings.bundle(inside: bare).bundleURL == Bundle.module.bundleURL, "the package's, in a test")
+    }
+
     @Test func aKeyWithoutATextReadsAsItself() {
         #expect(Strings(language: "en", region: "US").text("no.such.key") == "no.such.key")
     }
