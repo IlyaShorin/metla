@@ -19,8 +19,8 @@ use metla_core::engine::{
 use metla_core::index::IndexError;
 use metla_ffi::{
     CandidatePage, CleanupResult, Confirmations, CoverageSummary, FailedPath, FolderItem,
-    FolderPage, MAX_PAGE, MetlaError, Overview, ReportTotals, TrashHost, TrashOutcome, page,
-    rule_titles,
+    FolderPage, MAX_PAGE, MetlaError, Overview, ReportTotals, TrashHost, TrashOutcome, capped,
+    page, rule_titles,
 };
 
 use crate::support::Told;
@@ -32,6 +32,15 @@ fn a_page_is_never_longer_than_the_most_a_page_holds() {
     assert_eq!(page(0, MAX_PAGE + 1).limit, 1000);
     assert_eq!(page(0, MAX_PAGE).limit, 1000);
     assert_eq!(page(u64::MAX, 1).offset, usize::MAX);
+    let limits = [
+        (7, 7),
+        (MAX_PAGE, 1000),
+        (MAX_PAGE + 1, 1000),
+        (u32::MAX, 1000),
+    ];
+    for (asked, given) in limits {
+        assert_eq!(capped(asked), given, "{asked}");
+    }
 }
 
 #[test]

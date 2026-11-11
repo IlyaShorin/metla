@@ -427,7 +427,13 @@ fn the_power_profiles_are_the_documented_table() {
         assert_eq!(profile.pause, Duration::from_millis(pause));
         assert_eq!((profile.full_scans, profile.throttled), (full, throttled));
     }
-    assert_eq!(Profiles::standard(2).interactive.threads, 1, "never none");
+    for cores in [0, 1, 2] {
+        assert_eq!(
+            Profiles::standard(cores).interactive.threads,
+            1,
+            "never none"
+        );
+    }
     assert_eq!(Profiles::standard(9).interactive.threads, 7, "cores - 2");
     assert_eq!(Profiles::standard(10).interactive.threads, 8);
     let off = table.of(PowerProfile::Off);

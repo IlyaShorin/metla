@@ -6,6 +6,7 @@
 //! `LISTED_FILES` files.
 
 use std::ffi::OsString;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,11 +29,16 @@ use crate::view::{
 /// The most entries a page holds, whatever the caller asks for.
 pub const MAX_PAGE: u32 = 1000;
 
+/// `limit`, at most [`MAX_PAGE`].
+pub fn capped(limit: u32) -> usize {
+    limit.min(MAX_PAGE) as usize
+}
+
 /// A page starting at `offset`, at most [`MAX_PAGE`] long.
 pub fn page(offset: u64, limit: u32) -> Page {
     Page {
         offset: usize::try_from(offset).unwrap_or(usize::MAX),
-        limit: limit.min(MAX_PAGE) as usize,
+        limit: capped(limit),
     }
 }
 
@@ -110,8 +116,7 @@ impl Engine {
 
     /// The Overview's largest folders, at most [`MAX_PAGE`].
     pub fn largest_folders(&self, limit: u32) -> Result<Vec<TopFolder>, MetlaError> {
-        let limit = page(0, limit).limit;
-        Ok(self.inner.largest_folders(limit)?)
+        Ok(self.inner.largest_folders(capped(limit))?)
     }
 
     /// One page of the offered candidates of `category` (all when
@@ -251,6 +256,10 @@ fn exclusion(path: String) -> Result<Exclusion, MetlaError> {
     Exclusion::new(Path::new(&path)).ok_or(MetlaError::InvalidPath { path })
 }
 
+/// The cores scans may use: as many as the system says, else one (the
+/// profile table never gives a scan fewer than one thread).
 fn cores() -> usize {
-    std::thread::available_parallelism().map_or(1, usize::from)
+    std::thread::available_parallelism()
+        .unwrap_or(NonZeroUsize::MIN)
+        .get()
 }

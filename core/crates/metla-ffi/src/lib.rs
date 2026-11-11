@@ -21,7 +21,7 @@ mod error;
 mod view;
 
 pub use callbacks::{EngineObserver, Observer, Trash, TrashHost, TrashOutcome};
-pub use engine::{Engine, EngineOptions, MAX_PAGE, cleans_beyond_fixtures, page};
+pub use engine::{Engine, EngineOptions, MAX_PAGE, capped, cleans_beyond_fixtures, page};
 pub use error::MetlaError;
 pub use view::{
     CandidatePage, CategoryTally, CleanupResult, Confirmations, CoverageSummary, EngineSettings,
