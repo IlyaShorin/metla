@@ -169,8 +169,9 @@ struct SettingsView: View {
                 .tabItem { Label(model.strings.text("settings.access"), systemImage: "lock.shield") }
                 .tag(SettingsTab.access)
         }
-        .frame(width: 560)
-        .onAppear { chosen = tab }
+        // Tall enough for the longest tab (Hotkeys, in Russian) without
+        // scrolling; the window keeps one size across the tabs.
+        .frame(width: 560, height: 500)
         .task {
             await model.general?.load()
             await model.exclusions?.load()
