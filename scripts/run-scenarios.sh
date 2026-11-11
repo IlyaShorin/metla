@@ -5,6 +5,11 @@
 # disk afterwards is not what the flow confirmed. Prints one line per
 # scenario and exits non-zero when any failed.
 #
+# The debug app has the installed app's bundle id: it is started with
+# -ApplePersistenceIgnoreState YES, so it neither reads nor writes the
+# window state macOS keeps for that id (a state left by a crash once held
+# every launch at the "reopen windows?" alert, which nobody answers here).
+#
 #   scripts/run-scenarios.sh [name ...]   default: all four
 #
 # Environment: METLA_BUILD as for build-app.sh (the debug bundle must be
@@ -30,7 +35,7 @@ for name in "${names[@]}"; do
     rm -rf -- "$root" "$root-trash" "$root-data"
     "$cli" fixture create "$root" >/dev/null || exit 2
     METLA_ROOT="$root" METLA_HOME="$root/home" METLA_DATA_DIR="$root-data" METLA_LANGUAGE=en \
-        "$app" --scenario "$name" >"$root.log" 2>&1
+        "$app" --scenario "$name" -ApplePersistenceIgnoreState YES >"$root.log" 2>&1
     code=$?
     grep -E "^scenario |FAILED" "$root.log"
     echo "exit $code"
