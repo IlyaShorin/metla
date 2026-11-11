@@ -164,6 +164,14 @@ command. All on the RAM disk, the machine otherwise in ordinary use.
   survived, 1 uncovered: `fs::remove::unread`, the directory that opens
   but cannot be listed (above). That one uncovered site is what the
   gate does not close.
+* Round 4 at afc805d (23:25 to 23:47, functions changed since 32fe381:
+  deferred full scans and the attention at opening): stability 3 of 3
+  (524 tests each) green; crapper 945 functions, worst CRAP 9.16
+  (`Scheduler::handle`); dryer 705 functions, highest similarity 0.79,
+  no pair at 0.8. Mutator: 58 mutants run, 57 killed (1 by timeout, in
+  `engine/scheduler.rs`), 0 uncovered, 1 survived: `metla-cli`'s live
+  mode starts its engine with `attention: false`, and no CLI test sees
+  the scan threads that would change.
 * Verdicts not executed in either round are carried over from the
   runs above (the complete run at 88cd5b2 and the differential gates at
   0dc38a6 and 15027ac) for every function that did not change.
@@ -250,7 +258,10 @@ MainThreadGuard 66.7 %. MetlaKit in all: 93.06 % of 2,319 lines. One
 run only, not the five in a row of M7. The capture (`scripts/run-app.sh
 --capture`), which is not part of the gate, now fails when a main
 screen changes the window's frame or lays its content out at another
-size than the window's; it passed with 0 failures at 20889c4.
+size than the window's; it passed with 0 failures at 20889c4. Run
+again at afc805d (23:47 to 23:49, after the engine options gained the
+attention at opening): green, 0 diagnostics, 87 tests in 14 suites,
+every gated file at or above 85 %, MetlaKit 93.14 % of 2,319 lines.
 
 ## What no tool checks
 
