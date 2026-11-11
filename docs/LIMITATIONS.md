@@ -158,9 +158,18 @@ the gates in [QUALITY.md](QUALITY.md).
 30. **Lost events are replayed from fseventsd's history, measured once**
     (a replay after a provoked `UserDropped` named every change made
     meanwhile); the replay through the engine was tested with an
-    injected loss, not with a real one. When replays keep losing events
-    before they catch up, or the kernel loses them, a full scan follows,
-    no sooner than 30 minutes (10 while the window is open) after the
-    last one; the gap and the quiet were chosen, not measured. A stream
-    leaves out at most eight directories; other volumes beyond those are
-    filtered after delivery.
+    injected loss, not with a real one, and the fallback after three
+    replays in a row that did not catch up is tested only by its pure
+    table (`on_loss`): no test made three losses arrive before a replay's
+    end. When that fallback happens, or the kernel loses events, a full
+    scan follows, no sooner than 30 minutes (10 while the window is
+    open) after the last one; the gap and the quiet were chosen, not
+    measured.
+31. **The stream leaves out at most eight directories** (fseventsd's
+    limit): the data directory and the other volumes below the root,
+    those outside `/System` first; any more are filtered only after
+    delivery, so their churn still fills the stream's queue. The stream
+    is one on the root's path, not one per device: the system and data
+    volumes report one device, and the data volume's events come under
+    their firmlinked paths, which a stream relative to a device would
+    name otherwise.

@@ -172,6 +172,39 @@ command. All on the RAM disk, the machine otherwise in ordinary use.
   `engine/scheduler.rs`), 0 uncovered, 1 survived: `metla-cli`'s live
   mode starts its engine with `attention: false`, and no CLI test sees
   the scan threads that would change.
+* Round 5, functions changed since afc805d (the stream's exclusions,
+  the picture kept after a killed scan, the replay of lost events and
+  the loss kinds, the stamped core, the gate items of round 4):
+  - A first run on d0cde7b (00:23 to 00:45 on 2026-11-12): stability 3
+    of 3 (533 tests each); dryer 719 functions, 0.79; crapper failed
+    (`ScanReason::says`, 13.0, a match of twelve arms; fixed in
+    fa1830e). Its mutator completed `metla-cli/src/live.rs` (1 killed),
+    `engine/mod.rs` (1 killed, 3 survived) and `engine/scheduler.rs` (36
+    killed, 1 of them by timeout, 3 survived, 2 uncovered), and was
+    stopped on the coordinator's word in `fs/remove.rs`; its
+    `engine/view.rs` verdicts were void (the file changed during the
+    run). Its findings were fixed in ff2f814 (`Replays`, `reopen`,
+    `exclusion_line` and tests of their edges); no verdict of that run
+    is carried over.
+  - The final gate on ff2f814 (00:46 to 01:12): fmt, clippy, tests
+    (74 + 439 + 23), the slow group (1 + 12) and stability 3 of 3 (536
+    tests each) green; crapper 967 functions, worst 9.02
+    (`Scheduler::handle`); dryer 723 functions, highest 0.79, no pair at
+    0.8. Mutator on every file changed since afc805d: 68 mutants run in
+    7 files (`metla-cli/src/live.rs` 1, `engine/mod.rs` 1,
+    `engine/scheduler.rs` 43, `engine/view.rs` 1, `fs/remove.rs` 7,
+    `watch/coalescer.rs` 12, `watch/sys.rs` 3; 5 changed files have no
+    site in their changed functions), 66 killed (1 by timeout, in
+    `engine/scheduler.rs`), 2 survived, 0 uncovered.
+  - The two survivors (the guard that set the stream's exclusions only
+    when there were any, and `exclusion_line`'s `left > 0`) were fixed
+    in 63b2f52; crapper again on 63b2f52: 967 functions, worst 9.02, none
+    at 10; the mutator again on what the fix touched: `watch/sys.rs` 2
+    killed, `engine/scheduler.rs` 43 killed (the scheduler's snapshot
+    let the mutator run every site of its changed functions again), 0
+    survived, 0 uncovered, no timeout. The rest of the final gate's
+    verdicts are carried over to 63b2f52 unchanged (no other source
+    changed).
 * Verdicts not executed in either round are carried over from the
   runs above (the complete run at 88cd5b2 and the differential gates at
   0dc38a6 and 15027ac) for every function that did not change.
@@ -261,7 +294,10 @@ screen changes the window's frame or lays its content out at another
 size than the window's; it passed with 0 failures at 20889c4. Run
 again at afc805d (23:47 to 23:49, after the engine options gained the
 attention at opening): green, 0 diagnostics, 87 tests in 14 suites,
-every gated file at or above 85 %, MetlaKit 93.14 % of 2,319 lines.
+every gated file at or above 85 %, MetlaKit 93.14 % of 2,319 lines. And at 63b2f52, the final commit
+(01:17 to 01:18 on 2026-11-12): green, 0 diagnostics, 87 tests in 14
+suites, every gated file at or above 85 %, MetlaKit 93.19 % of 2,319
+lines.
 
 ## What no tool checks
 
