@@ -5,6 +5,7 @@
 use std::cell::Cell;
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::num::NonZeroUsize;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixListener;
@@ -342,13 +343,21 @@ fn put(path: &Path, len: usize) {
 
 /// Empties `dir` with a remover of `threads` threads, adding up the bytes
 /// it reports as it goes.
+fn threads_of(n: usize) -> NonZeroUsize {
+    NonZeroUsize::new(n).unwrap()
+}
+
 fn remove_with(dir: &Path, threads: usize) -> (Removal, u64) {
     let handle = DirHandle::open(dir).unwrap();
     let reported = AtomicU64::new(0);
-    let removal =
-        Remover::new(threads).remove_contents(&handle, device(dir), &|| false, &|bytes| {
+    let removal = Remover::new(threads_of(threads)).remove_contents(
+        &handle,
+        device(dir),
+        &|| false,
+        &|bytes| {
             reported.fetch_add(bytes.0, Ordering::Relaxed);
-        });
+        },
+    );
     (removal, reported.into_inner())
 }
 
@@ -452,7 +461,7 @@ fn a_cancelled_parallel_removal_stops_and_says_so() {
     }
     let asked = AtomicU64::new(0);
     let handle = DirHandle::open(&c).unwrap();
-    let removal = Remover::new(4).remove_contents(
+    let removal = Remover::new(threads_of(4)).remove_contents(
         &handle,
         device(&c),
         &|| asked.fetch_add(1, Ordering::Relaxed) >= 20,
@@ -473,7 +482,8 @@ fn the_parallel_removal_leaves_a_directory_on_another_device() {
     let c = fx.dir("c");
     fx.build(&["c/vol/data", "c/file"]);
     let handle = DirHandle::open(&c).unwrap();
-    let removal = Remover::new(4).remove_contents(&handle, device(&c) + 1, &|| false, &|_| {});
+    let removal =
+        Remover::new(threads_of(4)).remove_contents(&handle, device(&c) + 1, &|| false, &|_| {});
     assert_eq!(removal.leftovers.mounts, [PathBuf::from("vol")]);
     assert_eq!(entries(&c), ["vol"]);
     assert!(c.join("vol/data").exists());
@@ -551,8 +561,8 @@ fn the_top_levels_are_emptied_in_parallel_and_the_rest_iteratively() {
     for (depth, parallel) in rows {
         assert_eq!(in_parallel(depth), parallel, "depth {depth}");
     }
-    assert_eq!(Remover::new(0).threads(), 1, "at least one thread");
-    assert_eq!(Remover::new(3).threads(), 3);
+    assert_eq!(Remover::new(threads_of(1)).threads(), Some(1));
+    assert_eq!(Remover::new(threads_of(3)).threads(), Some(3));
 }
 
 /// `name` made unreadable (writable and searchable only), with a file in
@@ -595,8 +605,38 @@ fn a_removal_cancelled_below_the_parallel_levels_keeps_what_it_did_not_reach() {
     let asked = AtomicU64::new(0);
     let cancel = || asked.fetch_add(1, Ordering::SeqCst) >= PARALLEL_DEPTH as u64 + 4;
     let handle = DirHandle::open(&c).unwrap();
-    let removal = Remover::new(2).remove_contents(&handle, device(&c), &cancel, &|_| {});
+    let removal =
+        Remover::new(threads_of(2)).remove_contents(&handle, device(&c), &cancel, &|_| {});
     assert!(removal.leftovers.cancelled);
     assert_eq!(removal.leftovers.failures, 0, "{:?}", removal.leftovers);
     assert!(deep.join("leaf").exists(), "not reached");
+}
+
+/// The subdirectories of the top levels are emptied on more than one
+/// thread: a removal waits (until ten seconds after the start at most)
+/// until another thread has removed something too.
+#[test]
+fn the_top_levels_are_emptied_on_more_than_one_thread() {
+    let fx = Fixture::new();
+    let c = fx.dir("c");
+    for i in 0..8 {
+        put(&c.join(format!("d{i}/f")), 4);
+    }
+    let seen = std::sync::Mutex::new(std::collections::HashSet::new());
+    let arrived = std::sync::Condvar::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let removed = |_| {
+        let mut threads = seen.lock().unwrap();
+        threads.insert(std::thread::current().id());
+        arrived.notify_all();
+        while threads.len() < 2 && std::time::Instant::now() < deadline {
+            let wait = std::time::Duration::from_millis(50);
+            threads = arrived.wait_timeout(threads, wait).unwrap().0;
+        }
+    };
+    let handle = DirHandle::open(&c).unwrap();
+    let remover = Remover::new(threads_of(4));
+    let removal = remover.remove_contents(&handle, device(&c), &|| false, &removed);
+    assert!(removal.leftovers.is_empty());
+    assert!(seen.lock().unwrap().len() >= 2, "one thread did it all");
 }

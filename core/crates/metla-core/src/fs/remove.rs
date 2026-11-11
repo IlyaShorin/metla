@@ -5,6 +5,7 @@
 //! recursion on the stack).
 
 use std::ffi::OsStr;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use rayon::prelude::*;
@@ -79,21 +80,22 @@ pub struct Remover {
 }
 
 impl Remover {
-    /// A remover with `threads` threads (at least one); without a pool
-    /// (the system refused the threads) it empties on the caller's thread.
-    pub fn new(threads: usize) -> Remover {
+    /// A remover with `threads` threads; without a pool (the system
+    /// refused the threads) it empties on the caller's thread.
+    pub fn new(threads: NonZeroUsize) -> Remover {
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(threads.max(1))
+            .num_threads(threads.get())
             .thread_name(|n| format!("metla-remove-{n}"))
             .build();
         Remover { pool: pool.ok() }
     }
 
-    /// The threads it empties directories on.
-    pub fn threads(&self) -> usize {
+    /// The threads of its pool; `None` when it has none and empties on
+    /// the caller's thread.
+    pub fn threads(&self) -> Option<usize> {
         self.pool
             .as_ref()
-            .map_or(1, rayon::ThreadPool::current_num_threads)
+            .map(rayon::ThreadPool::current_num_threads)
     }
 
     /// As `remove_contents`, with the subdirectories of each of the top
@@ -142,6 +144,15 @@ struct Emptied {
     kept: bool,
 }
 
+/// A directory that could be opened but not listed (an I/O error): it
+/// stays, and so does everything above it.
+fn unread(path: PathBuf, error: Errno) -> Emptied {
+    Emptied {
+        removal: failed_at(path, error),
+        kept: true,
+    }
+}
+
 fn failed_at(path: PathBuf, error: Errno) -> Removal {
     let mut removal = Removal::default();
     removal.leftovers.fail(path, error);
@@ -188,12 +199,7 @@ where
     }
     let entries = match list_dir(&dir) {
         Ok(entries) => entries,
-        Err(error) => {
-            return Emptied {
-                removal: failed_at(path, errno(error)),
-                kept: true,
-            };
-        }
+        Err(error) => return unread(path, errno(error)),
     };
     let mut parts = Vec::with_capacity(entries.len());
     let mut stopped = false;
@@ -322,12 +328,7 @@ where
     let mut removal = Removal::default();
     let root = match Frame::open(dir, path.clone()) {
         Ok(root) => root,
-        Err(error) => {
-            return Emptied {
-                removal: failed_at(path, error),
-                kept: true,
-            };
-        }
+        Err(error) => return unread(path, error),
     };
     let mut stack = vec![root];
     loop {

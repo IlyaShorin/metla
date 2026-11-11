@@ -320,12 +320,11 @@ fn clean(
 
 /// The most threads a cleanup empties directories with (measured on the
 /// SSD: docs/PERFORMANCE.md, M7).
-pub const REMOVAL_THREADS: usize = 4;
+pub const REMOVAL_THREADS: std::num::NonZeroUsize = std::num::NonZeroUsize::new(4).unwrap();
 
 /// Threads for a cleanup's removals: the cores, at most `REMOVAL_THREADS`.
-pub fn removal_threads() -> usize {
+pub fn removal_threads() -> std::num::NonZeroUsize {
     std::thread::available_parallelism()
         .unwrap_or(std::num::NonZeroUsize::MIN)
-        .get()
         .min(REMOVAL_THREADS)
 }
