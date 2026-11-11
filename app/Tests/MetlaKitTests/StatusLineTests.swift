@@ -14,7 +14,7 @@ import Testing
     ) -> Freshness {
         Freshness(
             fullScan: 999_000, updated: 999_880, pending: 0, state: state, picture: picture,
-            watching: watching, needsFullScan: needsFullScan)
+            watching: watching, needsFullScan: needsFullScan, fullScansEnded: 1)
     }
 
     func line(_ freshness: Freshness, expected: UInt64? = nil) -> StatusLine {
@@ -53,7 +53,7 @@ import Testing
         #expect(line(freshness(.idle, needsFullScan: true)).tone == .stale)
         #expect(line(freshness(.idle, watching: false)).tone == .stale, "not followed: not current")
         #expect(line(freshness(.idle, picture: .missing)) == StatusLine(text: "Never scanned", tone: .stale, canStop: false))
-        let never = Freshness(fullScan: nil, updated: nil, pending: 0, state: .idle, picture: .complete, watching: true, needsFullScan: false)
+        let never = Freshness(fullScan: nil, updated: nil, pending: 0, state: .idle, picture: .complete, watching: true, needsFullScan: false, fullScansEnded: 1)
         #expect(line(never).text == "Never scanned")
     }
 

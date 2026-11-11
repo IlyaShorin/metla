@@ -111,24 +111,47 @@ import Testing
         }
     }
 
+    /// The user's scan is over once the engine has counted the full scan
+    /// it asked for as ended and no full scan runs, on any timing: a scan
+    /// on a fixture may be over before rescan() returns.
     @Test func aScanTheUserAskedForRunsAsInteractiveUntilItEnds() async throws {
         let model = try await started(Fixture.settings())
         defer { model.stop() }
-        let before = model.overview?.freshness.fullScan
+        let before = try #require(model.freshness).fullScansEnded
         await model.rescan()
-        #expect(model.userScan)
         try await until {
             await model.refresh([.activity])
             return !model.userScan
         }
-        #expect(model.overview?.freshness.fullScan != before || before == nil, "a new full scan")
-        try await until {
-            await model.refresh([.picture])
-            return model.overview?.profile == .background
-        }
+        let after = try #require(model.freshness)
+        #expect(after.fullScansEnded >= before + 1, "the scan asked for ended")
+        #expect(model.overview?.profile == .background, "the profile given back")
         await model.rescan()
         await model.stopScan()
         #expect(!model.userScan, "a stopped scan is over")
+    }
+
+    /// When the user's scan is over, as one table: the engine's count of
+    /// ended full scans has reached the one it waits for, and no full scan
+    /// runs (an update in place is not a scan).
+    @Test func theUsersScanIsOverWhenItsFullScanHasEnded() {
+        func freshness(_ ended: UInt64, _ state: EngineState) -> Freshness {
+            Freshness(fullScan: 1, updated: 1, pending: 0, state: state, picture: .complete, watching: true,
+                      needsFullScan: false, fullScansEnded: ended)
+        }
+        let scanning = EngineState.scanning(progress: ProgressSnapshot(dirs: 1, files: 1, bytes: 1, denied: 0),
+                                            interactive: true)
+        let rows: [(UInt64, Freshness, Bool)] = [
+            (3, freshness(2, .idle), false),
+            (3, freshness(3, .idle), true),
+            (3, freshness(4, .idle), true),
+            (3, freshness(3, scanning), false),
+            (3, freshness(3, .updating(pending: 2)), true),
+            (3, freshness(3, .failed(.noSpace)), true),
+        ]
+        for (target, now, over) in rows {
+            #expect(AppModel.userScanOver(endsAt: target, now) == over, "\(target) \(now.fullScansEnded) \(now.state)")
+        }
     }
 
     /// The refresh that sees the user's scan over leaves the model
@@ -156,7 +179,7 @@ import Testing
     @Test func theFirstScanOfADiskWithoutAPictureIsTheUsers() {
         func freshness(_ state: EngineState, _ picture: Completeness) -> Freshness {
             Freshness(fullScan: nil, updated: nil, pending: 0, state: state, picture: picture, watching: true,
-                      needsFullScan: true)
+                      needsFullScan: true, fullScansEnded: 0)
         }
         let progress = ProgressSnapshot(dirs: 1, files: 1, bytes: 1, denied: 0)
         #expect(AppModel.takesOver(freshness(.scanning(progress: progress, interactive: false), .missing)))

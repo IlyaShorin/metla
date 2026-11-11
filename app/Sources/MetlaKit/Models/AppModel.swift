@@ -77,8 +77,9 @@ public final class AppModel {
     /// Held while a scan the user asked for runs (App Nap is otherwise
     /// left alone).
     private var scanActivity: (any NSObjectProtocol)?
-    private var userScanSeen = false
-    private var userScanFrom: Int64?
+    /// The engine's count of ended full scans at which the user's scan
+    /// is over.
+    private var userScanEndsAt: UInt64?
     public let preferences: any Preferences
     /// The cleanup flow shows in its own window (the main window was
     /// closed when the hotkey asked for it), not as a sheet.
@@ -122,7 +123,7 @@ public final class AppModel {
             volume = await Self.volume(of: settings.root)
             await refresh(Self.everything)
             if let freshness, Self.takesOver(freshness) {
-                await holdUserScan(from: nil)
+                await holdUserScan(endsAt: freshness.fullScansEnded + 1)
             }
             listen(to: client)
         } catch {
@@ -193,7 +194,7 @@ public final class AppModel {
             if topics.contains(.settings) {
                 await hotkeys?.load()
             }
-            if await endUserScanIfOver(topics) {
+            if await endUserScanIfOver() {
                 // The profile was given back: read the engine again, so
                 // this refresh leaves the status and the snapshot saying so.
                 try await readPicture(client)
@@ -299,9 +300,30 @@ public final class AppModel {
 
     /// Refresh (⌘R): a full scan the user asked for, run as Interactive.
     public func rescan() async {
-        await holdUserScan(from: freshness?.fullScan)
-        try? await client?.startScan()
+        guard let client else {
+            return
+        }
+        // Full scans run one after another: the one asked for ends after
+        // the one running now, if any.
+        let now = try? await client.freshness()
+        let running = now.map { Self.scanRuns($0.state) } ?? false
+        await holdUserScan(endsAt: (now?.fullScansEnded ?? 0) + (running ? 2 : 1))
+        do {
+            try await client.startScan()
+        } catch {
+            await endUserScan()
+        }
         await refresh([.activity])
+    }
+
+    /// Whether the user's scan is over: the engine has counted as ended
+    /// the full scan it waits for (`endsAt`), and no full scan runs.
+    static func userScanOver(endsAt: UInt64, _ freshness: Freshness) -> Bool {
+        freshness.fullScansEnded >= endsAt && !scanRuns(freshness.state)
+    }
+
+    private static func scanRuns(_ state: EngineState) -> Bool {
+        if case .scanning = state { true } else { false }
     }
 
     /// Whether the scan running at the start is the one the user waits
@@ -320,10 +342,9 @@ public final class AppModel {
 
     /// From now until the scan ends, the scan is the user's: Interactive,
     /// with an activity held.
-    private func holdUserScan(from fullScan: Int64?) async {
+    private func holdUserScan(endsAt: UInt64) async {
         userScan = true
-        userScanSeen = false
-        userScanFrom = fullScan
+        userScanEndsAt = endsAt
         if scanActivity == nil {
             scanActivity = ProcessInfo.processInfo.beginActivity(
                 options: .userInitiated, reason: "A scan the user asked for")
@@ -331,18 +352,12 @@ public final class AppModel {
         await applyPower()
     }
 
-    /// The user's scan is over once none runs and it was seen running, a
-    /// newer full scan is in the picture, or the picture changed (a scan
-    /// too quick to be seen).
-    /// Whether it ended it.
-    private func endUserScanIfOver(_ topics: Set<Changed>) async -> Bool {
-        guard userScan else { return false }
-        if scanning {
-            userScanSeen = true
+    /// Ends the user's scan once the engine says it is over
+    /// (`userScanOver`); whether it ended it.
+    private func endUserScanIfOver() async -> Bool {
+        guard userScan, let endsAt = userScanEndsAt, let freshness, Self.userScanOver(endsAt: endsAt, freshness) else {
             return false
         }
-        let ended = userScanSeen || freshness?.fullScan != userScanFrom || topics.contains(.picture)
-        guard ended else { return false }
         await endUserScan()
         return true
     }
@@ -352,11 +367,11 @@ public final class AppModel {
     /// ends it too and reads the engine after the profile is back, so no
     /// refresh keeps a snapshot from before.
     private func endUserScan() async {
-        userScanSeen = false
         scanActivity.map(ProcessInfo.processInfo.endActivity)
         scanActivity = nil
         await applyPower(userScan: false)
         userScan = false
+        userScanEndsAt = nil
     }
 
     /// The Mac's power state changed (or is told at the start).
