@@ -15,6 +15,8 @@ final class Bridge {
     }
     @ObservationIgnored var openWindow: OpenWindowAction?
     @ObservationIgnored var openSettings: OpenSettingsAction?
+    /// The Settings window's tab.
+    var settingsTab: SettingsTab = .general
     @ObservationIgnored private var launched = false
     @ObservationIgnored private var hotkeys: HotkeyCenter?
     @ObservationIgnored private var power: PowerMonitor?
@@ -42,7 +44,9 @@ final class Bridge {
         await model.start(trash: trash, login: SystemLoginItem())
         LaunchTiming.firstPicture(print: settings.printLaunchTiming)
         if let directory = settings.capture {
-            let written = await Capture.run(model, into: directory)
+            let written = await Capture.run(model, into: directory) { [weak self] tab in
+                await self?.showSettings(tab)
+            }
             print("capture: \(written) images in \(directory)")
             fflush(stdout)
             // Not NSApp.terminate: with the capture's report sheet up,
@@ -99,6 +103,20 @@ final class Bridge {
             openWindow?(id: "cleanup")
         }
         await model.cleanDefault()
+    }
+
+    /// Opens the Settings window at `tab`; the window once it is up.
+    func showSettings(_ tab: SettingsTab) async -> NSWindow? {
+        settingsTab = tab
+        openSettings?()
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if let window = NSApp.windows.first(where: { $0.isVisible && $0.identifier?.rawValue.contains("Settings") == true }) {
+                return window
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
     }
 
     func closeCleanupWindow() {

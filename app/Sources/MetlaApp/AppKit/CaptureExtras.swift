@@ -16,7 +16,9 @@ import SwiftUI
 /// view is drawn with numbers taken from that preview at its third item.
 @MainActor
 enum CaptureExtras {
-    static func run(_ model: AppModel, into directory: String) async -> Int {
+    static func run(
+        _ model: AppModel, into directory: String, settings: @MainActor (SettingsTab) async -> NSWindow?
+    ) async -> Int {
         guard let cleanup = model.cleanup, let client = model.client else {
             return 0
         }
@@ -61,12 +63,35 @@ enum CaptureExtras {
         shots.append(("hud", AnyView(HUDView(message: hud, strings: strings) {})))
         await model.refresh([.picture, .cleanup])
         shots.append(("menubar", AnyView(MenuBarPanel(model: model, actions: PanelActions()))))
-        for (name, tab) in [("general", SettingsTab.general), ("hotkeys", .hotkeys),
-                            ("exclusions", .exclusions), ("access", .access)] {
-            shots.append(("settings-" + name, AnyView(SettingsView(model: model, tab: tab).frame(height: 520))))
-        }
         shots.append(("firstrun", AnyView(FirstRunSheet(access: model.access, strings: strings))))
-        return await draw(shots, into: directory)
+        return await draw(shots, into: directory) + (await drawSettings(settings, into: directory))
+    }
+
+    /// The real Settings window, each tab, light and dark, title bar and
+    /// toolbar included (a copy of its view in a window of its own drew
+    /// the first row under the window's top edge).
+    static func drawSettings(
+        _ open: @MainActor (SettingsTab) async -> NSWindow?, into directory: String
+    ) async -> Int {
+        var written = 0
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            for (name, tab) in [("general", SettingsTab.general), ("hotkeys", .hotkeys),
+                                ("exclusions", .exclusions), ("access", .access)] {
+                guard let window = await open(tab) else {
+                    continue
+                }
+                await Capture.appear(appearance, window)
+                try? await Task.sleep(for: .milliseconds(800))
+                window.displayIfNeeded()
+                let file = (directory as NSString).appendingPathComponent("settings-\(name)-\(suffix).png")
+                if let png = await Capture.png(of: window, appearance),
+                    (try? png.write(to: URL(fileURLWithPath: file))) != nil
+                {
+                    written += 1
+                }
+            }
+        }
+        return written
     }
 
     /// Everything "Clean…" previews, a blocked worktree, a removable one
@@ -104,12 +129,15 @@ enum CaptureExtras {
                 window.setContentSize(host.fittingSize)
                 window.displayIfNeeded()
                 let file = (directory as NSString).appendingPathComponent("\(name)-\(suffix).png")
-                if let png = Capture.png(of: window), (try? png.write(to: URL(fileURLWithPath: file))) != nil {
+                if let png = await Capture.png(of: window, appearance),
+                    (try? png.write(to: URL(fileURLWithPath: file))) != nil
+                {
                     written += 1
                 }
                 window.orderOut(nil)
             }
         }
+        NSApp.appearance = nil
         return written
     }
 }

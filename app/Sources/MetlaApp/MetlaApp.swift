@@ -50,7 +50,7 @@ struct MetlaApp: App {
         }
         .menuBarExtraStyle(.window)
         Settings {
-            SettingsView(model: model)
+            SettingsView(model: model, chosen: $bridge.settingsTab)
         }
     }
 }

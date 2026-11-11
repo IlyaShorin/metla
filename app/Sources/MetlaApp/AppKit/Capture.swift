@@ -30,7 +30,9 @@ enum Capture {
     static let size = NSSize(width: 1120, height: 720)
 
     /// Renders every screen in both appearances; how many files it wrote.
-    static func run(_ model: AppModel, into directory: String) async -> Int {
+    static func run(
+        _ model: AppModel, into directory: String, settings: @MainActor (SettingsTab) async -> NSWindow?
+    ) async -> Int {
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         await settle(model)
         guard let window = NSApp.windows.first(where: { $0.isVisible }) else {
@@ -44,7 +46,7 @@ enum Capture {
         try? await Task.sleep(for: .seconds(2))
         _ = image(of: window)
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
-            NSApp.appearance = NSAppearance(named: appearance)
+            await appear(appearance, window)
             for (name, screen) in screens {
                 await model.show(screen)
                 await prepare(model, screen)
@@ -53,18 +55,72 @@ enum Capture {
                 window.setContentSize(size)
                 window.displayIfNeeded()
                 let file = (directory as NSString).appendingPathComponent("\(name)-\(suffix).png")
-                if let png = image(of: window), (try? png.write(to: URL(fileURLWithPath: file))) != nil {
+                if let png = await png(of: window, appearance), (try? png.write(to: URL(fileURLWithPath: file))) != nil {
                     written += 1
                 }
             }
         }
         NSApp.appearance = nil
-        return written + (await CaptureExtras.run(model, into: directory))
+        return written + (await CaptureExtras.run(model, into: directory, settings: settings))
     }
 
-    /// One window, painted as `run` paints the main one.
-    static func png(of window: NSWindow) -> Data? {
-        image(of: window)
+    /// Switches the app to `name` and waits until the window has it.
+    /// AppKit hands a new appearance to the views asynchronously (100 ms
+    /// after the switch the frame view still had the old one), and the
+    /// painter paints whatever the layers hold: a picture taken too soon
+    /// shows the old appearance, as the M6 light Overview's dark title
+    /// bar did. The app itself never sets an appearance.
+    static func appear(_ name: NSAppearance.Name, _ window: NSWindow) async {
+        NSApp.appearance = NSAppearance(named: name)
+        let deadline = Date().addingTimeInterval(10)
+        while !has(name, window), Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        window.display()
+        try? await Task.sleep(for: .milliseconds(500))
+    }
+
+    private static func has(_ name: NSAppearance.Name, _ window: NSWindow) -> Bool {
+        let frame = window.contentView?.superview ?? window.contentView
+        return frame?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == name
+    }
+
+    /// One window, painted as `run` paints the main one, once its title
+    /// bar shows `appearance`: a picture whose top band is light in the
+    /// dark appearance (or dark in the light one) is painted again after
+    /// a moment, up to ten times, and reported if it never matches.
+    static func png(of window: NSWindow, _ appearance: NSAppearance.Name) async -> Data? {
+        var picture = image(of: window)
+        for _ in 0..<10 {
+            guard let shown = picture, looksLight(shown) != (appearance == .aqua) else {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            window.display()
+            picture = image(of: window)
+        }
+        if let shown = picture, looksLight(shown) != (appearance == .aqua) {
+            FileHandle.standardError.write(
+                Data("capture: a picture's title bar does not show \(appearance.rawValue)\n".utf8))
+        }
+        return picture.flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
+    }
+
+    /// Whether the picture's top band (its title bar, 28 points at 2x) is
+    /// light: its mean brightness above one half.
+    static func looksLight(_ picture: CGImage) -> Bool {
+        let band = CGRect(x: 0, y: 0, width: picture.width, height: min(56, picture.height))
+        guard let top = picture.cropping(to: band),
+            let context = CGContext(
+                data: nil, width: 32, height: 4, bitsPerComponent: 8, bytesPerRow: 32,
+                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue),
+            let bytes = context.data
+        else {
+            return true
+        }
+        context.draw(top, in: CGRect(x: 0, y: 0, width: 32, height: 4))
+        let gray = UnsafeBufferPointer(start: bytes.assumingMemoryBound(to: UInt8.self), count: 128)
+        return gray.reduce(0) { $0 + Int($1) } > 128 * 128
     }
 
     /// Waits until the first scan is done and the worktrees are known.
@@ -107,7 +163,7 @@ enum Capture {
     /// The whole window, title bar and toolbar included, drawn layer by
     /// layer (`LayerPainter`): SwiftUI draws into layers that neither
     /// `cacheDisplay` nor `CALayer.render(in:)` can draw.
-    private static func image(of window: NSWindow) -> Data? {
+    private static func image(of window: NSWindow) -> CGImage? {
         guard let frame = window.contentView?.superview, let layer = frame.layer else {
             return nil
         }
@@ -142,10 +198,7 @@ enum Capture {
                 context.restoreGState()
             }
         }
-        guard let image = context.makeImage() else {
-            return nil
-        }
-        return NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+        return context.makeImage()
     }
 }
 

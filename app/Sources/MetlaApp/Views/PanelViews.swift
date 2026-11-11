@@ -138,8 +138,9 @@ struct PanelActions {
 /// The Settings window: General, Hotkeys, Exclusions, Access.
 struct SettingsView: View {
     let model: AppModel
-    var tab: SettingsTab = .general
-    @State private var chosen: SettingsTab = .general
+    /// The tab shown: the bridge's, so that whoever opens Settings can
+    /// choose it (the capture shows each tab of the real window).
+    @Binding var chosen: SettingsTab
 
     var body: some View {
         TabView(selection: $chosen) {
