@@ -54,7 +54,10 @@ build="$(cd "${METLA_BUILD:-$repo/target/app}" && pwd -P)"
 version="0.7.0"
 
 lib="$("$repo/scripts/build-core.sh" "$flavour")"
+# Each flavour links in a build directory of its own, so a plain app can
+# never be left linked with the production library (or the other way).
 scratch="$build/swift-build"
+[[ "$name" == release-plain ]] && scratch="$build/swift-build-plain"
 # No local path in a release binary: no debug information (the symbols
 # are stripped anyway), and Swift's file paths mapped to neutral names, as
 # build-core.sh maps Rust's.

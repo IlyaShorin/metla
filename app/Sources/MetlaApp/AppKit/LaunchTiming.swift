@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import MetlaCoreFFI
 import MetlaKit
 
 /// With `METLA_PRINT_LAUNCH_TIMING=1` the app prints how long after the
@@ -8,6 +9,15 @@ import MetlaKit
 enum LaunchTiming {
     @MainActor
     static func firstWindow(print enabled: Bool) {
+        if enabled {
+            #if DEBUG
+                let build = "debug"
+            #else
+                let build = "release"
+            #endif
+            let library = cleansBeyondFixtures() ? "production library: cleans real data" : "plain library: fixtures only"
+            Swift.print("launch: \(build) build, \(library)")
+        }
         report("first window", enabled)
     }
 
