@@ -131,6 +131,22 @@ import Testing
         #expect(!model.userScan, "a stopped scan is over")
     }
 
+    /// The refresh that sees the user's scan over leaves the model
+    /// consistent: the snapshot it keeps already has the profile given
+    /// back, so the status line and the menu-bar panel say "in the
+    /// background" at once, not after some later event.
+    @Test func theRefreshThatEndsTheUsersScanShowsTheProfileGivenBack() async throws {
+        let model = try await started(Fixture.settings())
+        defer { model.stop() }
+        await model.rescan()
+        try await until {
+            await model.refresh([.activity])
+            return !model.userScan
+        }
+        #expect(model.overview?.profile == .background, "read again after the profile was given back")
+        #expect(model.freshness == model.overview?.freshness)
+    }
+
     /// The first scan of a disk without a picture is the one the user
     /// waits for (the first run, a lost index): it runs as the user's
     /// scan, Interactive and holding an activity so that App Nap does not

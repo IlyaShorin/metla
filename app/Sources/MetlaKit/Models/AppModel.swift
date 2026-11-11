@@ -193,7 +193,11 @@ public final class AppModel {
             if topics.contains(.settings) {
                 await hotkeys?.load()
             }
-            await endUserScanIfOver(topics)
+            if await endUserScanIfOver(topics) {
+                // The profile was given back: read the engine again, so
+                // this refresh leaves the status and the snapshot saying so.
+                try await readPicture(client)
+            }
             failure = nil
         } catch {
             failure = String(describing: error)
@@ -330,23 +334,29 @@ public final class AppModel {
     /// The user's scan is over once none runs and it was seen running, a
     /// newer full scan is in the picture, or the picture changed (a scan
     /// too quick to be seen).
-    private func endUserScanIfOver(_ topics: Set<Changed>) async {
-        guard userScan else { return }
+    /// Whether it ended it.
+    private func endUserScanIfOver(_ topics: Set<Changed>) async -> Bool {
+        guard userScan else { return false }
         if scanning {
             userScanSeen = true
-            return
+            return false
         }
         let ended = userScanSeen || freshness?.fullScan != userScanFrom || topics.contains(.picture)
-        guard ended else { return }
+        guard ended else { return false }
         await endUserScan()
+        return true
     }
 
+    /// Gives the profile back first and only then says the user's scan
+    /// is over: a refresh running meanwhile still sees it as the user's,
+    /// ends it too and reads the engine after the profile is back, so no
+    /// refresh keeps a snapshot from before.
     private func endUserScan() async {
-        userScan = false
         userScanSeen = false
         scanActivity.map(ProcessInfo.processInfo.endActivity)
         scanActivity = nil
-        await applyPower()
+        await applyPower(userScan: false)
+        userScan = false
     }
 
     /// The Mac's power state changed (or is told at the start).
@@ -355,13 +365,13 @@ public final class AppModel {
         await applyPower()
     }
 
-    private func applyPower() async {
+    private func applyPower(userScan: Bool? = nil) async {
         guard let client else {
             return
         }
         let kept = await client.settings()
         let profile = power.profile(
-            background: kept.background, reduceOnBattery: kept.reduceOnBattery, userScan: userScan)
+            background: kept.background, reduceOnBattery: kept.reduceOnBattery, userScan: userScan ?? self.userScan)
         try? await client.setPowerProfile(profile)
     }
 
@@ -474,10 +484,11 @@ public final class AppModel {
     /// Stop: cancels the running scan.
     public func stopScan() async {
         await client?.cancelScan()
-        if userScan {
+        let ended = userScan
+        if ended {
             await endUserScan()
         }
-        await refresh([.activity])
+        await refresh(ended ? [.activity, .picture] : [.activity])
     }
 
     /// The window is visible or not: the engine follows changes at once
