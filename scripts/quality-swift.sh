@@ -27,6 +27,15 @@ fail() {
     echo "FAIL: $1"
 }
 
+# Each step writes its log beside the scratch directory. A fresh clone has
+# no target/ yet: make the directory, and stop with an error of its own
+# (exit 2, not a FAIL) when a log cannot be written, since a step whose
+# log could not be written has not run.
+mkdir -p "$(dirname "$scratch")" || { echo "ERROR: cannot make $(dirname "$scratch")"; exit 2; }
+writable() {
+    : >"$1" 2>/dev/null || { echo "ERROR: could not write the log $1"; exit 2; }
+}
+
 echo "== core, bindings and metla-cli"
 lib="$("$repo/scripts/build-core.sh")" || { echo "FAIL: build-core"; exit 1; }
 (cd "$repo/core" && cargo build -q -p metla-cli) || { echo "FAIL: metla-cli"; exit 1; }
@@ -37,6 +46,7 @@ link=(-Xlinker -L"$lib")
 
 echo
 echo "== swift build (Swift 6, strict concurrency, warnings as errors)"
+writable "$scratch.build.log"
 swift build --build-tests --scratch-path "$scratch" -Xswiftc -warnings-as-errors "${link[@]}" \
     >"$scratch.build.log" 2>&1
 code=$?
@@ -46,6 +56,7 @@ echo "exit $code, diagnostics $diagnostics"
 
 echo
 echo "== swift test --enable-code-coverage"
+writable "$scratch.test.log"
 swift test --scratch-path "$scratch" --enable-code-coverage -Xswiftc -warnings-as-errors "${link[@]}" \
     >"$scratch.test.log" 2>&1
 code=$?
@@ -54,6 +65,7 @@ grep -E "^✔ Test run|^✘ Test run|recorded an issue" "$scratch.test.log"
 
 echo
 echo "== line coverage of MetlaKit (llvm-cov)"
+writable "$scratch.coverage.txt"
 data="$(swift test --scratch-path "$scratch" --show-codecov-path "${link[@]}" 2>/dev/null)"
 profile="$(dirname "$data")/default.profdata"
 binary="$(dirname "$(dirname "$data")")/MetlaPackageTests.xctest/Contents/MacOS/MetlaPackageTests"

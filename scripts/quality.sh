@@ -13,6 +13,9 @@
 #   UB_TOOLS                 tool checkout root (default ~/.local/share/ub-tools)
 #   CRAPPER, DRYER, MUTATOR  override a single tool's executable
 #   MUTATE_ALL=1             rerun every mutant, not only changed functions
+#   QUALITY_STEPS=tests      stop after the tests and the stability runs
+#                            (fmt, clippy, tests, slow tests, stability):
+#                            a quick check, not the gate
 #   STABLE_RUNS              how many times in a row the fast suite must pass
 #                            before the mutator runs (default 5)
 #   MUTATOR_WORKERS          parallel mutants per file (default 2: every
@@ -124,6 +127,20 @@ done
 while IFS= read -r log; do
     full "a full disk in $(basename "$log")"
 done < <(full_disk_logs "$log_dir"/test.txt "$log_dir"/slow.txt "$log_dir"/stable-*.txt)
+
+if [[ "${QUALITY_STEPS:-all}" == tests ]]; then
+    section "result (QUALITY_STEPS=tests: crapper, dryer and mutator not run)"
+    if [[ ${#disk_full[@]} -gt 0 ]]; then
+        printf 'disk full: %s\n' "${disk_full[@]}"
+        exit 3
+    fi
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        printf 'failed: %s\n' "${failed[@]}"
+        exit 1
+    fi
+    echo "tests green"
+    exit 0
+fi
 
 section "crapper (CRAP < $crap_limit)"
 "$crapper" core >"$log_dir/crap.txt" 2>&1 || fail "crapper run"
