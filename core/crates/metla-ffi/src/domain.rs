@@ -216,6 +216,7 @@ pub struct Freshness {
     pub picture: Completeness,
     pub watching: bool,
     pub needs_full_scan: bool,
+    pub full_scans_ended: u64,
 }
 
 #[uniffi::remote(Record)]

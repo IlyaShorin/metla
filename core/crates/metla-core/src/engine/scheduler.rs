@@ -387,8 +387,10 @@ impl Scheduler {
             self.verify(None);
             self.mark_events();
         }
-        *lock(&self.shared.scan) = None;
+        // Counted before it stops showing as running: a reader that sees
+        // no scan running sees this one counted.
         self.shared.count(|c| c.full_scans += 1);
+        *lock(&self.shared.scan) = None;
         let cancelled = control.is_cancelled();
         if finished {
             self.shared.update(|s| s.needs_full_scan = cancelled);

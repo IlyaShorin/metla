@@ -171,6 +171,7 @@ fn freshness() -> Freshness {
         picture: Completeness::Partial,
         watching: true,
         needs_full_scan: false,
+        full_scans_ended: 0,
     }
 }
 

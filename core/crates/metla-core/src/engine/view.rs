@@ -94,6 +94,10 @@ pub struct Freshness {
     /// Only a full scan can make the picture right again (lost history,
     /// an interrupted scan, a scan never made).
     pub needs_full_scan: bool,
+    /// Full scans that ended since the engine opened, completed,
+    /// cancelled or failed: whoever started one knows it is over when this
+    /// has grown and no scan runs.
+    pub full_scans_ended: u64,
 }
 
 impl Freshness {

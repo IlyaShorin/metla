@@ -204,6 +204,32 @@ fn a_root_and_home_named_through_a_symbolic_link_are_read_as_the_directories_the
     assert_eq!(offered(&engine, &place), expected.map(String::from).into());
 }
 
+/// Every full scan that ended since the engine opened is counted in its
+/// freshness, whatever way it ended, so whoever asked for one can tell
+/// when it is over: a completed and a cancelled scan count one each; an
+/// update in place and a page of worktrees (Git's statuses) count none.
+#[test]
+fn freshness_counts_the_full_scans_that_ended_and_nothing_else() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    settled(&engine);
+    let ended = |e: &Engine| e.freshness().unwrap().full_scans_ended;
+    assert_eq!(ended(&engine), 1, "the first scan");
+    engine.start_scan().unwrap();
+    until(&engine, |e| ended(e) == 2);
+    settled(&engine);
+    engine.changed(vec![place.path("~/Documents")]).unwrap();
+    until(&engine, |e| e.counters().tasks >= 1);
+    settled(&engine);
+    engine.candidates(Some(Category::GitWorktree), ALL).unwrap();
+    settled(&engine);
+    assert_eq!(ended(&engine), 2, "an update and a page of worktrees");
+    engine.start_scan().unwrap();
+    engine.cancel_scan();
+    until(&engine, |e| ended(e) == 3);
+    assert_eq!(ended(&engine), engine.counters().full_scans);
+}
+
 #[test]
 fn a_first_opening_scans_and_a_later_one_answers_from_the_saved_picture() {
     let place = Place::new(HOME);
@@ -1208,6 +1234,11 @@ fn a_scan_that_runs_out_of_disk_space_fails_and_the_picture_stays() {
     engine.start_scan().unwrap();
     let failed = EngineState::Failed(Failure::NoSpace);
     until(&engine, |e| e.freshness().unwrap().state == failed);
+    assert_eq!(
+        engine.freshness().unwrap().full_scans_ended,
+        1,
+        "a failed scan ended too"
+    );
     let after = engine.snapshot().unwrap();
     assert_eq!(after.totals, before.totals, "the old picture");
     assert_eq!(after.freshness.picture, Completeness::Complete);

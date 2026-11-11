@@ -404,6 +404,7 @@ impl Engine {
             picture: completeness,
             watching: status.watching,
             needs_full_scan: status.needs_full_scan,
+            full_scans_ended: self.counters().full_scans,
         }
     }
 
