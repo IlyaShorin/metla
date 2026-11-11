@@ -28,11 +28,49 @@ public struct ReportRow: Identifiable, Equatable, Sendable {
     /// "Removed", "Skipped: not confirmed", "Failed: …"
     public let outcome: String
     public let kind: OutcomeKind
-    /// Something stayed or went wrong: shown by the "problems only"
-    /// filter, with Reveal in Finder for what remains.
-    public let problem: Bool
+    /// Its mark, and whether the "problems only" filter shows it.
+    public let tone: ReportTone
     /// Leftover paths and their errors, for a partial removal.
     public let details: [String]
+
+    /// Something stayed or went wrong: shown by the "problems only"
+    /// filter, with Reveal in Finder for what remains.
+    public var problem: Bool {
+        tone == .problem
+    }
+}
+
+/// How a report marks an item.
+public enum ReportTone: Equatable, Sendable {
+    /// Done as asked: removed, moved to the Trash, or already gone.
+    case done
+    /// Left alone because the user chose so: not confirmed, or cancelled.
+    case untouched
+    /// Something stayed or went wrong: skipped by a check, partly
+    /// removed, failed.
+    case problem
+
+    init(_ outcome: Outcome) {
+        switch outcome {
+        case .removed, .alreadyGone, .movedToTrash: self = .done
+        case .skipped(.notConfirmed), .skipped(.cancelled): self = .untouched
+        case .partial, .skipped, .failed: self = .problem
+        }
+    }
+}
+
+/// "Freed on disk" as a report shows it: a measured change of the
+/// volume's free space that is zero or negative is not a freed amount.
+public enum FreedOnDisk: Equatable, Sendable {
+    /// The volume's free space grew by this much.
+    case grew(UInt64)
+    /// It stayed or shrank: other programs wrote meanwhile, or clones and
+    /// snapshots still hold the blocks.
+    case didNotGrow
+
+    init(_ measured: Int64) {
+        self = measured > 0 ? .grew(UInt64(measured)) : .didNotGrow
+    }
 }
 
 /// A cleanup's report as the report sheet and "Last report" show it: the
@@ -66,23 +104,45 @@ public struct ReportData: Equatable, Sendable {
         ReportRow(
             id: item.candidate, path: item.path, shownPath: Format.path(item.path, home: home),
             rule: names.rule(item.rule), found: item.found, removed: item.removed,
-            outcome: names.outcome(item.outcome), kind: OutcomeKind(item.outcome), problem: problem(item.outcome),
-            details: details(item.outcome, home: home))
+            outcome: names.outcome(item.outcome), kind: OutcomeKind(item.outcome), tone: ReportTone(item.outcome),
+            details: details(item.outcome, names: names, home: home))
     }
 
-    static func problem(_ outcome: Outcome) -> Bool {
-        switch outcome {
-        case .removed, .alreadyGone, .movedToTrash: false
-        case .partial, .skipped, .failed: true
-        }
-    }
-
-    static func details(_ outcome: Outcome, home: String) -> [String] {
+    /// What a partial removal left: each path with why, the errno as a
+    /// detail, and the other volumes left as they are.
+    static func details(_ outcome: Outcome, names: Names, home: String) -> [String] {
         guard case .partial(let left) = outcome else {
             return []
         }
-        let failed = left.first.map { "\(Format.path($0.path, home: home)) (errno \($0.errno))" }
-        return failed + left.mounts.map { Format.path($0, home: home) }
+        let strings = names.strings
+        let failed = left.first.map { failed in
+            strings.format(
+                "report.leftover", Format.path(failed.path, home: home), names.errno(failed.errno), Int(failed.errno))
+        }
+        return failed + left.mounts.map { strings.format("report.leftoverMount", Format.path($0, home: home)) }
+    }
+
+    /// "Freed on disk": the growth of the volume's free space, if it grew.
+    public var freedOnDisk: FreedOnDisk {
+        FreedOnDisk(freed)
+    }
+
+    /// The figure under "Freed on disk": an amount, or a dash when the
+    /// free space did not grow (never a negative amount).
+    public func freedFigure(_ strings: Strings) -> String {
+        switch freedOnDisk {
+        case .grew(let bytes): Format.bytes(bytes, strings)
+        case .didNotGrow: "\u{2014}"
+        }
+    }
+
+    /// The sentence under the numbers: why the freed amount may differ
+    /// from what was removed, or why the free space did not grow.
+    public func freedNote(_ strings: Strings) -> String {
+        switch freedOnDisk {
+        case .grew: strings.text("report.freedNote")
+        case .didNotGrow: strings.text("report.notGrown")
+        }
     }
 
     /// The rows the "problems only" filter shows, or all of them.

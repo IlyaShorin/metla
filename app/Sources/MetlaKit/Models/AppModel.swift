@@ -431,8 +431,11 @@ public final class AppModel {
         var lines = [
             strings.format("hud.found", Format.bytes(report.found, strings)),
             strings.format("hud.removed", Format.bytes(report.removed, strings)),
-            strings.format("hud.freed", Format.bytes(UInt64(max(0, report.freed)), strings)),
         ]
+        switch report.freedOnDisk {
+        case .grew(let bytes): lines.append(strings.format("hud.freed", Format.bytes(bytes, strings)))
+        case .didNotGrow: lines.append(strings.text("hud.notGrown"))
+        }
         if report.problems > 0 {
             lines.append(strings.format("hud.problems", report.problems))
         }

@@ -111,6 +111,17 @@ public struct Names: Sendable {
         }
     }
 
+    /// Why an entry could not be removed, by its errno's kind; the number
+    /// itself is shown beside it as a detail.
+    public func errno(_ code: Errno) -> String {
+        switch code {
+        case EACCES, EPERM: strings.text("errno.permission")
+        case EBUSY: strings.text("errno.busy")
+        case EROFS: strings.text("errno.readOnly")
+        default: strings.text("errno.other")
+        }
+    }
+
     /// What happened to one item, in a few words.
     public func outcome(_ outcome: Outcome) -> String {
         switch outcome {

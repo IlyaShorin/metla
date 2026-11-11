@@ -264,7 +264,7 @@ struct ReportView: View {
                 Text(strings.format("report.notRun", reason)).foregroundStyle(.secondary)
             } else {
                 numbers
-                Text(strings.text("report.freedNote"))
+                Text(report.freedNote(strings))
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if report.movedToTrash > 0 {
@@ -289,13 +289,8 @@ struct ReportView: View {
         HStack(spacing: 24) {
             number(strings.text("report.found"), Format.bytes(report.found, strings))
             number(strings.text("report.removed"), Format.bytes(report.removed, strings))
-            number(strings.text("report.freed"), freed)
+            number(strings.text("report.freed"), report.freedFigure(strings))
         }
-    }
-
-    private var freed: String {
-        let size = Format.bytes(report.freed.magnitude, strings)
-        return report.freed < 0 ? "\u{2212}" + size : size
     }
 
     private func number(_ title: String, _ value: String) -> some View {
@@ -313,9 +308,9 @@ struct ReportLine: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(row.problem ? "!" : "\u{2713}")
+            Text(mark)
                 .fontWeight(.bold).frame(width: 14)
-                .foregroundStyle(row.problem ? Color.orange : Color.green)
+                .foregroundStyle(tint)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 0) {
                 Text(row.shownPath)
@@ -328,13 +323,30 @@ struct ReportLine: View {
             }
             Spacer(minLength: 8)
             Text(Format.bytes(row.found, strings)).monospacedDigit().foregroundStyle(.secondary)
-            if row.problem {
+            if row.tone != .done {
                 Button(strings.text("report.reveal")) { Finder.reveal([row.path]) }
                     .buttonStyle(.link)
                     .disabled(!FileManager.default.fileExists(atPath: row.path))
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// Done, left alone by the user's choice, or a problem.
+    private var mark: String {
+        switch row.tone {
+        case .done: "\u{2713}"
+        case .untouched: "\u{2013}"
+        case .problem: "!"
+        }
+    }
+
+    private var tint: Color {
+        switch row.tone {
+        case .done: .green
+        case .untouched: .secondary
+        case .problem: .orange
+        }
     }
 }
 

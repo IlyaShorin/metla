@@ -64,7 +64,8 @@ import Testing
         let report = try #require(cleanup.report)
         let skipped = report.rows.filter { $0.outcome == "Skipped: not confirmed" }
         #expect(skipped.count == 3, "two log folders and the Trash")
-        #expect(report.problems == 3 && report.rows(problemsOnly: true).count == 3)
+        #expect(skipped.allSatisfy { $0.tone == .untouched }, "not confirming is the user's choice")
+        #expect(report.problems == 0 && report.rows(problemsOnly: true).isEmpty)
     }
 
     @Test func theButtonWaitsForASeparateGroupToBeChecked() async throws {

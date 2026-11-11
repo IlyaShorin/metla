@@ -140,6 +140,13 @@
 "report.freed" = "Freed on disk";
 "report.freedNote" = "Measured on the volume, so it can differ from what was removed: APFS clones and snapshots keep space, and other apps write meanwhile.";
 "report.trash" = "%@ moved to the Trash, not freed until the Trash is emptied";
+"report.notGrown" = "The volume's free space did not grow during the cleanup: other programs wrote to it meanwhile, or APFS clones and snapshots still hold the removed blocks.";
+"report.leftover" = "%1$@: %2$@ (errno %3$d)";
+"report.leftoverMount" = "%@: another volume, left as it is";
+"errno.permission" = "no permission";
+"errno.busy" = "in use";
+"errno.readOnly" = "read-only volume";
+"errno.other" = "could not be removed";
 "report.problemsOnly" = "Problems only";
 "report.reveal" = "Reveal in Finder";
 "report.notRun" = "The cleanup did not run: %@";
@@ -170,6 +177,7 @@
 "hud.removed" = "Removed %@";
 "hud.freed" = "Freed %@";
 "hud.busy" = "A cleanup is running; this press is ignored";
+"hud.notGrown" = "Free space did not grow";
 "hud.noPicture" = "No picture of the disk yet";
 "hud.nothing" = "Nothing to clean";
 "hud.notRun" = "Nothing was cleaned";
