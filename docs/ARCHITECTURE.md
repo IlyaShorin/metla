@@ -155,7 +155,10 @@ inode's change time in nanoseconds), `RescanTask` (`Shallow(dir)`,
 or `Blocked(Reasons)`, never both, the reasons never empty),
 `CleanupPreview` (id, items with warnings, rejected candidates with the
 reason), `Outcome` (`Removed`, `Partial(Leftovers)`, `Skipped(SkipReason)`,
-`Failed`, `AlreadyGone`, `MovedToTrash`) and `CleanupReport` (per-item
+`Failed(ActionFailure)`, `AlreadyGone`, `MovedToTrash`; a failure by
+kind — `Unlisted`, `TrashRefused { refused, of, said }`,
+`GitRefused(said)` — so the app names it in its own language and shows
+what the Trash or Git said as a detail) and `CleanupReport` (per-item
 found and removed bytes and outcome, free space before and after; found,
 removed and measured freed are three sums of three measurements).
 
@@ -727,11 +730,12 @@ inode, and the marker, are checked again every time it executes.
      `FileManager.trashItem`, so "Put Back" works; tests and the CLI: a
      fixture's own trash directory) — the directory, or its entries when
      the rule keeps it. `MovedToTrash` counts in found, not in removed; a
-     host refusal is `Failed`.
+     host refusal is `Failed(TrashRefused)` with how many of how many
+     entries and the host's first refusal.
    * `GitWorktreeRemove`: the tree is surveyed (bytes, newest change), the
      status is recomputed with that fresh activity, and only `Removable`
      proceeds, through `git worktree remove` in the main repository; Git's
-     refusal is `Failed` with its message. Removed bytes are the survey
+     refusal is `Failed(GitRefused)` with its message. Removed bytes are the survey
      before minus a survey after.
 5. **Report.** Per item: found (the estimate), removed (measured as
    unlinked), outcome. Overall: found, removed, moved to the Trash, and

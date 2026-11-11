@@ -157,6 +157,9 @@
 "outcome.gone" = "Already gone";
 "outcome.trash" = "Moved to the Trash";
 "outcome.failed" = "Failed: %@";
+"failure.unlisted" = "its contents could not be listed";
+"failure.trash" = "%1$d of %2$d not moved to the Trash";
+"failure.git" = "Git did not remove the worktree";
 "outcome.skipped" = "Skipped: %@";
 "outcome.partialCancelled" = "Partly removed: cancelled";
 "skip.notConfirmed" = "not confirmed";

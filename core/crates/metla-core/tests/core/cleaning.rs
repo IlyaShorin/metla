@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use metla_core::clean::{CleanControl, CleanError, Cleaner, Context, FIXTURE_MARKER, TrashHost};
 use metla_core::domain::{
-    Bytes, Confirmation, DirId, Group, Outcome, PreviewId, QuickCategory, Rejection, Separate,
-    SkipReason, Tally, Warning,
+    ActionFailure, Bytes, Confirmation, DirId, Group, Outcome, PreviewId, QuickCategory, Rejection,
+    Separate, SkipReason, Tally, Warning,
 };
 
 use crate::repo::{next_year, now, tree_state};
@@ -323,14 +323,13 @@ fn a_trash_that_refuses_fails_the_item_and_keeps_it() {
     world.trash.refuse = true;
     let report = world.clean(&[LOGS, REPORTS], &all_groups());
     let outcomes = outcomes(&report, world.fx.root());
-    assert_eq!(
-        outcomes[LOGS],
-        Outcome::Failed("1 of 1 not moved to the Trash: the Trash said no".into())
-    );
-    assert_eq!(
-        outcomes[REPORTS],
-        Outcome::Failed("1 of 1 not moved to the Trash: the Trash said no".into())
-    );
+    let refused = Outcome::Failed(ActionFailure::TrashRefused {
+        refused: 1,
+        of: 1,
+        said: "the Trash said no".into(),
+    });
+    assert_eq!(outcomes[LOGS], refused);
+    assert_eq!(outcomes[REPORTS], refused);
     assert!(world.path(LOGS).join("today.log").exists());
 }
 

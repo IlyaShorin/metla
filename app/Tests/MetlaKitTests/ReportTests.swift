@@ -51,7 +51,7 @@ import Testing
     @Test func notConfirmingOrCancellingIsTheUsersChoiceNotAProblem() {
         let items = [
             Self.item(1, .removed), Self.item(2, .skipped(.notConfirmed)), Self.item(3, .skipped(.cancelled)),
-            Self.item(4, .skipped(.replaced)), Self.item(5, .failed("no")), Self.item(6, .movedToTrash),
+            Self.item(4, .skipped(.replaced)), Self.item(5, .failed(.unlisted)), Self.item(6, .movedToTrash),
             Self.item(7, .partial(Leftover(failures: 1, first: [], mounts: [], cancelled: false))),
             Self.item(8, .alreadyGone),
         ]
@@ -59,6 +59,25 @@ import Testing
         #expect(report.rows.map(\.tone) == [.done, .untouched, .untouched, .problem, .problem, .done, .problem, .done])
         #expect(report.rows(problemsOnly: true).map(\.id) == [4, 5, 7])
         #expect(report.problems == 3)
+    }
+
+    @Test func aFailureIsNamedByItsKindAndWhatTheTrashOrGitSaidIsADetail() {
+        let items = [
+            Self.item(1, .failed(.trashRefused(refused: 1, of: 2, said: "Permission denied"))),
+            Self.item(2, .failed(.gitRefused("fatal: not today"))),
+            Self.item(3, .failed(.unlisted)),
+        ]
+        let russian = Self.report(items, freed: 1, names: Self.russian).rows
+        #expect(russian.map(\.outcome) == [
+            "Ошибка: 1 из 2 не перемещено в Корзину", "Ошибка: Git не удалил worktree",
+            "Ошибка: не удалось прочитать содержимое",
+        ])
+        #expect(russian.map(\.details) == [["Permission denied"], ["fatal: not today"], []])
+        let english = Self.report(items, freed: 1).rows.map(\.outcome)
+        #expect(english == [
+            "Failed: 1 of 2 not moved to the Trash", "Failed: Git did not remove the worktree",
+            "Failed: its contents could not be listed",
+        ])
     }
 
     @Test func whatStayedIsNamedWithItsReasonInTheReportsLanguageAndTheErrnoAsADetail() {

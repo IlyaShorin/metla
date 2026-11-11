@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 use metla_cli::{Cleaned, clean_text, outcome_text};
 use metla_core::domain::{
-    Bytes, Candidate, CleanupPreview, CleanupReport, DirId, Errno, ItemReport, Leftovers, Manager,
-    Outcome, PreviewId, PreviewItem, Reason, Rejected, Rejection, RuleId, SkipReason, Warning,
-    WorktreeStatus,
+    ActionFailure, Bytes, Candidate, CleanupPreview, CleanupReport, DirId, Errno, ItemReport,
+    Leftovers, Manager, Outcome, PreviewId, PreviewItem, Reason, Rejected, Rejection, RuleId,
+    SkipReason, Warning, WorktreeStatus,
 };
 
 fn candidate(id: i64, path: &str, rule: &str, bytes: u64) -> Candidate {
@@ -195,7 +195,22 @@ fn every_outcome_says_what_happened() {
             Outcome::Partial(Leftovers::default()),
             "partly removed: 0 entries and 0 other volumes left",
         ),
-        (Outcome::Failed("git said no".into()), "failed: git said no"),
+        (
+            Outcome::Failed(ActionFailure::GitRefused("git said no".into())),
+            "failed: Git did not remove it: git said no",
+        ),
+        (
+            Outcome::Failed(ActionFailure::TrashRefused {
+                refused: 1,
+                of: 2,
+                said: "no".into(),
+            }),
+            "failed: 1 of 2 not moved to the Trash: no",
+        ),
+        (
+            Outcome::Failed(ActionFailure::Unlisted),
+            "failed: its contents could not be listed",
+        ),
         (Outcome::AlreadyGone, "already gone"),
         (Outcome::MovedToTrash, "moved to Trash"),
         (

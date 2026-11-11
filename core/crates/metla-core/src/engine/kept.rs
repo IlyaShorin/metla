@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use crate::domain::{
-    Bytes, CleanupReport, DirId, Errno, ItemReport, Leftovers, Manager, Outcome, PreviewId, Reason,
-    RuleId, SkipReason, WorktreeStatus,
+    ActionFailure, Bytes, CleanupReport, DirId, Errno, ItemReport, Leftovers, Manager, Outcome,
+    PreviewId, Reason, RuleId, SkipReason, WorktreeStatus,
 };
 
 /// The reasons to skip an item that carry nothing, by their code.
@@ -138,7 +138,10 @@ fn outcome_fields(outcome: &Outcome, fields: &mut Vec<Vec<u8>>) {
         Outcome::Removed => fields.push(text("removed")),
         Outcome::AlreadyGone => fields.push(text("gone")),
         Outcome::MovedToTrash => fields.push(text("trash")),
-        Outcome::Failed(why) => fields.extend([text("failed"), text(why)]),
+        Outcome::Failed(failure) => {
+            fields.push(text("failed"));
+            failure_fields(failure, fields);
+        }
         Outcome::Skipped(reason) => {
             fields.push(text("skipped"));
             skip_fields(reason, fields);
@@ -152,6 +155,18 @@ fn outcome_fields(outcome: &Outcome, fields: &mut Vec<Vec<u8>>) {
             let mounts = left.mounts.iter();
             fields.extend(mounts.map(|m| m.as_os_str().as_bytes().to_vec()));
         }
+    }
+}
+
+/// A failure's kind, then what it carries: the counts and the Trash's
+/// words, or Git's.
+fn failure_fields(failure: &ActionFailure, fields: &mut Vec<Vec<u8>>) {
+    match failure {
+        ActionFailure::Unlisted => fields.push(text("unlisted")),
+        ActionFailure::TrashRefused { refused, of, said } => {
+            fields.extend([text("trash"), text(refused), text(of), text(said)])
+        }
+        ActionFailure::GitRefused(said) => fields.extend([text("git"), text(said)]),
     }
 }
 
@@ -249,20 +264,34 @@ fn outcome(fields: &mut Fields) -> Option<Outcome> {
     match tag.as_str() {
         "skipped" => skip(fields).map(Outcome::Skipped),
         "partial" => leftovers(fields).map(Outcome::Partial),
+        "failed" => failure(fields).map(Outcome::Failed),
         _ => plain(&tag, fields),
     }
 }
 
-/// An outcome that carries at most a message.
+/// An outcome that carries nothing.
 fn plain(tag: &str, fields: &mut Fields) -> Option<Outcome> {
     let outcome = match tag {
         "removed" => Outcome::Removed,
         "gone" => Outcome::AlreadyGone,
         "trash" => Outcome::MovedToTrash,
-        "failed" => Outcome::Failed(fields.text()?),
         _ => return None,
     };
     fields.end().map(|()| outcome)
+}
+
+fn failure(fields: &mut Fields) -> Option<ActionFailure> {
+    let failure = match fields.text()?.as_str() {
+        "unlisted" => ActionFailure::Unlisted,
+        "trash" => ActionFailure::TrashRefused {
+            refused: fields.number()?,
+            of: fields.number()?,
+            said: fields.text()?,
+        },
+        "git" => ActionFailure::GitRefused(fields.text()?),
+        _ => return None,
+    };
+    fields.end().map(|()| failure)
 }
 
 fn skip(fields: &mut Fields) -> Option<SkipReason> {

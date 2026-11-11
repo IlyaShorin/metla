@@ -122,13 +122,23 @@ public struct Names: Sendable {
         }
     }
 
+    /// Why acting on an item failed, by its kind; what the Trash or Git
+    /// said is the report's detail.
+    public func failure(_ failure: ActionFailure) -> String {
+        switch failure {
+        case .unlisted: strings.text("failure.unlisted")
+        case .trashRefused(let refused, let of, _): strings.format("failure.trash", Int(refused), Int(of))
+        case .gitRefused: strings.text("failure.git")
+        }
+    }
+
     /// What happened to one item, in a few words.
     public func outcome(_ outcome: Outcome) -> String {
         switch outcome {
         case .removed: strings.text("outcome.removed")
         case .alreadyGone: strings.text("outcome.gone")
         case .movedToTrash: strings.text("outcome.trash")
-        case .failed(let why): strings.format("outcome.failed", why)
+        case .failed(let failure): strings.format("outcome.failed", self.failure(failure))
         case .skipped(let reason): strings.format("outcome.skipped", skip(reason))
         case .partial(let left): left.cancelled && left.failures == 0
             ? strings.text("outcome.partialCancelled")

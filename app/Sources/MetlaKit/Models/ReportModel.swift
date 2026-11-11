@@ -109,11 +109,20 @@ public struct ReportData: Equatable, Sendable {
     }
 
     /// What a partial removal left: each path with why, the errno as a
-    /// detail, and the other volumes left as they are.
+    /// detail, and the other volumes left as they are; for a failure, what
+    /// the Trash or Git said.
     static func details(_ outcome: Outcome, names: Names, home: String) -> [String] {
-        guard case .partial(let left) = outcome else {
+        switch outcome {
+        case .failed(.trashRefused(_, _, let said)), .failed(.gitRefused(let said)):
+            return [said]
+        case .partial(let left):
+            return leftovers(left, names: names, home: home)
+        default:
             return []
         }
+    }
+
+    static func leftovers(_ left: Leftover, names: Names, home: String) -> [String] {
         let strings = names.strings
         let failed = left.first.map { failed in
             strings.format(

@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 use metla_core::domain::{
-    Bytes, Candidate, Category, CleanupReport, Confirmation, DirId, Errno, Group, ItemReport,
-    Leftovers, Manager, Outcome, PreviewId, PreviewItem, RuleId, Separate, SkipReason,
+    ActionFailure, Bytes, Candidate, Category, CleanupReport, Confirmation, DirId, Errno, Group,
+    ItemReport, Leftovers, Manager, Outcome, PreviewId, PreviewItem, RuleId, Separate, SkipReason,
 };
 
 fn item(rule: &str, managed: Option<Manager>) -> PreviewItem {
@@ -88,7 +88,7 @@ fn only_a_skipped_item_is_known_to_be_unchanged() {
     let changed = [
         Outcome::Removed,
         Outcome::Partial(Leftovers::default()),
-        Outcome::Failed("x".into()),
+        Outcome::Failed(ActionFailure::Unlisted),
         Outcome::AlreadyGone,
         Outcome::MovedToTrash,
     ];

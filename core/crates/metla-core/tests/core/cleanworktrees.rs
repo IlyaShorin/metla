@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use metla_core::clean::Cleaner;
 use metla_core::domain::{
-    Confirmation, Group, Manager, Outcome, Reason, Rejection, Separate, SkipReason, Warning,
+    ActionFailure, Confirmation, Group, Manager, Outcome, Reason, Rejection, Separate, SkipReason,
+    Warning,
 };
 use metla_core::git::Git;
 
@@ -144,7 +145,9 @@ fn what_git_refuses_is_a_failure_with_its_message() {
     let report = world.execute(&mut cleaner, &preview, &worktrees_only(), &[]);
     assert_eq!(
         report.items[0].outcome,
-        Outcome::Failed("git exited with 128: fatal: not today".into())
+        Outcome::Failed(ActionFailure::GitRefused(
+            "git exited with 128: fatal: not today".into()
+        ))
     );
     assert_eq!(report.items[0].removed.0, 0);
     assert_eq!(tree_state(&world.path("wt")), before);

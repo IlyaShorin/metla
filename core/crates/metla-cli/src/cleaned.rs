@@ -5,8 +5,8 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 use metla_core::domain::{
-    CleanupPreview, CleanupReport, Group, Manager, Outcome, Reason, Reasons, Rejection, Separate,
-    SkipReason, Warning,
+    ActionFailure, CleanupPreview, CleanupReport, Group, Manager, Outcome, Reason, Reasons,
+    Rejection, Separate, SkipReason, Warning,
 };
 
 use crate::format::{bytes, count, signed_bytes};
@@ -85,6 +85,16 @@ fn skip_text(reason: &SkipReason) -> String {
     }
 }
 
+fn failure_text(failure: &ActionFailure) -> String {
+    match failure {
+        ActionFailure::Unlisted => "its contents could not be listed".into(),
+        ActionFailure::TrashRefused { refused, of, said } => {
+            format!("{refused} of {of} not moved to the Trash: {said}")
+        }
+        ActionFailure::GitRefused(said) => format!("Git did not remove it: {said}"),
+    }
+}
+
 pub fn outcome_text(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Removed => "removed".into(),
@@ -95,7 +105,7 @@ pub fn outcome_text(outcome: &Outcome) -> String {
             if left.cancelled { ", cancelled" } else { "" }
         ),
         Outcome::Skipped(reason) => format!("skipped: {}", skip_text(reason)),
-        Outcome::Failed(why) => format!("failed: {why}"),
+        Outcome::Failed(failure) => format!("failed: {}", failure_text(failure)),
         Outcome::AlreadyGone => "already gone".into(),
         Outcome::MovedToTrash => "moved to Trash".into(),
     }

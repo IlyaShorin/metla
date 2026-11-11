@@ -118,7 +118,19 @@ may differ) — then "moved to the Trash, not freed until the Trash is
 emptied" where applicable, a "Problems only" filter and per-item
 outcomes (Removed, Partly removed with what stayed, Skipped + reason,
 Failed + error, Already gone, Moved to the Trash) with Reveal in Finder
-for what remains.
+for what remains. Freed space that did not grow (zero or less) is said
+in words, never shown as a negative amount. Reasons are named by kind
+in the app's language (what stayed: no permission, in use, read-only
+volume; a failure: not moved to the Trash, Git did not remove the
+worktree), with the errno or the Trash's or Git's own words as a
+detail. Items left unconfirmed or cancelled carry a neutral mark and
+are not problems; skipped by a check, partly removed and failed items
+are.
+
+The preview's title says what its destructive button will do with the
+boxes as they are: the count and size it covers ("Move N items to the
+Trash" when only that group is covered, "Nothing is checked to remove"
+when nothing is).
 
 ## Global hotkeys
 

@@ -8,10 +8,10 @@ use std::path::PathBuf;
 
 use metla_core::clean::CleanProgress;
 use metla_core::domain::{
-    Bytes, Candidate, Category, CleanupPreview, CleanupReport, DirId, Disposal, Errno, FileKind,
-    GapKind, Group, ItemReport, Manager, Outcome, PreviewId, PreviewItem, ProgressSnapshot,
-    QuickCategory, Reason, Reasons, Reclaimable, Rejected, Rejection, RuleId, Separate, Skip,
-    SkipReason, Tally, TreeTotals, UnixTime, Warning, WorktreeStatus,
+    ActionFailure, Bytes, Candidate, Category, CleanupPreview, CleanupReport, DirId, Disposal,
+    Errno, FileKind, GapKind, Group, ItemReport, Manager, Outcome, PreviewId, PreviewItem,
+    ProgressSnapshot, QuickCategory, Reason, Reasons, Reclaimable, Rejected, Rejection, RuleId,
+    Separate, Skip, SkipReason, Tally, TreeTotals, UnixTime, Warning, WorktreeStatus,
 };
 use metla_core::engine::{
     Changed, Completeness, DirRef, EngineState, Failure, Freshness, HotkeyMode, Listed,
@@ -381,11 +381,18 @@ pub enum SkipReason {
 }
 
 #[uniffi::remote(Enum)]
+pub enum ActionFailure {
+    Unlisted,
+    TrashRefused { refused: u64, of: u64, said: String },
+    GitRefused(String),
+}
+
+#[uniffi::remote(Enum)]
 pub enum Outcome {
     Removed,
     Partial(Leftovers),
     Skipped(SkipReason),
-    Failed(String),
+    Failed(ActionFailure),
     AlreadyGone,
     MovedToTrash,
 }

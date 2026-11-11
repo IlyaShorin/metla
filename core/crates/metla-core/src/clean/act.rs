@@ -6,7 +6,8 @@ use super::TrashHost;
 use super::check::Opened;
 use super::control::CleanControl;
 use crate::domain::{
-    Bytes, Disposal, EntryKind, Errno, Outcome, PreviewItem, SkipReason, UnixTime, WorktreeStatus,
+    ActionFailure, Bytes, Disposal, EntryKind, Errno, Outcome, PreviewItem, SkipReason, UnixTime,
+    WorktreeStatus,
 };
 use crate::fs::{ListError, list_dir, remove_contents, survey};
 use crate::git::{Git, WorktreeSettings, inspect_worktree, remove_worktree};
@@ -66,19 +67,20 @@ impl Actor<'_> {
             false => Ok(vec![item.path().to_path_buf()]),
         };
         let Ok(targets) = targets else {
-            return Outcome::Failed("its contents could not be listed".into());
+            return Outcome::Failed(ActionFailure::Unlisted);
         };
         let failed: Vec<String> = targets
             .iter()
             .filter_map(|target| self.trash.trash(target).err())
             .collect();
-        match failed.first() {
+        let refused = failed.len() as u64;
+        match failed.into_iter().next() {
             None => Outcome::MovedToTrash,
-            Some(first) => Outcome::Failed(format!(
-                "{} of {} not moved to the Trash: {first}",
-                failed.len(),
-                targets.len()
-            )),
+            Some(said) => Outcome::Failed(ActionFailure::TrashRefused {
+                refused,
+                of: targets.len() as u64,
+                said,
+            }),
         }
     }
 
@@ -100,7 +102,7 @@ impl Actor<'_> {
         let gone = Bytes(before.bytes.0.saturating_sub(after.bytes.0));
         match removed {
             Ok(()) => (Outcome::Removed, gone),
-            Err(said) => (Outcome::Failed(said), gone),
+            Err(said) => (Outcome::Failed(ActionFailure::GitRefused(said)), gone),
         }
     }
 }

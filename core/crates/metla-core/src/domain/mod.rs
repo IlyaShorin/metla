@@ -14,8 +14,8 @@ mod worktree;
 
 pub use candidate::{Candidate, Exclusion, Recency, Reclaimable, Tally, holders};
 pub use cleanup::{
-    CleanupPreview, CleanupReport, Confirmation, Group, ItemReport, Leftovers, Outcome, PreviewId,
-    PreviewItem, Rejected, Rejection, Separate, SkipReason, Warning,
+    ActionFailure, CleanupPreview, CleanupReport, Confirmation, Group, ItemReport, Leftovers,
+    Outcome, PreviewId, PreviewItem, Rejected, Rejection, Separate, SkipReason, Warning,
 };
 pub use coverage::{Coverage, GapAt};
 pub use dir::{DirId, DirRecord, DirState, Errno, Gap, GapKind, Passed, Skip};

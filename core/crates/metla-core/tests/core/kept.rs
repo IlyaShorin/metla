@@ -8,8 +8,8 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
 use metla_core::domain::{
-    Bytes, CleanupReport, DirId, Errno, ItemReport, Leftovers, Manager, Outcome, PreviewId, Reason,
-    RuleId, SkipReason, WorktreeStatus,
+    ActionFailure, Bytes, CleanupReport, DirId, Errno, ItemReport, Leftovers, Manager, Outcome,
+    PreviewId, Reason, RuleId, SkipReason, WorktreeStatus,
 };
 use metla_core::engine::{decode_report, encode_report};
 
@@ -72,7 +72,13 @@ fn every_outcome() -> Vec<Outcome> {
         Outcome::Removed,
         Outcome::AlreadyGone,
         Outcome::MovedToTrash,
-        Outcome::Failed("refused:\tno\nway \\".into()),
+        Outcome::Failed(ActionFailure::Unlisted),
+        Outcome::Failed(ActionFailure::TrashRefused {
+            refused: 2,
+            of: u64::MAX,
+            said: "refused:\tno\nway \\".into(),
+        }),
+        Outcome::Failed(ActionFailure::GitRefused("git:\tno\nway \\".into())),
         Outcome::Skipped(every_reason()),
         Outcome::Skipped(SkipReason::Unreadable(Errno(13))),
         Outcome::Partial(Leftovers {

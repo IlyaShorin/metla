@@ -219,6 +219,9 @@
 "outcome.gone" = "Уже нет";
 "outcome.trash" = "В Корзине";
 "outcome.failed" = "Ошибка: %@";
+"failure.unlisted" = "не удалось прочитать содержимое";
+"failure.trash" = "%1$d из %2$d не перемещено в Корзину";
+"failure.git" = "Git не удалил worktree";
 "outcome.skipped" = "Пропущено: %@";
 "outcome.partialCancelled" = "Удалено частично: отменено";
 "skip.notConfirmed" = "не подтверждено";

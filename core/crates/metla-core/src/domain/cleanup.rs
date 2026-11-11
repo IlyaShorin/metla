@@ -222,6 +222,20 @@ impl Leftovers {
     }
 }
 
+/// Why acting on an item failed, by kind; what the Trash or Git said is
+/// kept in their own words, as a detail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActionFailure {
+    /// The entries of a directory its rule keeps could not be listed, so
+    /// none was moved to the Trash.
+    Unlisted,
+    /// The Trash refused `refused` of the `of` entries handed to it;
+    /// `said` is its first refusal.
+    TrashRefused { refused: u64, of: u64, said: String },
+    /// `git worktree remove` failed; `said` is Git's message.
+    GitRefused(String),
+}
+
 /// What happened to one item.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -229,7 +243,7 @@ pub enum Outcome {
     /// Some of it was removed.
     Partial(Leftovers),
     Skipped(SkipReason),
-    Failed(String),
+    Failed(ActionFailure),
     /// It was not there any more: nothing to do.
     AlreadyGone,
     /// Moved to the Trash: nothing is freed until the Trash is emptied.

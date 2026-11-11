@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex, Weak};
 
 use std::time::Duration;
 
-use metla_core::domain::{Category, Disposal, Group, Outcome, QuickCategory, RuleId, Separate};
+use metla_core::domain::{
+    ActionFailure, Category, Disposal, Group, Outcome, QuickCategory, RuleId, Separate,
+};
 use metla_core::engine::{Changed, Completeness, DirRef, EngineState, HotkeyMode, PowerProfile};
 use metla_core::index::{Order, SortKey};
 use metla_ffi::{
@@ -299,7 +301,11 @@ fn a_confirmed_preview_moves_logs_through_the_apps_trash() {
     };
     let refused = &report.items[0].outcome;
     assert!(
-        matches!(refused, Outcome::Failed(why) if why.ends_with("no Trash here")),
+        matches!(
+            refused,
+            Outcome::Failed(ActionFailure::TrashRefused { refused: 1, of: 1, said })
+                if said.ends_with("no Trash here")
+        ),
         "{refused:?}"
     );
     assert!(
