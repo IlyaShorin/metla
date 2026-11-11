@@ -659,3 +659,90 @@ fn the_stream_leaves_out_the_data_directory_and_other_volumes_below_the_root() {
     assert_eq!(left_out[0], PathBuf::from("/d"));
     assert_eq!(rest, paths(&["/Volumes/v7", "/Volumes/v8", "/Volumes/v9"]));
 }
+
+/// An engine whose scans run on one thread, watched by `gate`, whose own
+/// full scans wait ten minutes after the last one and a minute of quiet.
+fn open_waiting(place: &Place, gate: &Arc<Gate>) -> Engine {
+    let mut config = EngineConfig {
+        dirs: Some(gate.clone()),
+        ..place.config(PowerProfile::Background)
+    };
+    for profile in [
+        &mut config.profiles.interactive,
+        &mut config.profiles.background,
+    ] {
+        profile.threads = 1;
+        profile.scan_gap = Duration::from_secs(600);
+        profile.scan_quiet = Duration::from_secs(60);
+    }
+    Engine::open(config).unwrap()
+}
+
+/// Once a root has had a complete picture there always is one to serve
+/// and to fall back on until a newer scan completes: a scan killed in its
+/// middle leaves the last picture served, and its redo waits like any
+/// full scan the engine needs.
+#[test]
+fn a_scan_killed_in_its_middle_leaves_the_last_picture_served_and_its_redo_waits() {
+    let place = place();
+    let gate = Gate::new("none");
+    let engine = open_waiting(&place, &gate);
+    settled(&engine);
+    let before = engine.snapshot().unwrap().totals;
+    drop(engine);
+    let index = place.aux.path("data/index.sqlite");
+    let mut writer = metla_core::index::IndexWriter::open(&index).unwrap();
+    let killed = writer.start_scan(metla_core::domain::UnixTime(1)).unwrap();
+    killed.send(Vec::new());
+    drop(writer);
+    let again = open_waiting(&place, &gate);
+    let freshness = again.freshness().unwrap();
+    assert_eq!(
+        freshness.picture,
+        Completeness::Complete,
+        "the last picture"
+    );
+    assert_eq!(again.snapshot().unwrap().totals, before);
+    assert_eq!(freshness.scan_reason, Some(ScanReason::Redone));
+    until(&again, |e| {
+        e.freshness().unwrap().state == EngineState::Idle
+    });
+    too_many_changes(&again, &place);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(again.counters().full_scans, 0, "deferred, a drop too");
+    assert_eq!(again.freshness().unwrap().state, EngineState::Idle);
+}
+
+/// Changes that ask for a full scan while one runs do not start another
+/// when it ends: the scan finishes and stores its picture, and the next
+/// waits for the gap after it.
+#[test]
+fn a_drop_during_a_full_scan_waits_for_the_gap_after_it() {
+    let place = place();
+    let gate = Gate::new("gate");
+    let engine = open_waiting(&place, &gate);
+    settled(&engine);
+    gate.close();
+    engine.start_scan().unwrap();
+    until(&engine, |_| gate.holding());
+    too_many_changes(&engine, &place);
+    gate.open();
+    until(&engine, |e| e.counters().full_scans == 2);
+    until(&engine, |e| {
+        let f = e.freshness().unwrap();
+        f.needs_full_scan && f.state == EngineState::Idle
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    let freshness = engine.freshness().unwrap();
+    assert_eq!(engine.counters().full_scans, 2, "no third scan");
+    assert_eq!(
+        freshness.picture,
+        Completeness::Complete,
+        "the user's scan stored its picture"
+    );
+    assert_eq!(
+        freshness.scan_reason,
+        Some(ScanReason::TooManyChanges),
+        "the last scan's reason"
+    );
+}

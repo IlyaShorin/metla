@@ -299,6 +299,7 @@ fn start_scheduler(
         deferred: None,
         data_dir,
         excluded,
+        pictured: false,
     };
     let thread = thread::Builder::new().name("metla-engine".into());
     setup(

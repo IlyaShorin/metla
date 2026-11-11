@@ -102,6 +102,10 @@ pub struct Scheduler {
     pub data_dir: PathBuf,
     /// What the stream leaves out (`stream_exclusions`).
     pub excluded: Vec<PathBuf>,
+    /// The root has had a picture: from then on there always is one to
+    /// serve and to fall back on (a scan replaces it only when it ends),
+    /// so a read that fails never counts as "no picture".
+    pub pictured: bool,
 }
 
 impl Scheduler {
@@ -206,9 +210,9 @@ impl Scheduler {
             (Some(latency), None) => {
                 let since = resumable(&mut self.reader, self.root.device());
                 if !self.open_stream(latency, since) {
-                    let reason = match self.picture().ok().flatten() {
-                        Some(_) => ScanReason::HistoryLost,
-                        None => ScanReason::NoPicture,
+                    let reason = match self.has_picture() {
+                        true => ScanReason::HistoryLost,
+                        false => ScanReason::NoPicture,
                     };
                     self.shared.need_full_scan(reason);
                 }
@@ -285,6 +289,12 @@ impl Scheduler {
             let picture = snap.scan()?.and_then(|scan| scan.picture);
             Ok(picture.filter(|p| p.root == root).map(|p| p.id()))
         })
+    }
+
+    /// Whether the root has a picture: once it has had one, always.
+    fn has_picture(&mut self) -> bool {
+        self.pictured = self.pictured || self.picture().ok().flatten().is_some();
+        self.pictured
     }
 
     /// Options for a scan with `profile`'s threads and priority.
@@ -364,7 +374,7 @@ impl Scheduler {
         let Some(reason) = status.reason.filter(|_| due) else {
             return self.defer(None);
         };
-        let picture = self.picture().ok().flatten().is_some();
+        let picture = self.has_picture();
         let now = Instant::now();
         match scan_start(reason, picture, self.ended, status.trouble, now, profile) {
             ScanStart::Now => self.full_scan(reason),
@@ -474,7 +484,7 @@ impl Scheduler {
     fn full_scan(&mut self, reason: ScanReason) {
         let interactive = reason == ScanReason::UserAsked;
         self.defer(None);
-        let had_picture = self.picture().ok().flatten().is_some();
+        let had_picture = self.has_picture();
         let profile = if interactive {
             self.shared.profiles.interactive
         } else {
