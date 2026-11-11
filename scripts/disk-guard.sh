@@ -22,3 +22,28 @@ FULL_DISK='No space left on device|Errno 28|os error 28|ENOSPC|NoSpace'
 full_disk_logs() {
     grep -lE "$FULL_DISK" "$@" 2>/dev/null
 }
+
+# The longest TMPDIR the tests work in: a fixture's socket path must fit
+# in 104 bytes, and the deepest trees they build come near PATH_MAX.
+TMPDIR_MAX=64
+
+# Why <dir> (TMPDIR) cannot hold the tests' fixtures, if it cannot: it
+# must exist, lie outside the system's own areas (a fixture under
+# /private/var is classified as system data, not the user's) and be at
+# most TMPDIR_MAX characters long once resolved. Prints nothing and is
+# true when it can.
+tmpdir_problem() {
+    local dir
+    dir="$(cd "$1" 2>/dev/null && pwd -P)" || { echo "TMPDIR $1 does not exist"; return 0; }
+    case "$dir/" in
+        /private/*|/var/*|/tmp/*|/System/*|/Library/*|/usr/*)
+            echo "TMPDIR $dir is in a system area: the tests' fixtures would be classified as system data"
+            return 0 ;;
+    esac
+    if (( ${#dir} > TMPDIR_MAX )); then
+        echo "TMPDIR $dir is ${#dir} characters long, more than $TMPDIR_MAX: socket paths and the deepest test trees do not fit"
+        return 0
+    fi
+    return 1
+}
+

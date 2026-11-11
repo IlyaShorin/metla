@@ -19,6 +19,11 @@
 set -uo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
+source "$repo/scripts/disk-guard.sh"
+if problem="$(tmpdir_problem "${TMPDIR:-/tmp}")"; then
+    echo "ERROR: $problem (CONTRIBUTING.md, Running the gates)"
+    exit 2
+fi
 scratch="${SWIFT_SCRATCH:-$repo/target/swift-build}"
 floor="${SWIFT_COVERAGE_FLOOR:-85}"
 failed=()

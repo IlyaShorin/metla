@@ -58,6 +58,10 @@ workers="${MUTATOR_WORKERS:-2}"
 timeout_floor="${MUTATOR_TIMEOUT_SECONDS:-90}"
 
 source "$repo/scripts/disk-guard.sh"
+if problem="$(tmpdir_problem "${TMPDIR:-/tmp}")"; then
+    echo "ERROR: $problem (CONTRIBUTING.md, Running the gates)"
+    exit 2
+fi
 disk_floor="${DISK_FLOOR_MB:-300}"
 scratch="${TMPDIR:-/tmp}"
 disk_full=()

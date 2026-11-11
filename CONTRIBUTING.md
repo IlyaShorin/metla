@@ -80,6 +80,14 @@ scripts/fresh-clone-check.sh <new dir>  # every script from a fresh clone, as a 
 scripts/architecture.sh                 # uml-viewer's IR of the module tree (needs Clojure)
 ```
 
+`TMPDIR` must name a directory outside the system's own areas
+(`/private`, `/var`, `/tmp`, `/System`, `/Library`, `/usr`), at most 64
+characters long once symbolic links are resolved: the tests' fixtures
+under macOS's default `/var/folders/...` are classified as system data,
+not the user's, and a long path leaves no room for a fixture's socket
+(104 bytes) or the deepest test trees. Both gate scripts stop at once,
+with exit 2, when it is not so.
+
 The full mutation run takes hours (two workers by default,
 `MUTATOR_WORKERS`). It counts only when it ends with a verdict for every
 file: a run stopped by a full disk (exit 3, `DISK FULL`) or a file whose

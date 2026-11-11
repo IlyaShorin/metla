@@ -26,4 +26,11 @@ check "every full-disk log is named, no other" '[[ "$found" == "engine.txt pytho
 check "a clean log is not a full disk" '! full_disk_logs "$work/clean.txt" >/dev/null'
 check "no log at all is not a full disk" '! full_disk_logs "$work/none.txt" >/dev/null'
 
+check "a short TMPDIR outside the system areas is fine" '! tmpdir_problem "$work" >/dev/null || [[ ${#work} -gt $TMPDIR_MAX || "$work" == /private/* ]]'
+check "a missing TMPDIR is a problem" 'tmpdir_problem "$work/missing" >/dev/null'
+check "a TMPDIR under /private/var is a problem" 'tmpdir_problem /private/var >/dev/null'
+long="$work/$(printf 'x%.0s' {1..80})"
+mkdir -p "$long"
+check "a TMPDIR longer than $TMPDIR_MAX characters is a problem" 'tmpdir_problem "$long" >/dev/null'
+
 exit "$failed"
