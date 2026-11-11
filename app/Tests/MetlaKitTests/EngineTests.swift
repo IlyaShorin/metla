@@ -147,6 +147,56 @@ import Testing
         #expect(folders.node(code.path)?.isExpanded == true)
     }
 
+    /// A row taken before a reload stays usable: expanding it expands the
+    /// node of the same path in the tree shown now, and the caller's own
+    /// node gets its children too.
+    @Test func expandingANodeFromBeforeAReloadExpandsTheOneShownNow() async throws {
+        let model = try await started()
+        defer { model.stop() }
+        await model.show(.folders)
+        let folders = try #require(model.folders)
+        let stale = try #require(folders.top.first { $0.name == "home" })
+        await folders.reload()
+        #expect(folders.node(stale.path) !== stale, "a reload makes new nodes")
+        await folders.expand(stale)
+        #expect(folders.node(stale.path)?.isExpanded == true)
+        #expect(stale.isExpanded && stale.children?.isEmpty == false, "the caller's node can go on")
+        let code = try #require(stale.children?.first { $0.name == "code" })
+        #expect(folders.node(code.path) != nil)
+        folders.collapse(stale)
+        #expect(folders.node(stale.path)?.isExpanded == false, "a fold reaches the node shown too")
+    }
+
+    /// While a reload runs the tree shown stays whole (every row is found),
+    /// and a fold made meanwhile is still a fold afterwards.
+    @Test func whileAReloadRunsTheTreeStaysWholeAndAFoldIsKept() async throws {
+        let model = try await started()
+        defer { model.stop() }
+        await model.show(.folders)
+        let folders = try #require(model.folders)
+        let home = try #require(folders.top.first { $0.name == "home" })
+        await folders.expand(home)
+        let code = try #require(home.children?.first { $0.name == "code" })
+        await folders.expand(code)
+        let done = Flag()
+        let reload = Task { @MainActor in
+            await folders.reload()
+            done.set = true
+        }
+        var looks = 0
+        while !done.set, looks < 10_000 {
+            #expect(folders.node(home.path) != nil && folders.node(code.path) != nil, "look \(looks)")
+            if looks == 1 {
+                folders.collapse(code)
+            }
+            looks += 1
+            await Task.yield()
+        }
+        await reload.value
+        #expect(folders.node(home.path)?.isExpanded == true)
+        #expect(folders.node(code.path)?.isExpanded == false, "folded during the reload")
+    }
+
     @Test func foldersOpenALevelAtATimeDownToFiles() async throws {
         let model = try await started()
         defer { model.stop() }
@@ -238,3 +288,8 @@ import Testing
     }
 }
 
+/// Set by a task when it is done.
+@MainActor
+final class Flag {
+    var set = false
+}

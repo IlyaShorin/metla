@@ -96,34 +96,72 @@ public final class FoldersModel {
         await next.value
     }
 
+    /// Builds the new tree aside while the shown one stays whole, loads
+    /// in it whatever is expanded in the shown tree (an expansion made
+    /// meanwhile included), and swaps both in one step, with no wait
+    /// between the last look at what is expanded and the swap: the new
+    /// tree is expanded exactly where the shown one is at that moment.
     private func reloadNow() async {
-        let expanded = nodes.values.filter(\.isExpanded).map(\.path).sorted()
-        nodes = [:]
-        top = await entries(of: .path(rootPath), parent: rootPath) ?? []
-        for path in expanded {
-            if let node = nodes[path] {
-                await expand(node)
+        var fresh: [String: FolderNode] = [:]
+        let made = await entries(of: .path(rootPath), parent: rootPath) ?? []
+        made.forEach { fresh[$0.id] = $0 }
+        var loaded: Set<String> = []
+        while let path = expandedPaths().first(where: { !loaded.contains($0) }) {
+            loaded.insert(path)
+            guard let node = fresh[path], case .directory(let id) = node.kind, node.children == nil else {
+                continue
             }
+            let children = await entries(of: .id(id), parent: node.path) ?? []
+            node.children = children
+            children.forEach { fresh[$0.id] = $0 }
         }
+        let expanded = Set(expandedPaths())
+        for node in fresh.values {
+            node.isExpanded = node.children != nil && expanded.contains(node.path)
+        }
+        nodes = fresh
+        top = made
+    }
+
+    /// The paths expanded in the tree shown, shallowest first.
+    private func expandedPaths() -> [String] {
+        nodes.values.filter(\.isExpanded).map(\.path).sorted()
     }
 
     public func node(_ id: FolderNode.ID?) -> FolderNode? {
         id.flatMap { nodes[$0] }
     }
 
-    /// → on a directory: its entries, loaded the first time.
+    /// → on a directory: its entries, loaded the first time. A node from
+    /// before a reload stands for the one of the same path shown now:
+    /// that one is expanded, and the caller's node gets the same children.
     public func expand(_ node: FolderNode) async {
-        guard case .directory(let id) = node.kind else {
+        var shown = nodes[node.id] ?? node
+        while shown.children == nil {
+            guard case .directory(let id) = shown.kind else {
+                return
+            }
+            let children = await entries(of: .id(id), parent: shown.path) ?? []
+            // A reload may have swapped the tree meanwhile: load again for
+            // the node shown now, whose directory id may be new.
+            guard shown === (nodes[node.id] ?? node) else {
+                shown = nodes[node.id] ?? node
+                continue
+            }
+            shown.children = children
+            children.forEach { nodes[$0.id] = $0 }
+        }
+        guard shown.isDirectory else {
             return
         }
-        if node.children == nil {
-            node.children = await entries(of: .id(id), parent: node.path) ?? []
-        }
+        shown.isExpanded = true
+        node.children = shown.children
         node.isExpanded = true
     }
 
-    /// ←: folds the directory.
+    /// ←: folds the directory (the one shown now of the same path too).
     public func collapse(_ node: FolderNode) {
+        nodes[node.id]?.isExpanded = false
         node.isExpanded = false
     }
 
@@ -165,9 +203,6 @@ public final class FoldersModel {
             let rest = page.total - UInt64(page.items.count)
             if rest > 0 {
                 made.append(more(rest, files: 0, bytes: 0, in: page.path))
-            }
-            for node in made {
-                nodes[node.id] = node
             }
             return made
         } catch {
