@@ -176,19 +176,27 @@ public final class PreviewModel {
         !covered.isEmpty
     }
 
-    /// "Remove 7 items — about 1.2 GB?"
+    /// What the destructive button will do with the boxes as they are
+    /// now: "Remove 7 items — about 1.2 GB?", "Move 2 items to the Trash
+    /// — about 4 MB?", or that nothing is checked. What is offered but
+    /// unchecked shows in its group.
     public var title: String {
-        let bytes = groups.reduce(0) { $0 + $1.bytes }
-        let count = groups.reduce(0) { $0 + $1.rows.count }
-        return strings.format("preview.title", count, Format.bytes(bytes, strings))
+        let (count, bytes) = coveredTotals
+        guard count > 0 else {
+            return strings.text("preview.titleNone")
+        }
+        return strings.format(onlyTrash ? "preview.titleTrash" : "preview.title", count, Format.bytes(bytes, strings))
     }
 
     /// Named after what it does: "Move 2 items to Trash" when everything
     /// covered goes there, else "Remove N items".
     public var action: String {
+        strings.format(onlyTrash ? "preview.actionTrash" : "preview.action", coveredTotals.count)
+    }
+
+    /// Everything covered goes to the Trash.
+    private var onlyTrash: Bool {
         let trash = groups.filter { $0.id == .separate(.moveToTrash) }.flatMap(\.rows).map(\.id)
-        let count = coveredTotals.count
-        let onlyTrash = count > 0 && covered.isSubset(of: Set(trash))
-        return strings.format(onlyTrash ? "preview.actionTrash" : "preview.action", count)
+        return !covered.isEmpty && covered.isSubset(of: Set(trash))
     }
 }

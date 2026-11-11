@@ -162,6 +162,22 @@
 			<string>Remove %1$d items — about %2$@?</string>
 		</dict>
 	</dict>
+	<key>preview.titleTrash</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>Move %1$d item to the Trash — about %2$@?</string>
+			<key>other</key>
+			<string>Move %1$d items to the Trash — about %2$@?</string>
+		</dict>
+	</dict>
 	<key>status.files</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>

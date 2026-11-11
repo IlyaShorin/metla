@@ -202,6 +202,26 @@
 			<string>Удалить %1$d объекта — около %2$@?</string>
 		</dict>
 	</dict>
+	<key>preview.titleTrash</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@items@</string>
+		<key>items</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>Переместить %1$d объекта в Корзину — около %2$@?</string>
+			<key>many</key>
+			<string>Переместить %1$d объектов в Корзину — около %2$@?</string>
+			<key>one</key>
+			<string>Переместить %1$d объект в Корзину — около %2$@?</string>
+			<key>other</key>
+			<string>Переместить %1$d объекта в Корзину — около %2$@?</string>
+		</dict>
+	</dict>
 	<key>status.files</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>

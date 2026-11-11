@@ -58,6 +58,8 @@ import Testing
         #expect(russian.format("status.files", 1_900_000, "1,9\u{00A0}млн") == "1,9\u{00A0}млн файлов")
         #expect(russian.format("overview.partialDenied", 14) == "Нет доступа к 14 папкам.")
         #expect(english.format("overview.partialDenied", 1) == "No access to 1 folder.")
+        #expect(russian.format("preview.titleTrash", 2, "4 МБ") == "Переместить 2 объекта в Корзину — около 4 МБ?")
+        #expect(russian.format("preview.title", 9, "2 МБ") == "Удалить 9 объектов — около 2 МБ?")
     }
 
     @Test func aKeyWithoutATextReadsAsItself() {
