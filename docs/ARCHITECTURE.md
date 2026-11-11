@@ -720,16 +720,23 @@ inode, and the marker, are checked again every time it executes.
    `AlreadyGone`; one that cannot be read is `Unreadable(errno)`. The
    opened descriptor is what the action works on.
 4. **Act.**
-   * `DeletePermanently`: `fs::remove_contents` empties the opened
-     directory with `openat(O_NOFOLLOW|O_DIRECTORY)` and `unlinkat`,
-     iteratively; symlinks are unlinked, never followed; a directory on
-     another device is left and reported; nothing is chmodded — an entry
-     that cannot be removed is recorded and the rest continues (`Partial`
-     with the count, the first 16 paths with their errno, the volumes
-     left); cancellation is checked before every entry; removed bytes use
-     the scan's hard-link share rule. Then the candidate directory itself
-     is removed — only if nothing stayed and its rule does not keep it
-     (RULES.md, "Keeps").
+   * `DeletePermanently`: `fs::Remover` empties the opened directory
+     with `openat(O_NOFOLLOW|O_DIRECTORY)` and `unlinkat`: in each of the
+     top `PARALLEL_DEPTH` (32) levels a directory's files are unlinked
+     and its subdirectories emptied in parallel on a rayon pool made
+     once per cleanup (at most `REMOVAL_THREADS` threads, measured in
+     PERFORMANCE.md), each then removed when it kept nothing; deeper
+     subtrees are emptied by the iterative walk (`fs::remove_contents`,
+     no recursion on the stack). Symlinks are unlinked, never followed;
+     a directory on another device is left and reported; nothing is
+     chmodded — an entry that cannot be removed is recorded and the rest
+     continues (`Partial` with the count, the first 16 paths with their
+     errno, the volumes left, in the order the sequential walk records
+     them, whatever the timing); cancellation is checked before every
+     entry; removed bytes use the scan's hard-link share rule and are
+     added to the cleanup's progress as each entry goes. Then the
+     candidate directory itself is removed — only if nothing stayed and
+     its rule does not keep it (RULES.md, "Keeps").
    * `MoveToTrash`: through the `TrashHost` the caller supplies (the app:
      `FileManager.trashItem`, so "Put Back" works; tests and the CLI: a
      fixture's own trash directory) — the directory, or its entries when

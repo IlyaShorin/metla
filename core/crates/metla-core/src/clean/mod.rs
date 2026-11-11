@@ -21,7 +21,7 @@ use crate::domain::{
     Bytes, Candidate, CleanupPreview, CleanupReport, Confirmation, EntryKind, Exclusion,
     ItemReport, Outcome, PreviewId, PreviewItem, QuickCategory, Recency, SkipReason, UnixTime,
 };
-use crate::fs::{DirHandle, volume};
+use crate::fs::{DirHandle, Remover, volume};
 use crate::git::{Git, WorktreeSettings, inspect_worktree};
 use crate::rules::RuleSet;
 
@@ -228,6 +228,7 @@ impl Cleaner {
             git: &self.git,
             exclusions: context.exclusions,
         };
+        let remover = Remover::new(removal_threads());
         let actor = Actor {
             rules: &self.rules,
             git: &self.git,
@@ -235,8 +236,10 @@ impl Cleaner {
             now: context.now,
             control,
             trash,
+            remover: &remover,
         };
-        control.start(preview.items.len());
+        let planned = preview.items.iter().map(PreviewItem::estimated).sum();
+        control.start(preview.items.len(), planned);
         let free_before = self.available();
         let items = preview.items.iter().map(|item| {
             control.begin_item(item.path());
@@ -313,4 +316,16 @@ fn clean(
         Ok(opened) => actor.act(item, opened),
         Err(outcome) => (outcome, Bytes::default()),
     }
+}
+
+/// The most threads a cleanup empties directories with (measured on the
+/// SSD: docs/PERFORMANCE.md, M7).
+pub const REMOVAL_THREADS: usize = 4;
+
+/// Threads for a cleanup's removals: the cores, at most `REMOVAL_THREADS`.
+pub fn removal_threads() -> usize {
+    std::thread::available_parallelism()
+        .unwrap_or(std::num::NonZeroUsize::MIN)
+        .get()
+        .min(REMOVAL_THREADS)
 }

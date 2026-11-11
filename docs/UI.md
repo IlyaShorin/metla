@@ -112,7 +112,10 @@ group, "Show all N" for the rest (a lazy list). Return and Esc cancel;
 
 During cleanup: progress bar, "N of M", removed so far, the current
 item, Cancel (the cleanup stops before the next entry; the report says
-what was done). Afterwards a report: three numbers side by side —
+what was done). The bytes removed grow while an item is being removed,
+and the bar shows the larger of the share of items done and the share
+of the preview's estimate removed, so one big cache does not look
+frozen. Afterwards a report: three numbers side by side —
 **Found**, **Removed**, **Freed on disk** (measured; one sentence why it
 may differ) — then "moved to the Trash, not freed until the Trash is
 emptied" where applicable, a "Problems only" filter and per-item

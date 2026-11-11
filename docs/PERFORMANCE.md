@@ -568,3 +568,47 @@ app with a saved picture (`--rescan`); a second and third launch on the
 real disk's picture; RSS after a minute on the real disk; a first scan
 with the app active (frontmost); cold-cache numbers (root needed);
 removal on the SSD.
+
+## 0.7.1: removal on the SSD, one thread against several
+
+**Conditions.** Apple M3 Pro (6 performance and 6 efficiency cores,
+`available_parallelism` 12), 36 GB, macOS 26.6.2 (25G83), on AC power;
+the internal SSD (APFS) with 43 GB available. A synthetic tree in a
+scratch directory on the SSD, made anew before every run: 3,000
+packages × 10 directories × 10 files of 4 KB, that is 300,000 files in
+33,001 directories (333,001 names, 1,229 MB allocated), written, then
+`sync`, then timed. A small release program outside the repository calls
+the core's removal directly (no scan, no plan, no app, no Trash): `seq`
+is `fs::remove_contents`, the one-thread walk 0.7.0 used (the same
+iterative code as at e5da640, built from the working tree, not a build
+of e5da640); `par N` is `fs::Remover::new(N)`. Warm cache (purging it
+needs root). **The machine was busy:** one-minute load average 9.9 at
+the start and 11.6 at the end, the user's own Metla app using about
+40 % of a core throughout; the second round was slower across the board.
+Two rounds, each mode once per round, in the order of the table.
+
+| mode | round 1 wall | files/s | round 2 wall | files/s | against `seq` |
+|---|---:|---:|---:|---:|---:|
+| `seq` (0.7.0's walk) | 38.77 s | 7,738 | 52.53 s | 5,711 | 1.00 / 1.00 |
+| `par 1` | 36.78 s | 8,157 | 61.29 s | 4,895 | 1.05 / 0.86 |
+| `par 2` | 25.40 s | 11,811 | 34.19 s | 8,774 | 1.53 / 1.54 |
+| `par 4` | **19.25 s** | 15,584 | 26.30 s | 11,407 | 2.01 / 2.00 |
+| `par 8` | 19.64 s | 15,275 | **25.82 s** | 11,619 | 1.97 / 2.03 |
+
+files/s counts the 300,000 files only; the 33,001 directories are
+removed in the same time. Every run removed every name and left nothing.
+
+**Thread count.** A cleanup uses `min(available_parallelism, 4)`
+threads (`clean::REMOVAL_THREADS`): 4 is the smallest count within 10 %
+of the best in both rounds (best in round 1; 1.9 % behind 8 in round 2),
+and 2 is 32 % behind. Going from 4 to 8 threads gained nothing that the
+noise does not cover. `par 1` is the parallel code on a pool of one
+thread; it is no faster than `seq`, as it should not be.
+
+**Not measured:** a cleanup of real caches through the app (on the real
+disk or any other), so neither its time nor the live progress on a real
+cleanup; removal with a cold cache; a quiet machine (both rounds ran
+with the load above, and the second was 31 to 67 % slower than the
+first, far more than the difference between 4 and 8 threads); trees of
+other shapes (few large files, one flat directory of many files, deep
+chains); other Macs and other core counts; a build of e5da640 itself.

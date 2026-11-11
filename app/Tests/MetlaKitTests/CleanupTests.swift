@@ -227,9 +227,21 @@ import Testing
     }
 
     @Test func progressIsAShareOfTheItemsDone() {
-        #expect(CleanupProgressData(done: 0, items: 0, removed: 0, current: nil).share == 0)
-        #expect(CleanupProgressData(done: 3, items: 4, removed: 10, current: "~/x").share == 0.75)
-        #expect(CleanupProgressData(done: 5, items: 4, removed: 10, current: nil).share == 1)
+        // done, items, removed, planned -> share: the larger of the items
+        // done and the bytes removed of those planned, at most all of it.
+        let rows: [(UInt64, UInt64, UInt64, UInt64, Double)] = [
+            (0, 0, 0, 0, 0),
+            (3, 4, 10, 0, 0.75),
+            (5, 4, 10, 0, 1),
+            (1, 2, 75, 100, 0.75),
+            (1, 2, 10, 100, 0.5),
+            (0, 1, 200, 100, 1),
+            (0, 2255, 0, 1000, 0),
+        ]
+        for (done, items, removed, planned, share) in rows {
+            let progress = CleanupProgressData(done: done, items: items, removed: removed, planned: planned, current: nil)
+            #expect(progress.share == share, "\(done) of \(items), \(removed) of \(planned)")
+        }
     }
 
     @Test func theSystemTrashMovesAndSaysWhyNot() throws {

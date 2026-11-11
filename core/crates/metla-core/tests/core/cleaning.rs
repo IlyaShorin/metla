@@ -525,8 +525,58 @@ fn progress_counts_items_and_removed_bytes() {
         .unwrap();
     let progress = control.progress();
     assert_eq!((progress.items, progress.done), (2, 2));
-    assert_eq!(progress.removed, report.removed());
+    assert_eq!(progress.removed, report.removed(), "each byte counted once");
+    let planned: Bytes = preview.items.iter().map(|item| item.estimated()).sum();
+    assert_eq!(progress.planned, planned, "what the preview estimated");
     assert!(!control.is_cancelled());
+}
+
+/// A Trash that nothing goes to (the item is deleted for good).
+struct NoTrash;
+
+impl TrashHost for NoTrash {
+    fn trash(&self, _: &Path) -> Result<(), String> {
+        Err("no Trash here".into())
+    }
+}
+
+/// The bytes removed grow while an item is being removed, not only when
+/// it is done: a cleanup of one big cache does not stand still.
+#[test]
+fn removed_bytes_grow_while_an_item_is_being_removed() {
+    let world = world();
+    for d in 0..100 {
+        for f in 0..200 {
+            let path = world.path(TARGET).join(format!("debug/many/d{d}/f{f}"));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, [1u8; 100]).unwrap();
+        }
+    }
+    let found = world.scan();
+    let mut cleaner = world.cleaner();
+    let preview = cleaner.preview(world.picked(&found, &[TARGET]), next_year());
+    let control = CleanControl::new();
+    let context = Context {
+        now: next_year(),
+        exclusions: &[],
+    };
+    let seen_midway = std::thread::scope(|scope| {
+        let cleaning = scope.spawn(|| {
+            cleaner
+                .execute(preview.id, &all_groups(), &context, &control, &NoTrash)
+                .unwrap()
+        });
+        let mut midway = false;
+        while !cleaning.is_finished() {
+            let progress = control.progress();
+            midway |= progress.done == 0 && progress.removed.0 > 0;
+            std::thread::yield_now();
+        }
+        let report = cleaning.join().unwrap();
+        assert_eq!(control.progress().removed, report.removed());
+        midway
+    });
+    assert!(seen_midway, "bytes were counted before the item was done");
 }
 
 /// Moves to the Trash, noting the item the cleanup says it is at.

@@ -14,6 +14,9 @@ pub struct CleanControl {
     items: AtomicU64,
     done: AtomicU64,
     removed: AtomicU64,
+    /// Bytes of the current item already counted in `removed`.
+    item_removed: AtomicU64,
+    planned: AtomicU64,
     current: Mutex<Option<PathBuf>>,
 }
 
@@ -24,8 +27,10 @@ pub struct CleanProgress {
     pub items: u64,
     /// Items finished, whatever their outcome.
     pub done: u64,
-    /// Bytes removed so far.
+    /// Bytes removed so far, growing as entries are unlinked.
     pub removed: Bytes,
+    /// What the preview estimated for the items being executed.
+    pub planned: Bytes,
     /// The item being cleaned now; `None` between items.
     pub current: Option<PathBuf>,
 }
@@ -50,12 +55,20 @@ impl CleanControl {
             items: self.items.load(Ordering::Relaxed),
             done: self.done.load(Ordering::Relaxed),
             removed: Bytes(self.removed.load(Ordering::Relaxed)),
+            planned: Bytes(self.planned.load(Ordering::Relaxed)),
             current: self.lock_current().clone(),
         }
     }
 
-    pub(super) fn start(&self, items: usize) {
+    pub(super) fn start(&self, items: usize, planned: Bytes) {
         self.items.store(items as u64, Ordering::Relaxed);
+        self.planned.store(planned.0, Ordering::Relaxed);
+    }
+
+    /// Counts bytes of the current item as they are removed.
+    pub(super) fn removed_now(&self, bytes: Bytes) {
+        self.removed.fetch_add(bytes.0, Ordering::Relaxed);
+        self.item_removed.fetch_add(bytes.0, Ordering::Relaxed);
     }
 
     fn lock_current(&self) -> std::sync::MutexGuard<'_, Option<PathBuf>> {
@@ -64,12 +77,17 @@ impl CleanControl {
     }
 
     pub(super) fn begin_item(&self, path: &Path) {
+        self.item_removed.store(0, Ordering::Relaxed);
         *self.lock_current() = Some(path.to_path_buf());
     }
 
+    /// The item is done: what it removed and was not counted yet (a
+    /// worktree's, measured at the end) is added now.
     pub(super) fn finish_item(&self, removed: Bytes) {
         *self.lock_current() = None;
-        self.removed.fetch_add(removed.0, Ordering::Relaxed);
+        let counted = self.item_removed.swap(0, Ordering::Relaxed);
+        self.removed
+            .fetch_add(removed.0.saturating_sub(counted), Ordering::Relaxed);
         self.done.fetch_add(1, Ordering::Relaxed);
     }
 }

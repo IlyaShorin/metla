@@ -86,8 +86,12 @@ the gates in [QUALITY.md](QUALITY.md).
     menu-bar panel by clicking the app's own status item in-process and
     takes the window server's image of it; a click from outside the app
     (the system's event path) was not simulated.
-18. **Removal on the internal SSD.** Removal throughput was measured on a RAM
-    disk (fixtures only ever live there); an SSD and APFS will differ.
+18. **Removal on the internal SSD was measured on a synthetic tree
+    only** (300,000 files of 4 KB, the removal function on its own, warm
+    cache, two runs each on a loaded machine; see
+    [PERFORMANCE.md](PERFORMANCE.md)). A cleanup of real caches through
+    the app was not timed, and the live progress was seen only in tests,
+    not on a real cleanup.
 19. **Cold-cache timings.** Purging the file-system cache needs root, so
     every scan and launch number is with a warm cache.
 

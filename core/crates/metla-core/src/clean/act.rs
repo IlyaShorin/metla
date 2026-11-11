@@ -9,7 +9,7 @@ use crate::domain::{
     ActionFailure, Bytes, Disposal, EntryKind, Errno, Outcome, PreviewItem, SkipReason, UnixTime,
     WorktreeStatus,
 };
-use crate::fs::{ListError, list_dir, remove_contents, survey};
+use crate::fs::{ListError, Remover, list_dir, survey};
 use crate::git::{Git, WorktreeSettings, inspect_worktree, remove_worktree};
 use crate::rules::{Removes, RuleSet};
 
@@ -21,6 +21,8 @@ pub struct Actor<'a> {
     pub now: UnixTime,
     pub control: &'a CleanControl,
     pub trash: &'a dyn TrashHost,
+    /// Its threads empty the directories of the whole cleanup.
+    pub remover: &'a Remover,
 }
 
 impl Actor<'_> {
@@ -44,7 +46,10 @@ impl Actor<'_> {
     /// empty, unless its rule keeps it).
     fn delete(&self, item: &PreviewItem, opened: Opened) -> (Outcome, Bytes) {
         let cancelled = || self.control.is_cancelled();
-        let mut removal = remove_contents(&opened.dir, item.candidate.device, &cancelled);
+        let removed = |bytes| self.control.removed_now(bytes);
+        let mut removal =
+            self.remover
+                .remove_contents(&opened.dir, item.candidate.device, &cancelled, &removed);
         if removal.leftovers.is_empty() && !self.keeps(item) {
             drop(opened.dir);
             match opened.parent.remove(&opened.name, EntryKind::Dir) {

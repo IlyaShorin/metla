@@ -4,21 +4,29 @@ import Observation
 
 /// A running cleanup as the progress view shows it.
 public struct CleanupProgressData: Equatable, Sendable {
-    public init(done: UInt64, items: UInt64, removed: UInt64, current: String?) {
+    public init(done: UInt64, items: UInt64, removed: UInt64, planned: UInt64 = 0, current: String?) {
         self.done = done
         self.items = items
         self.removed = removed
+        self.planned = planned
         self.current = current
     }
 
     public let done: UInt64
     public let items: UInt64
+    /// Bytes removed so far; they grow while an item is being removed.
     public let removed: UInt64
+    /// What the preview estimated for the items being executed.
+    public let planned: UInt64
     /// The item being cleaned now (`~/…`).
     public let current: String?
 
+    /// How far the bar is: the larger of the items done and the bytes
+    /// removed of those planned, so one big item moves it too.
     public var share: Double {
-        items == 0 ? 0 : min(1, Double(done) / Double(items))
+        let byItems = items == 0 ? 0 : Double(done) / Double(items)
+        let byBytes = planned == 0 ? 0 : Double(removed) / Double(planned)
+        return min(1, max(byItems, byBytes))
     }
 }
 
@@ -150,7 +158,7 @@ public final class CleanupModel {
             return
         }
         progress = CleanupProgressData(
-            done: now.done, items: now.items, removed: now.removed,
+            done: now.done, items: now.items, removed: now.removed, planned: now.planned,
             current: now.current.map { Format.path($0, home: home) })
     }
 }

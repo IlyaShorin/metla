@@ -359,6 +359,7 @@ pub struct CleanProgress {
     pub items: u64,
     pub done: u64,
     pub removed: Bytes,
+    pub planned: Bytes,
     pub current: Option<PathBuf>,
 }
 
