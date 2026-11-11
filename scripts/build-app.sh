@@ -51,7 +51,7 @@ name="$configuration"
 
 mkdir -p "${METLA_BUILD:-$repo/target/app}"
 build="$(cd "${METLA_BUILD:-$repo/target/app}" && pwd -P)"
-version="0.7.0"
+version="0.7.1"
 
 lib="$("$repo/scripts/build-core.sh" "$flavour")"
 # Each flavour links in a build directory of its own, so a plain app can
@@ -93,7 +93,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>Metla</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$version</string>
-    <key>CFBundleVersion</key><string>7</string>
+    <key>CFBundleVersion</key><string>8</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><false/>
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
