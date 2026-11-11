@@ -40,16 +40,24 @@ impl Flags {
         Flags(self.0 | other.0)
     }
 
-    /// Whether events were lost or the root changed: nothing short of a
-    /// full rescan is right after this.
+    /// Whether the event ids wrapped or the root changed: nothing short
+    /// of a full rescan is right after this, wherever the event is.
     pub fn lost_history(self) -> bool {
-        let lost = [
+        let lost = [Flags::EVENT_IDS_WRAPPED, Flags::ROOT_CHANGED];
+        lost.iter().any(|flag| self.contains(*flag))
+    }
+
+    /// Whether the event's directory must be walked whole: events below
+    /// it were coalesced, or lost (FSEvents marks lost events as
+    /// informational flags beside `MUST_SCAN_SUBDIRS`, on the directory
+    /// they were lost in).
+    pub fn must_scan(self) -> bool {
+        let walk = [
+            Flags::MUST_SCAN_SUBDIRS,
             Flags::USER_DROPPED,
             Flags::KERNEL_DROPPED,
-            Flags::EVENT_IDS_WRAPPED,
-            Flags::ROOT_CHANGED,
         ];
-        lost.iter().any(|flag| self.contains(*flag))
+        walk.iter().any(|flag| self.contains(*flag))
     }
 
     /// Whether a volume appeared or went at the path.

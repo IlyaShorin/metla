@@ -171,6 +171,7 @@ fn the_freshness_line_says_what_was_done_and_whether_it_may_be_out_of_date() {
         watching: true,
         needs_full_scan: false,
         full_scans_ended: 1,
+        scan_reason: None,
     };
     assert_eq!(
         freshness_line(UnixTime(1090), &counters, &fresh),

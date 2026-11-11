@@ -90,6 +90,7 @@ impl Engine {
             profiles: Profiles::standard(cores()),
             profile: options.profile,
             index_limit: None,
+            dirs: None,
         };
         let inner = engine::Engine::open(config)?;
         Ok(Arc::new(Engine { inner }))

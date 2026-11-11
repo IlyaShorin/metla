@@ -37,7 +37,7 @@ import Testing
         let coverage = CoverageSummary(
             gaps: [GapCount(kind: .denied, count: 2), GapCount(kind: .failed, count: 1)],
             skips: [], shallowest: [])
-        let freshness = Freshness(fullScan: 1, updated: 2, pending: 0, state: state, picture: picture, watching: true, needsFullScan: false, fullScansEnded: 1)
+        let freshness = Freshness(fullScan: 1, updated: 2, pending: 0, state: state, picture: picture, watching: true, needsFullScan: false, fullScansEnded: 1, scanReason: nil)
         return Overview(
             root: "/", volume: volume, totals: nil, categories: tallies,
             reclaimable: Reclaimable(freed: Tally(count: 4, bytes: 700), trashed: Tally(count: 1, bytes: 10)),

@@ -14,8 +14,8 @@ use super::REPORT_NOTE;
 use super::kept::encode_report;
 use super::profile::Profile;
 use super::refresh::{RefreshError, Refreshed, refresh};
-use super::shared::{RunningScan, Shared, lock};
-use super::view::{Changed, Failure};
+use super::shared::{Quiet, RunningScan, Shared, lock};
+use super::view::{Changed, Failure, ScanReason};
 use crate::clean::{CleanControl, CleanError, Context};
 use crate::domain::{
     Candidate, Category, CleanupReport, Confirmation, DirId, PreviewId, QuickCategory, Recency,
@@ -24,11 +24,16 @@ use crate::domain::{
 use crate::fs::now;
 use crate::git::verify_outputs;
 use crate::index::{IndexError, IndexReader, IndexWriter, Page, PictureId, Snapshot};
-use crate::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, run};
-use crate::watch::{Coalescer, Event, Flags, Stream, current_event_id, resume_after, volume_uuid};
+use crate::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, mounted_below, run};
+use crate::watch::{
+    Coalescer, Event, Flags, FullCause, Stream, current_event_id, resume_after, volume_uuid,
+};
 
 /// Shallow directories with live counters during a full scan.
 const LIVE_LIMIT: usize = 4096;
+/// How long after a cleanup, beyond the stream's latency, the events
+/// below what it removed are still dropped.
+pub const QUIET_AFTER: Duration = Duration::from_secs(5);
 /// Where the engine keeps the id of the last event it applied.
 pub const EVENTS_NOTE: &str = "events";
 
@@ -85,6 +90,9 @@ pub struct Scheduler {
     pub clock: Instant,
     /// When the next batch may start.
     pub next_batch: Option<Instant>,
+    /// Tasks of a batch that gave way to a cleanup: due before the
+    /// coalescer's next ones.
+    pub left: Vec<RescanTask>,
 }
 
 impl Scheduler {
@@ -117,11 +125,14 @@ impl Scheduler {
         self.work();
     }
 
-    /// How long to sleep: until the coalescer's next deadline, and not
-    /// before the pause after a batch; `None` when nothing waits.
+    /// How long to sleep: until the coalescer's next deadline (now, when
+    /// tasks were left), and not before the pause after a batch; `None`
+    /// when nothing waits.
     fn wait(&self) -> Option<Duration> {
-        let deadline = self.coalescer.next_deadline()?;
-        let at = self.clock + deadline;
+        let at = match self.left.is_empty() {
+            true => self.clock + self.coalescer.next_deadline()?,
+            false => Instant::now(),
+        };
         let at = self.next_batch.map_or(at, |next| at.max(next));
         Some(at.saturating_duration_since(Instant::now()))
     }
@@ -133,7 +144,7 @@ impl Scheduler {
                 let events: Vec<Event> = paths.into_iter().map(reported).collect();
                 self.feed(&events);
             }
-            Command::Scan => self.full_scan(true),
+            Command::Scan => self.full_scan(ScanReason::UserAsked),
             Command::Profile => self.watch(),
             Command::Attention => self.attend(),
             Command::Execute(id, confirmation) => self.clean(|cleaner, context, control, trash| {
@@ -144,9 +155,16 @@ impl Scheduler {
         }
     }
 
+    /// Hands the events to the coalescer, but those below what a cleanup
+    /// removed; a mount or unmount below the root renews the volumes it
+    /// ignores.
     fn feed(&mut self, events: &[Event]) {
         let at = self.clock.elapsed();
-        for event in events {
+        let quiet = self.shared.quiet_paths(Instant::now());
+        if events.iter().any(|e| e.flags.mount_changed()) {
+            self.coalescer.ignore_too(mounted_below(&self.root));
+        }
+        for event in events.iter().filter(|e| news(e, &quiet)) {
             self.coalescer.on_event(event, at);
         }
         self.shared.count(|c| c.events += events.len() as u64);
@@ -175,8 +193,13 @@ impl Scheduler {
             }
             (Some(latency), None) => {
                 let since = resumable(&mut self.reader, self.root.device());
-                let resumed = self.open_stream(latency, since);
-                self.shared.update(|s| s.needs_full_scan |= !resumed);
+                if !self.open_stream(latency, since) {
+                    let reason = match self.picture().ok().flatten() {
+                        Some(_) => ScanReason::HistoryLost,
+                        None => ScanReason::NoPicture,
+                    };
+                    self.shared.need_full_scan(reason);
+                }
             }
         }
     }
@@ -193,10 +216,17 @@ impl Scheduler {
 
     /// Starts the stream after the event `since` (`None`: from now on);
     /// true when it replays from there.
+    /// Events below what a cleanup removes are dropped as they come, so
+    /// a large cleanup does not queue them by the hundred thousand.
     fn open_stream(&mut self, latency: Duration, since: Option<u64>) -> bool {
         let sender = self.sender.clone();
-        let sink = move |events| {
-            let _ = sender.send(Command::Events(events));
+        let shared = Arc::clone(&self.shared);
+        let sink = move |mut events: Vec<Event>| {
+            let quiet = shared.quiet_paths(Instant::now());
+            events.retain(|event| news(event, &quiet));
+            if !events.is_empty() {
+                let _ = sender.send(Command::Events(events));
+            }
         };
         self.origin = Some(since.unwrap_or_else(current_event_id));
         let stream = Stream::start(self.root.path(), since, latency, sink).ok();
@@ -233,14 +263,22 @@ impl Scheduler {
 
     /// Options for a scan with `profile`'s threads and priority.
     fn options(&self, profile: &Profile) -> ScanOptions {
-        ScanOptions::new(self.root.clone(), self.scope.clone())
+        let options = ScanOptions::new(self.root.clone(), self.scope.clone())
             .rules(Arc::clone(&self.shared.rules))
             .threads(profile.threads)
-            .priority(profile.priority())
+            .priority(profile.priority());
+        match &self.shared.dirs {
+            Some(dirs) => options.observer(Arc::clone(dirs)),
+            None => options,
+        }
     }
 
-    /// What is due: a full scan the profile allows, then one batch.
+    /// What is due: a full scan the profile allows, then one batch;
+    /// nothing while a cleanup waits to start.
     fn work(&mut self) {
+        if self.shared.cleanup_waiting() {
+            return;
+        }
         let profile = self.shared.profile();
         self.full_scan_if_due(&profile);
         let waiting = self
@@ -249,7 +287,10 @@ impl Scheduler {
         if waiting.is_some_and(|left| !left.is_zero()) {
             return;
         }
-        let tasks = self.coalescer.due(self.clock.elapsed());
+        let tasks = match self.left.is_empty() {
+            true => self.coalescer.due(self.clock.elapsed()),
+            false => std::mem::take(&mut self.left),
+        };
         if !tasks.is_empty() {
             self.batch(&tasks, &profile);
             self.next_batch = Some(Instant::now() + profile.pause);
@@ -259,40 +300,52 @@ impl Scheduler {
 
     /// Applies one batch; the status keeps its pending count until the
     /// batch is applied, so the engine reads as updating meanwhile. The
-    /// batch is counted only once the status shows it.
+    /// batch is counted only once the status shows it. A cleanup asked
+    /// for stops it before its next task; the rest stays due.
     fn batch(&mut self, tasks: &[RescanTask], profile: &Profile) {
         let options = self.options(profile);
-        let mut full = false;
+        let mut needed = None;
         let mut written = Written::default();
-        for task in tasks {
-            full |= !self.apply(task, &options, &mut written);
+        for (at, task) in tasks.iter().enumerate() {
+            if self.shared.cleanup_waiting() {
+                self.left = tasks[at..].to_vec();
+                break;
+            }
+            needed = needed.or(self.apply(task, &options, &mut written));
         }
         self.after_change(&written);
-        let pending = self.coalescer.pending() as u64;
-        self.shared.update(|s| {
-            s.pending = pending;
-            s.needs_full_scan |= full;
-        });
+        let pending = (self.coalescer.pending() + self.left.len()) as u64;
+        self.shared.update(|s| s.pending = pending);
+        if let Some(reason) = needed {
+            self.shared.need_full_scan(reason);
+        }
+        let applied = tasks.len() - self.left.len();
         self.shared.count(|c| {
             c.batches += 1;
-            c.tasks += tasks.len() as u64;
+            c.tasks += applied as u64;
         });
         let now = self.shared.profile();
         self.full_scan_if_due(&now);
     }
 
-    /// The engine's own full scan, when one is needed, not held, and the
-    /// profile allows it.
+    /// The engine's own full scan, when one is needed, not held, the
+    /// profile allows it and no cleanup waits.
     fn full_scan_if_due(&mut self, profile: &Profile) {
         let status = *lock(&self.shared.status);
-        if status.scan_due() && profile.full_scans {
-            self.full_scan(false);
+        let due = status.scan_due() && profile.full_scans && status.waiting_cleanups == 0;
+        if let Some(reason) = status.reason.filter(|_| due) {
+            self.full_scan(reason);
         }
     }
 
-    /// Applies one task and notes what it wrote; false when only a full
-    /// scan will do.
-    fn apply(&mut self, task: &RescanTask, options: &ScanOptions, written: &mut Written) -> bool {
+    /// Applies one task and notes what it wrote; why only a full scan
+    /// will do, when it will.
+    fn apply(
+        &mut self,
+        task: &RescanTask,
+        options: &ScanOptions,
+        written: &mut Written,
+    ) -> Option<ScanReason> {
         let control = ScanControl::new(usize::MIN);
         let done = refresh(
             task,
@@ -306,13 +359,14 @@ impl Scheduler {
         match done {
             Ok(Refreshed::Applied { candidates }) => {
                 written.candidates.extend(candidates);
-                true
+                None
             }
-            Ok(_) => false,
+            Ok(Refreshed::NoPicture) => Some(ScanReason::NoPicture),
+            Ok(Refreshed::NeedsFullScan) => Some(needs(task, self.coalescer.full_cause())),
             Err(error) => {
                 let failure = refresh_failure(error);
                 self.shared.update(|s| s.failure = Some(failure));
-                false
+                Some(ScanReason::RescanFailed)
             }
         }
     }
@@ -362,11 +416,14 @@ impl Scheduler {
         }
     }
 
-    /// A full scan with the user's threads (`interactive`) or the
-    /// profile's, `Interactive`'s for the first one (Profiles::full_scan).
-    /// A scan cancelled while a picture exists is given up and the
-    /// picture kept; without one it becomes a partial picture.
-    fn full_scan(&mut self, interactive: bool) {
+    /// A full scan for `reason`: with the user's threads when they asked,
+    /// else the profile's (`Interactive`'s for the first one,
+    /// Profiles::full_scan). A scan cancelled while a picture exists is
+    /// given up and the picture kept; without one it becomes a partial
+    /// picture. A scan with a picture gives way to a cleanup asked for
+    /// (Shared::want_cleanup) and is done again after it.
+    fn full_scan(&mut self, reason: ScanReason) {
+        let interactive = reason == ScanReason::UserAsked;
         let had_picture = self.picture().ok().flatten().is_some();
         let profile = if interactive {
             self.shared.profiles.interactive
@@ -374,12 +431,18 @@ impl Scheduler {
             let power = self.shared.effective();
             self.shared.profiles.full_scan(power, had_picture)
         };
+        self.shared.update(|s| s.reason = Some(reason));
+        eprintln!("{}", started_line(reason, profile.threads));
         self.watch();
         let control = Arc::new(ScanControl::new(LIVE_LIMIT));
         *lock(&self.shared.scan) = Some(RunningScan {
             control: Arc::clone(&control),
             interactive,
+            yields: had_picture,
         });
+        if had_picture && self.shared.cleanup_waiting() {
+            control.cancel();
+        }
         self.shared.notify(Changed::Activity);
         let options = self.options(&profile);
         let scanned = scan_into(&mut self.writer, &options, &control, had_picture);
@@ -397,8 +460,12 @@ impl Scheduler {
         });
         *lock(&self.shared.scan) = None;
         let cancelled = control.is_cancelled();
-        if finished {
-            self.shared.update(|s| s.needs_full_scan = cancelled);
+        let gave_way = cancelled && self.shared.cleanup_waiting();
+        if finished || gave_way {
+            self.shared.update(|s| {
+                s.needs_full_scan = cancelled;
+                s.reason = Some(ScanReason::Redone).filter(|_| cancelled).or(s.reason);
+            });
         }
         self.shared.notify(Changed::Picture);
     }
@@ -427,7 +494,10 @@ impl Scheduler {
     ) {
         let control = Arc::new(CleanControl::new());
         *lock(&self.shared.cleanup) = Some(Arc::clone(&control));
-        self.shared.update(|s| s.cleaning = true);
+        self.shared.update(|s| {
+            s.cleaning = true;
+            s.waiting_cleanups = s.waiting_cleanups.saturating_sub(1);
+        });
         let picture = self.picture().ok().flatten();
         let exclusions = self
             .reader
@@ -449,13 +519,19 @@ impl Scheduler {
             self.cleaned(picture, report);
         }
         *lock(&self.shared.report) = Some(result);
+        let latency = self.stream.as_ref().map_or(Duration::ZERO, |s| s.latency);
+        let mut quiet = lock(&self.shared.quiet);
+        quiet_after(&mut quiet, control.begun(), Instant::now(), latency);
+        drop(quiet);
         *lock(&self.shared.cleanup) = None;
         self.shared.update(|s| s.cleaning = false);
         self.shared.notify(Changed::Cleanup);
     }
 
-    /// Marks what a cleanup changed and re-reads the directories holding
-    /// it, so their totals and their ancestors' are right again.
+    /// Marks what a cleanup changed, walks again what it emptied or
+    /// removed (whatever the picture still held there) and re-reads the
+    /// directories holding it, so their totals and their ancestors' are
+    /// right again.
     fn cleaned(&mut self, picture: PictureId, report: &CleanupReport) {
         let changed: Vec<_> = report
             .items
@@ -473,6 +549,10 @@ impl Scheduler {
             .collect();
         let options = self.options(&self.shared.profiles.interactive);
         let mut written = Written::default();
+        for item in &changed {
+            let task = RescanTask::Emptied(item.path.clone());
+            self.apply(&task, &options, &mut written);
+        }
         for parent in parents {
             self.apply(&RescanTask::Shallow(parent), &options, &mut written);
         }
@@ -563,7 +643,47 @@ fn reported(path: PathBuf) -> Event {
 
 fn task_path(task: &RescanTask) -> Option<PathBuf> {
     match task {
-        RescanTask::Shallow(path) | RescanTask::Recursive(path) => Some(path.clone()),
+        RescanTask::Shallow(path) | RescanTask::Recursive(path) | RescanTask::Emptied(path) => {
+            Some(path.clone())
+        }
         RescanTask::Full => None,
     }
+}
+
+/// Whether `event` may say something the picture does not know: not
+/// when it is below a path in `quiet` (what a cleanup removed and walks
+/// again itself), unless it says the ids wrapped or the root changed.
+pub fn news(event: &Event, quiet: &[PathBuf]) -> bool {
+    event.flags.lost_history() || !quiet.iter().any(|path| event.path.starts_with(path))
+}
+
+/// What stays quiet after a cleanup of `removed` that ended `now`, its
+/// last events due within the stream's `latency`: those paths, with the
+/// last cleanup's while they are still quiet, until `QUIET_AFTER` past
+/// the latency.
+pub fn quiet_after(quiet: &mut Quiet, removed: Vec<PathBuf>, now: Instant, latency: Duration) {
+    if quiet.until.is_none_or(|until| until <= now) {
+        quiet.paths.clear();
+    }
+    quiet.paths.extend(removed);
+    quiet.until = Some(now + latency + QUIET_AFTER);
+}
+
+/// Why only a full scan applies `task`: for the coalescer's full rescan,
+/// its `cause`; for any other task, a subtree too large to walk in place.
+pub fn needs(task: &RescanTask, cause: Option<FullCause>) -> ScanReason {
+    match (task, cause) {
+        (RescanTask::Full, Some(FullCause::Overflow)) => ScanReason::TooManyChanges,
+        (RescanTask::Full, _) => ScanReason::EventsDropped,
+        _ => ScanReason::RescanTooLarge,
+    }
+}
+
+/// The line written to stderr when a full scan starts: its reason and
+/// threads, never a path.
+pub fn started_line(reason: ScanReason, threads: usize) -> String {
+    format!(
+        "metla: full scan started ({}), {threads} threads",
+        reason.says()
+    )
 }

@@ -68,6 +68,48 @@ pub enum Failure {
     Scan,
 }
 
+/// Why a full scan was started, or why one is needed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ScanReason {
+    /// There is no picture of the root yet.
+    NoPicture,
+    /// The stored event history could not be resumed: what changed while
+    /// the engine was not watching is unknown.
+    HistoryLost,
+    /// The event stream said events were lost, or reported the root
+    /// itself as changed.
+    EventsDropped,
+    /// More changed directories than the engine tracks, up to the root.
+    TooManyChanges,
+    /// A change only a full scan can apply: the root itself, or a
+    /// subtree too large to rescan in place.
+    RescanTooLarge,
+    /// A rescan failed.
+    RescanFailed,
+    /// A scan was stopped (by a cleanup, or the profile) and is done
+    /// again.
+    Redone,
+    /// The user asked.
+    UserAsked,
+}
+
+impl ScanReason {
+    /// The reason in a few words, without a path: the line the engine
+    /// writes to stderr when a full scan starts.
+    pub fn says(self) -> &'static str {
+        match self {
+            ScanReason::NoPicture => "no picture of the root yet",
+            ScanReason::HistoryLost => "the event history could not be resumed",
+            ScanReason::EventsDropped => "the event stream lost events or reported the root",
+            ScanReason::TooManyChanges => "more changed directories than tracked",
+            ScanReason::RescanTooLarge => "a change too large to rescan in place",
+            ScanReason::RescanFailed => "a rescan failed",
+            ScanReason::Redone => "a stopped scan is done again",
+            ScanReason::UserAsked => "the user asked",
+        }
+    }
+}
+
 /// How much of the disk the picture saw.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Completeness {
@@ -98,6 +140,9 @@ pub struct Freshness {
     /// cancelled or failed: whoever started one knows it is over when this
     /// has grown and no scan runs.
     pub full_scans_ended: u64,
+    /// Why the running or last full scan was started, or why the one
+    /// needed is: `None` before any.
+    pub scan_reason: Option<ScanReason>,
 }
 
 impl Freshness {

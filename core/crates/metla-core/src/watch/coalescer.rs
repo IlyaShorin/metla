@@ -12,9 +12,14 @@
 //! * A recursive task absorbs the tasks below it; more changed children
 //!   of one directory than `collapse` become one recursive task for it.
 //! * Memory is bounded: past `max_dirs` tracked directories the deepest
-//!   collapse into their parents, and at the root that is a full rescan.
-//! * Lost events, wrapped ids and a changed root ask for a full rescan;
-//!   events outside the root or inside an ignored path are dropped.
+//!   collapse into their parents, and only when the root's own children
+//!   no longer fit is that a full rescan. Many changed children of the
+//!   root stay separate tasks.
+//! * Wrapped ids, a changed root, and events lost at the root (or above
+//!   it) or the root reported for a walk of its own ask for a full
+//!   rescan; events lost below the root are a walk of the directory they
+//!   were lost in. Events outside the root or inside an ignored path (the
+//!   engine's data, other volumes mounted below the root) are dropped.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -118,12 +123,24 @@ impl Cooling {
     }
 }
 
+/// Why the coalescer asks for a full rescan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FullCause {
+    /// Lost events, wrapped ids, a changed root, or the root reported
+    /// for a walk of its own.
+    Dropped,
+    /// More changed directories than tracked, up to the root's children.
+    Overflow,
+}
+
 pub struct Coalescer {
     root: PathBuf,
     ignored: Vec<PathBuf>,
     timing: Option<Timing>,
     dirty: BTreeMap<PathBuf, Dirty>,
     full: Option<Wait>,
+    /// Why the pending or last full rescan was asked for.
+    cause: Option<FullCause>,
     cooling: BTreeMap<PathBuf, Cooling>,
     /// The id of the latest event seen.
     latest: Option<u64>,
@@ -139,6 +156,7 @@ impl Coalescer {
             timing,
             dirty: BTreeMap::new(),
             full: None,
+            cause: None,
             cooling: BTreeMap::new(),
             latest: None,
         }
@@ -159,8 +177,9 @@ impl Coalescer {
         let Some(timing) = self.timing else {
             return;
         };
-        if event.flags.lost_history() {
-            return self.mark_full(event.id, now, &timing);
+        let at_root = event.flags.must_scan() && self.root.starts_with(&event.path);
+        if event.flags.lost_history() || at_root {
+            return self.mark_full(FullCause::Dropped, event.id, now, &timing);
         }
         let Some(path) = self.inside(&event.path) else {
             return;
@@ -173,7 +192,7 @@ impl Coalescer {
                 .map(Path::to_path_buf),
             false => Some(path),
         };
-        let recursive = event.flags.contains(Flags::MUST_SCAN_SUBDIRS) && !mount;
+        let recursive = event.flags.must_scan() && !mount;
         if let Some(path) = path.filter(|_| !event.flags.contains(Flags::HISTORY_DONE)) {
             self.mark(path, recursive, event.id, now, &timing);
         }
@@ -258,7 +277,27 @@ impl Coalescer {
         (path.starts_with(&self.root) && !ignored).then_some(path)
     }
 
-    fn mark_full(&mut self, id: u64, now: Duration, timing: &Timing) {
+    /// Drops events inside `paths` from now on, as well as those inside
+    /// the paths given at the start.
+    pub fn ignore_too(&mut self, paths: Vec<PathBuf>) {
+        let fresh: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|p| !self.ignored.contains(p))
+            .collect();
+        self.dirty
+            .retain(|dirty, _| !fresh.iter().any(|p| dirty.starts_with(p)));
+        self.ignored.extend(fresh);
+    }
+
+    /// Why the pending or last full rescan was asked for.
+    pub fn full_cause(&self) -> Option<FullCause> {
+        self.cause
+    }
+
+    fn mark_full(&mut self, cause: FullCause, id: u64, now: Duration, timing: &Timing) {
+        if self.full.is_none() {
+            self.cause = Some(cause);
+        }
         let mut full = self.full.unwrap_or(Wait::new(now, timing.settle, id));
         for dirty in self.dirty.values() {
             full.merge(&dirty.wait);
@@ -273,7 +312,7 @@ impl Coalescer {
             return full.grow(now, id, timing);
         }
         if recursive && path == self.root {
-            return self.mark_full(id, now, timing);
+            return self.mark_full(FullCause::Dropped, id, now, timing);
         }
         let covering = path
             .ancestors()
@@ -323,9 +362,11 @@ impl Coalescer {
     }
 
     /// Too many changed children of one directory become one recursive
-    /// task for it.
+    /// task for it; the root's children stay apart (a full rescan only
+    /// when they no longer fit, see `bound`).
     fn collapse_children(&mut self, path: &Path, timing: &Timing) {
-        let Some(parent) = path.parent().filter(|p| p.starts_with(&self.root)) else {
+        let below = |p: &&Path| p.starts_with(&self.root) && *p != self.root;
+        let Some(parent) = path.parent().filter(below) else {
             return;
         };
         let siblings = self
@@ -357,7 +398,7 @@ impl Coalescer {
         };
         match parent == self.root {
             true => {
-                self.mark_full(merged.since, merged.last, timing);
+                self.mark_full(FullCause::Overflow, merged.since, merged.last, timing);
                 if let Some(full) = &mut self.full {
                     full.merge(&merged);
                 }

@@ -15,7 +15,7 @@ use metla_core::domain::{
 };
 use metla_core::engine::{
     Changed, Completeness, DirRef, EngineState, Failure, Freshness, HotkeyMode, Listed,
-    PowerProfile, Removability, TopFolder, VolumeSpace,
+    PowerProfile, Removability, ScanReason, TopFolder, VolumeSpace,
 };
 use metla_core::index::{Order, SortKey};
 use uniffi::deps::anyhow::anyhow;
@@ -217,6 +217,19 @@ pub struct Freshness {
     pub watching: bool,
     pub needs_full_scan: bool,
     pub full_scans_ended: u64,
+    pub scan_reason: Option<ScanReason>,
+}
+
+#[uniffi::remote(Enum)]
+pub enum ScanReason {
+    NoPicture,
+    HistoryLost,
+    EventsDropped,
+    TooManyChanges,
+    RescanTooLarge,
+    RescanFailed,
+    Redone,
+    UserAsked,
 }
 
 #[uniffi::remote(Record)]

@@ -3,10 +3,11 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Instant;
 
 use super::profile::{PowerProfile, Profile, Profiles};
 use super::settings::Settings;
-use super::view::{Changed, Counters, EngineObserver, EngineState, Failure};
+use super::view::{Changed, Counters, EngineObserver, EngineState, Failure, ScanReason};
 use super::worktrees::Statuses;
 use crate::clean::{CleanControl, CleanError, Cleaner, TrashHost};
 use crate::domain::{Candidate, CleanupReport, Recency};
@@ -14,7 +15,7 @@ use crate::fs::now;
 use crate::git::{Git, WorktreeSettings};
 use crate::index::PictureId;
 use crate::rules::RuleSet;
-use crate::scan::ScanControl;
+use crate::scan::{DirObserver, ScanControl};
 
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -27,6 +28,17 @@ pub type ObserverSlot = Arc<Mutex<Option<Arc<dyn EngineObserver>>>>;
 pub struct RunningScan {
     pub control: Arc<ScanControl>,
     pub interactive: bool,
+    /// A picture exists to fall back on: the scan may give way to a
+    /// cleanup.
+    pub yields: bool,
+}
+
+/// What the last cleanup may have removed, and until when the events
+/// below it carry no news (its own rescans read those directories).
+#[derive(Clone, Debug, Default)]
+pub struct Quiet {
+    pub paths: Vec<PathBuf>,
+    pub until: Option<Instant>,
 }
 
 /// What the engine is doing, as the scheduler last said.
@@ -47,6 +59,12 @@ pub struct Status {
     /// Why the last full scan or update failed; no full scan starts on
     /// its own until the user asks for one.
     pub failure: Option<Failure>,
+    /// Cleanups asked for and not started yet: nothing else starts
+    /// meanwhile.
+    pub waiting_cleanups: u32,
+    /// Why the running or last full scan was started, or why the one
+    /// needed is.
+    pub reason: Option<ScanReason>,
 }
 
 impl Status {
@@ -63,10 +81,13 @@ pub struct Shared {
     pub git: Git,
     pub profiles: Profiles,
     pub trash: Arc<dyn TrashHost + Send + Sync>,
+    /// Shown every directory a scan reads (EngineConfig::dirs).
+    pub dirs: Option<Arc<dyn DirObserver>>,
     pub observer: ObserverSlot,
     pub status: Mutex<Status>,
     pub scan: Mutex<Option<RunningScan>>,
     pub cleanup: Mutex<Option<Arc<CleanControl>>>,
+    pub quiet: Mutex<Quiet>,
     pub report: Mutex<Option<Result<CleanupReport, CleanError>>>,
     pub settings: Mutex<Settings>,
     /// `Err`: why this root cannot be cleaned.
@@ -163,6 +184,44 @@ impl Shared {
         };
         let priority = self.profile().priority();
         (self.statuses).compute(picture, worktrees, now(), settings, priority);
+    }
+
+    /// A cleanup was asked for: nothing else starts before it, and a
+    /// running full scan with a picture to fall back on gives way to it.
+    /// The scheduler checks the count after it registers a scan, so a
+    /// scan that starts meanwhile gives way too.
+    pub fn want_cleanup(&self) {
+        self.update(|s| s.waiting_cleanups += 1);
+        if let Some(scan) = lock(&self.scan).as_ref().filter(|scan| scan.yields) {
+            scan.control.cancel();
+        }
+    }
+
+    pub fn cleanup_waiting(&self) -> bool {
+        lock(&self.status).waiting_cleanups > 0
+    }
+
+    /// The paths whose events carry no news at `now`: the items of the
+    /// running cleanup, and those of the last one until its quiet ends.
+    pub fn quiet_paths(&self, now: Instant) -> Vec<PathBuf> {
+        let running = lock(&self.cleanup).as_ref().map(|c| c.begun());
+        let mut paths = running.unwrap_or_default();
+        let last = lock(&self.quiet);
+        if last.until.is_some_and(|until| now < until) {
+            paths.extend(last.paths.iter().cloned());
+        }
+        paths
+    }
+
+    /// Only a full scan will make the picture right, for `reason`; a scan
+    /// already needed keeps its first reason.
+    pub fn need_full_scan(&self, reason: ScanReason) {
+        self.update(|s| {
+            if !s.needs_full_scan {
+                s.reason = Some(reason);
+            }
+            s.needs_full_scan = true;
+        });
     }
 
     pub fn cancel_background_scan(&self) {

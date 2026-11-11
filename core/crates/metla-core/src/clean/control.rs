@@ -18,6 +18,8 @@ pub struct CleanControl {
     item_removed: AtomicU64,
     planned: AtomicU64,
     current: Mutex<Option<PathBuf>>,
+    /// Every item begun so far.
+    begun: Mutex<Vec<PathBuf>>,
 }
 
 /// A running cleanup's counters, sampled at one moment.
@@ -76,9 +78,20 @@ impl CleanControl {
         current.unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    fn lock_begun(&self) -> std::sync::MutexGuard<'_, Vec<PathBuf>> {
+        let begun = self.begun.lock();
+        begun.unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The items begun so far: what the cleanup may have removed.
+    pub fn begun(&self) -> Vec<PathBuf> {
+        self.lock_begun().clone()
+    }
+
     pub(super) fn begin_item(&self, path: &Path) {
         self.item_removed.store(0, Ordering::Relaxed);
         *self.lock_current() = Some(path.to_path_buf());
+        self.lock_begun().push(path.to_path_buf());
     }
 
     /// The item is done: what it removed and was not counted yet (a

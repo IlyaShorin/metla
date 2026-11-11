@@ -137,7 +137,7 @@ import Testing
     @Test func theUsersScanIsOverWhenItsFullScanHasEnded() {
         func freshness(_ ended: UInt64, _ state: EngineState) -> Freshness {
             Freshness(fullScan: 1, updated: 1, pending: 0, state: state, picture: .complete, watching: true,
-                      needsFullScan: false, fullScansEnded: ended)
+                      needsFullScan: false, fullScansEnded: ended, scanReason: nil)
         }
         let scanning = EngineState.scanning(progress: ProgressSnapshot(dirs: 1, files: 1, bytes: 1, denied: 0),
                                             interactive: true)
@@ -179,7 +179,7 @@ import Testing
     @Test func theFirstScanOfADiskWithoutAPictureIsTheUsers() {
         func freshness(_ state: EngineState, _ picture: Completeness) -> Freshness {
             Freshness(fullScan: nil, updated: nil, pending: 0, state: state, picture: picture, watching: true,
-                      needsFullScan: true, fullScansEnded: 0)
+                      needsFullScan: true, fullScansEnded: 0, scanReason: nil)
         }
         let progress = ProgressSnapshot(dirs: 1, files: 1, bytes: 1, denied: 0)
         #expect(AppModel.takesOver(freshness(.scanning(progress: progress, interactive: false), .missing)))

@@ -110,6 +110,24 @@ impl ScanScope {
     }
 }
 
+/// The mount points of other volumes below `root` (on a device other
+/// than `device`): a scan never enters them, so a change there carries
+/// no news for the picture.
+pub fn other_volumes(root: &Path, device: u64, mounts: &[Mount]) -> Vec<PathBuf> {
+    let below = |m: &&Mount| m.device != device && m.path != root && m.path.starts_with(root);
+    mounts
+        .iter()
+        .filter(below)
+        .map(|m| m.path.clone())
+        .collect()
+}
+
+/// The other volumes mounted below `root` on this machine now.
+pub fn mounted_below(root: &ScanRoot) -> Vec<PathBuf> {
+    let mounted = mounts().unwrap_or_default();
+    other_volumes(root.path(), root.device(), &mounted)
+}
+
 /// The targets of the firmlinks whose source lies under `root`.
 fn firmlink_targets<'a>(list: &'a str, root: &'a Path) -> impl Iterator<Item = &'a str> {
     list.lines()

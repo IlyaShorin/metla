@@ -18,7 +18,7 @@ use crate::fs::{DirHandle, background_thread, entry_at, now, raise_open_file_lim
 use crate::rules::RuleSet;
 
 pub use control::{LIVE_DEPTH, ScanControl};
-pub use scope::ScanScope;
+pub use scope::{ScanScope, mounted_below, other_volumes};
 pub use walk::{Inherited, Stored};
 
 use walk::{Identity, Origin, Walk};

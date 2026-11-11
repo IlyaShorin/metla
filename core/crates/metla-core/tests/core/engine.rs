@@ -16,7 +16,7 @@ use metla_core::domain::{
 use metla_core::engine::{
     Changed, Completeness, DirRef, Engine, EngineConfig, EngineError, EngineObserver, EngineState,
     Failure, FolderEntry, HotkeyMode, LISTED_FILES, Largest, Listed, PowerProfile, Profile,
-    Profiles, Removability, Settings, Watching,
+    Profiles, Removability, ScanReason, Settings, Watching,
 };
 use metla_core::index::{Order, Page, SortKey};
 use metla_core::watch::Timing;
@@ -24,7 +24,7 @@ use metla_core::watch::Timing;
 use crate::repo::{git, isolated, pushed_repository, pushed_worktree};
 use crate::support::{Fixture, write_file};
 
-const ALL: Page = Page {
+pub const ALL: Page = Page {
     offset: 0,
     limit: 1000,
 };
@@ -114,6 +114,7 @@ impl Place {
             profiles: profiles(),
             profile,
             index_limit: None,
+            dirs: None,
         }
     }
 
@@ -1454,16 +1455,30 @@ fn a_counted_batch_is_no_longer_pending() {
     assert_eq!(engine.freshness().unwrap().state, EngineState::Idle);
 }
 
+/// The root's changed children, `n` of them.
+fn children(place: &Place, n: usize) -> Vec<PathBuf> {
+    (0..n).map(|i| place.path(&format!("c{i}"))).collect()
+}
+
+/// The most directories the test profiles track.
+fn cap() -> usize {
+    quick(true).timing.unwrap().max_dirs
+}
+
 #[test]
-fn many_changed_children_of_the_root_are_one_full_scan() {
+fn many_changed_children_of_the_root_are_rescanned_apart_and_past_the_cap_scanned_again() {
     let place = Place::new(HOME);
     let engine = place.open();
     settled(&engine);
-    let children: Vec<PathBuf> = (0..17).map(|i| place.path(&format!("c{i}"))).collect();
-    engine.changed(children).unwrap();
+    engine.changed(children(&place, 17)).unwrap();
+    until(&engine, |e| e.counters().tasks == 17);
+    settled(&engine);
+    assert_eq!(engine.counters().full_scans, 1, "more than collapse (16)");
+    engine.changed(children(&place, cap() + 1)).unwrap();
     until(&engine, |e| e.counters().full_scans == 2);
     settled(&engine);
-    assert_eq!(engine.counters().tasks, 1, "one task: the full scan");
+    let reason = engine.freshness().unwrap().scan_reason;
+    assert_eq!(reason, Some(ScanReason::TooManyChanges));
 }
 
 #[test]
@@ -1482,8 +1497,7 @@ fn after_a_cancel_the_engine_holds_and_the_user_lifts_the_hold() {
     assert_eq!(engine.counters().full_scans, 0);
     engine.start_scan().unwrap();
     settled(&engine);
-    let children: Vec<PathBuf> = (0..17).map(|i| place.path(&format!("c{i}"))).collect();
-    engine.changed(children).unwrap();
+    engine.changed(children(&place, cap() + 1)).unwrap();
     until(&engine, |e| e.counters().full_scans == 2);
 }
 

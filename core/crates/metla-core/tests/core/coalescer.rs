@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use metla_core::domain::RescanTask;
-use metla_core::watch::{Coalescer, Event, Flags, Timing};
+use metla_core::watch::{Coalescer, Event, Flags, FullCause, Timing};
 
 use crate::support::Rng;
 
@@ -232,18 +232,74 @@ fn a_hard_cap_of_nothing_turns_a_change_of_the_root_into_a_full_rescan() {
 }
 
 #[test]
-fn walking_the_whole_root_again_is_a_full_rescan() {
+fn walking_the_whole_root_again_is_a_full_rescan_and_many_changed_children_are_not() {
     let mut c = coalescer();
     c.on_event(&event("/r", Flags::MUST_SCAN_SUBDIRS, 2), secs(0.0));
     assert_eq!(c.due(secs(100.0)), [RescanTask::Full]);
-    for name in ["a", "b", "c", "d", "e"] {
+    assert_eq!(c.full_cause(), Some(FullCause::Dropped));
+    let names = ["a", "b", "c", "d", "e"];
+    for name in names {
         changed(&mut c, &format!("/r/{name}"), 200.0);
     }
+    let apart: Vec<RescanTask> = names.iter().map(|n| shallow(&format!("/r/{n}"))).collect();
     assert_eq!(
         c.due(secs(300.0)),
-        [RescanTask::Full],
-        "five changed children of the root"
+        apart,
+        "five changed children of the root, more than collapse (4)"
     );
+}
+
+#[test]
+fn events_lost_below_the_root_are_a_walk_of_where_they_were_lost() {
+    for flags in [
+        Flags::USER_DROPPED,
+        Flags::KERNEL_DROPPED,
+        Flags::MUST_SCAN_SUBDIRS.with(Flags::KERNEL_DROPPED),
+    ] {
+        let mut c = coalescer();
+        c.on_event(&event("/r/a/b", flags, 4), secs(0.0));
+        assert_eq!(c.due(secs(100.0)), [recursive("/r/a/b")], "{flags:?}");
+        assert_eq!(c.full_cause(), None, "{flags:?}");
+        c.on_event(&event("/", flags, 5), secs(100.0));
+        assert_eq!(
+            c.due(secs(200.0)),
+            [RescanTask::Full],
+            "{flags:?} above the root"
+        );
+    }
+}
+
+#[test]
+fn the_cause_of_a_full_rescan_is_kept_until_another_one() {
+    let mut c = coalescer();
+    assert_eq!(c.full_cause(), None);
+    c.on_event(&event("/r", Flags::USER_DROPPED, 2), secs(0.0));
+    assert_eq!(c.full_cause(), Some(FullCause::Dropped));
+    c.on_event(&event("/r/a", Flags::KERNEL_DROPPED, 3), secs(0.5));
+    assert_eq!(c.full_cause(), Some(FullCause::Dropped), "the first cause");
+    assert_eq!(c.due(secs(100.0)), [RescanTask::Full]);
+    let tight = Timing {
+        max_dirs: 2,
+        ..timing()
+    };
+    let mut over = Coalescer::new(Path::new(ROOT), Vec::new(), Some(tight));
+    for name in ["a", "b", "c"] {
+        changed(&mut over, &format!("/r/{name}"), 0.0);
+    }
+    assert_eq!(over.full_cause(), Some(FullCause::Overflow));
+}
+
+#[test]
+fn paths_ignored_later_are_dropped_and_forgotten() {
+    let mut c = coalescer();
+    changed(&mut c, "/r/vol/x", 0.0);
+    changed(&mut c, "/r/a", 0.0);
+    c.ignore_too(vec![PathBuf::from("/r/vol"), PathBuf::from("/r/data")]);
+    changed(&mut c, "/r/vol/y", 0.5);
+    assert_eq!(c.pending(), 1);
+    assert_eq!(c.due(secs(100.0)), [shallow("/r/a")]);
+    changed(&mut c, "/r/data/z", 101.0);
+    assert_eq!(c.pending(), 0, "ignored from the start");
 }
 
 #[test]
@@ -449,7 +505,7 @@ fn a_restarted_stream_resumes_after_the_last_change_handed_out() {
 fn covers(task: &RescanTask, path: &Path) -> bool {
     match task {
         RescanTask::Full => true,
-        RescanTask::Recursive(dir) => path.starts_with(dir),
+        RescanTask::Recursive(dir) | RescanTask::Emptied(dir) => path.starts_with(dir),
         RescanTask::Shallow(dir) => path == dir,
     }
 }

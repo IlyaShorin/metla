@@ -18,6 +18,7 @@ mod index;
 mod kept;
 mod offered;
 mod porcelain;
+mod preempt;
 mod preview;
 mod remove;
 mod repo;

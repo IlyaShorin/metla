@@ -139,3 +139,19 @@ the gates in [QUALITY.md](QUALITY.md).
 26. **`scripts/quality-swift.sh` has no full-disk guard**, unlike
     `scripts/quality.sh`: on a volume that runs full its tests fail for
     reasons that are not in the code.
+27. **Events below what a cleanup removed are dropped for a while.**
+    During a cleanup and for the stream's latency plus 5 s after it,
+    events below the items it began are not applied: the cleanup walks
+    those directories again itself. Something written there in that
+    window by another program is seen only at its next change there, or
+    at the next full scan. Lost-history events (wrapped ids, a changed
+    root) are never dropped.
+28. **Other volumes mounted below the root are ignored from the moment
+    they are seen mounted;** the list is read again when a volume is
+    mounted, but a mount point that later becomes an ordinary directory
+    of the root's volume stays ignored until the engine is opened again.
+29. **Preemption and the event flood were measured on a synthetic tree
+    only** (PERFORMANCE.md, 0.7.1): a cleanup through the app on the
+    real disk, and the full scan the user saw after one, were not
+    reproduced on the real disk; which reason started that scan is not
+    known (the engine now writes it to stderr when a full scan starts).

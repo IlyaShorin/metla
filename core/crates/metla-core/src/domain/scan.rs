@@ -90,6 +90,10 @@ pub enum RescanTask {
     Shallow(PathBuf),
     /// Walk a directory and everything below it again.
     Recursive(PathBuf),
+    /// Walk again a directory a cleanup emptied or removed: what the
+    /// picture still holds below it is gone, so its size there does not
+    /// bound the walk.
+    Emptied(PathBuf),
     /// Scan the whole root again.
     Full,
 }

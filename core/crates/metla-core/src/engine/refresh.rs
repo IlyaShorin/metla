@@ -69,10 +69,11 @@ pub fn refresh(
     control: &ScanControl,
     now: UnixTime,
 ) -> Result<Refreshed, RefreshError> {
-    let (mut path, mut whole) = match task {
+    let (mut path, mut whole, bounded) = match task {
         RescanTask::Full => return Ok(Refreshed::NeedsFullScan),
-        RescanTask::Shallow(path) => (path.clone(), false),
-        RescanTask::Recursive(path) => (path.clone(), true),
+        RescanTask::Shallow(path) => (path.clone(), false, true),
+        RescanTask::Recursive(path) => (path.clone(), true, true),
+        RescanTask::Emptied(path) => (path.clone(), true, false),
     };
     let mut ctx = Attempt {
         options,
@@ -80,6 +81,7 @@ pub fn refresh(
         writer,
         control,
         now,
+        bounded,
     };
     loop {
         match ctx.attempt(&path, whole)? {
@@ -96,6 +98,9 @@ struct Attempt<'a> {
     writer: &'a IndexWriter,
     control: &'a ScanControl,
     now: UnixTime,
+    /// A subtree the picture holds as larger than `MAX_SUBTREE` is left
+    /// to a full scan; not for a directory a cleanup emptied.
+    bounded: bool,
 }
 
 impl Attempt<'_> {
@@ -106,7 +111,8 @@ impl Attempt<'_> {
             return Ok(Step::Done(Refreshed::NoPicture));
         };
         let root = plan.target.parent.is_none();
-        if plan.target.stored.is_none() && (root || plan.size > MAX_SUBTREE) {
+        let large = self.bounded && plan.size > MAX_SUBTREE;
+        if plan.target.stored.is_none() && (root || large) {
             return Ok(Step::Done(Refreshed::NeedsFullScan));
         }
         let parent = plan.target.path.parent().map(Path::to_path_buf);

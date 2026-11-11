@@ -508,16 +508,22 @@ M4 changes:
     time multiplied again (remembered for as many directories as are
     tracked);
   * makes `MustScanSubDirs` a recursive task, which absorbs everything
-    below it; turns more than `collapse` changed children of one
-    directory into one recursive task for it; past `max_dirs` tracked
-    directories collapses the deepest into their parents; a recursive
-    task at the root, lost events (`UserDropped`, `KernelDropped`),
-    wrapped ids and a changed root are one full rescan, which replaces
-    the rest;
+    below it, and so are lost events (`UserDropped`, `KernelDropped`:
+    FSEvents sets them beside `MustScanSubDirs` on the directory they
+    were lost in); turns more than `collapse` changed children of one
+    directory into one recursive task for it, but not the root's
+    children, which stay tasks of their own; past `max_dirs` tracked
+    directories collapses the deepest into their parents, a full rescan
+    only when the root's own children no longer fit; a walk asked for
+    at the root or above it (lost events there included), wrapped ids
+    and a changed root are one full rescan, which replaces the rest, and
+    the coalescer keeps why (`FullCause::{Dropped, Overflow}`);
   * re-reads the directory holding a mount point when a volume is
     mounted or unmounted;
-  * drops events outside the root, inside the engine's data directory
-    and inside the scope's excluded paths;
+  * drops events outside the root, inside the engine's data directory,
+    inside the scope's excluded paths and inside the other volumes
+    mounted below the root (`scan::other_volumes`, read again when a
+    volume is mounted: the scan never enters them);
   * hands out at most a batch of due tasks at a time, deepest first, and
     says when the next one is due (`next_deadline`); `Off` forgets
     everything and hands out nothing.
@@ -545,12 +551,29 @@ one thing at a time:
   it; a cancelled scan with a picture to fall back on is given up (the
   picture stays current), the first one becomes a partial picture; after
   the user cancels, no full scan starts on its own until the user starts
-  one;
+  one. Each records why it started (`ScanReason::{NoPicture,
+  HistoryLost, EventsDropped, TooManyChanges, RescanTooLarge,
+  RescanFailed, Redone, UserAsked}`, in `Freshness::scan_reason`, across
+  the FFI) and writes one line to stderr with the reason and threads,
+  never a path;
 * batches of due tasks, the profile's pause apart; a task that needs a
   full scan makes one;
-* cleanups (`execute_confirmed`, `quick_clean`): nothing else runs
-  meanwhile; then the cleaned directories are marked and their parents
-  rescanned shallowly;
+* cleanups (`execute_confirmed`, `quick_clean`) start at once: the API
+  call counts a waiting cleanup and cancels a running full scan that
+  has a picture to fall back on (the engine's or the user's) before it
+  sends the command; the scheduler starts nothing while a cleanup
+  waits, a batch stops before its next task (the rest stays due,
+  `Scheduler::left`), and a scan that gave way is given up, its picture
+  kept, and done again after the cleanup (`ScanReason::Redone`). The
+  first scan of a root is never stopped for a cleanup: without a picture
+  there is nothing to clean. Nothing else runs during a cleanup; then
+  the cleaned directories are marked, each one walked again in place
+  (`RescanTask::Emptied`, however large the picture held it) and their
+  parents rescanned shallowly. Events below what a cleanup removes say
+  nothing these rescans do not: they are dropped as they arrive, while
+  it runs and for the stream's latency plus `QUIET_AFTER` (5 s) after
+  (`engine::news`, `Shared::quiet_paths`), so a large removal neither
+  queues hundreds of thousands of events nor turns into a full scan;
 * after each of these: Git's verdicts on project output that has none
   yet (the only rows without one are new or re-read), worktree statuses
   where something changed (once their list was asked for), the stored

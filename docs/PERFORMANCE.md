@@ -615,3 +615,45 @@ with the load above, and the second was 31 to 67 % slower than the
 first, far more than the difference between 4 and 8 threads); trees of
 other shapes (few large files, one flat directory of many files, deep
 chains); other Macs and other core counts; a build of e5da640 itself.
+
+## 0.7.1: a second cleanup right after a large one
+
+**Conditions.** As above (same machine, a scratch directory on the SSD,
+warm cache), at 21:33 (before) and 21:47 and 21:50 (after), one-minute
+load average 3.4 to 5.1, the user's own Metla app watching `/` meanwhile.
+A small release program outside the repository builds a fixture root
+with one app cache of 120,000 directories and 360,000 files of 100 B
+(more directories than `MAX_SUBTREE`, 100,000) and one small cache,
+opens an engine on it with FSEvents (Background profile, someone
+looking), cleans the big cache, and the moment its report is in, asks
+for a cleanup of the small one. One run each.
+
+| | before (4a9d6ef) | after, quiet events only | after, lost events below the root a walk |
+|---|---:|---:|---:|
+| big cleanup | 33.0 s | 32.7 s | 32.1 s |
+| second cleanup started after | 1.15 s | 0.00 s | 0.00 s |
+| events handed to the engine since the first cleanup | 480,363 | 24 | 0 |
+| event batches queued (wake-ups) | 16,215 | 5 | 2 |
+| full scans after the cleanups | 1 (2 threads) | 1: lost events | 0 |
+| peak RSS of the process | 214 MB | 38 MB | 38 MB |
+| idle again after the second cleanup | 28.9 s | 30.1 s | 0.0 s |
+
+Before, the engine took the 480,363 directory events of the removal
+one batch at a time after the cleanup (the second cleanup waited
+1.15 s behind them), then one recursive rescan of the big cache, which
+the picture still held as 120,301 directories: past `MAX_SUBTREE`, so a
+full scan. The queued events took the process from 26 MB to 214 MB. Now
+the events below what the cleanup removes are dropped as they arrive,
+the cleanup walks the emptied cache again itself (`RescanTask::Emptied`,
+not bounded by the stale size), and the events FSEvents marks as lost
+below the root (`KernelDropped`/`UserDropped`, on the cache itself) are
+a walk of that directory instead of a full scan.
+
+**Not measured:** the same on the real disk or through the app; the
+user's 60 GB cleanup (millions of files); the 1.06 GB RSS the user's app
+reached was not reproduced (214 MB here for 120,000 directories; the
+queued events grow with the directories removed, so millions of them
+would come near it, but that is an estimate); a full scan that a
+cleanup preempts was measured only in tests (the gate tests in
+`tests/core/preempt.rs`).
+

@@ -477,6 +477,33 @@ fn a_vanished_directory_makes_its_parent_the_one_rescanned_shallowly() {
     assert_eq!(reader.read(|snap| snap.dir(&fx.path("a/b"))).unwrap(), None);
 }
 
+/// A directory a cleanup emptied is walked again in place however large
+/// the picture still holds it: what was there is gone.
+#[test]
+fn an_emptied_directory_is_walked_again_whatever_size_the_picture_gave_it() {
+    let fx = Fixture::new();
+    fx.build(&["big/x/y=1"]);
+    let options = options(fx.root());
+    let mut scanned = scan_with(&options, &ScanControl::new(0));
+    scanned.records.get_mut(&fx.path("big")).unwrap().tree.dirs = MAX_SUBTREE + 1;
+    let aux = Fixture::new();
+    let index = aux.path("index.sqlite");
+    let mut writer = IndexWriter::open(&index).unwrap();
+    let session = writer.start_scan(UnixTime(1)).unwrap();
+    session.send(scanned.records.into_values().collect());
+    session.finish(&scanned.summary).unwrap();
+    let mut reader = IndexReader::open(&index).unwrap();
+    fs::remove_dir_all(fx.path("big/x")).unwrap();
+    let task = RescanTask::Emptied(fx.path("big"));
+    let control = ScanControl::new(0);
+    let done = refresh(&task, &options, &mut reader, &writer, &control, UnixTime(3));
+    assert_eq!(done.unwrap(), Refreshed::Applied { candidates: vec![] });
+    assert_eq!(
+        reader.read(|snap| snap.dir(&fx.path("big/x"))).unwrap(),
+        None
+    );
+}
+
 #[test]
 fn a_subtree_larger_than_the_limit_is_scanned_again_whole() {
     for (dirs, expected) in [

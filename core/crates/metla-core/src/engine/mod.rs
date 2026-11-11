@@ -35,18 +35,20 @@ use crate::index::{
     IndexEditor, IndexError, IndexReader, IndexWriter, Order, Page, Picture, PictureId, Snapshot,
 };
 use crate::rules::RuleSet;
-use crate::scan::{ScanRoot, ScanScope};
+use crate::scan::{DirObserver, ScanRoot, ScanScope, mounted_below};
 use crate::watch::Coalescer;
 
 pub use kept::{decode_report, encode_report};
 pub use listing::{LISTED_FILES, Largest, Rest};
 pub use profile::{OFF, PowerProfile, Profile, Profiles};
 pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
-pub use scheduler::{EVENTS_NOTE, Watching};
+pub use scheduler::{EVENTS_NOTE, QUIET_AFTER, Watching, needs, news, quiet_after, started_line};
 pub use settings::{HotkeyMode, Settings};
+pub use shared::Quiet;
 pub use view::{
     CandidatePage, Changed, Completeness, Counters, DirRef, EngineObserver, EngineState, Failure,
-    Folder, FolderEntry, Freshness, Listed, Overview, Removability, TopFolder, VolumeSpace,
+    Folder, FolderEntry, Freshness, Listed, Overview, Removability, ScanReason, TopFolder,
+    VolumeSpace,
 };
 
 use scheduler::{ALL, Command, Scheduler, resumable};
@@ -81,6 +83,9 @@ pub struct EngineConfig {
     /// The most the index file may grow to; past it a scan fails as on
     /// a full disk (`Failure::NoSpace`). `None`: as much as the disk has.
     pub index_limit: Option<Bytes>,
+    /// Shown every directory a scan or rescan reads: tests hold a scan
+    /// at a directory with it. `None` in the app.
+    pub dirs: Option<Arc<dyn DirObserver>>,
 }
 
 #[derive(Debug)]
@@ -168,24 +173,29 @@ fn stored_settings(reader: &mut IndexReader) -> Result<Settings, EngineError> {
     Ok(text.map_or_else(Settings::default, |text| Settings::decode(&text)))
 }
 
-/// Whether only a full scan makes the picture right: there is no picture
-/// of this root, its last scan never finished, or the event history it
-/// would resume from is lost.
+/// Why only a full scan makes the picture right, if it does: there is
+/// no picture of this root, its last scan never finished, or the event
+/// history it would resume from is lost.
 fn needs_full_scan(
     reader: &mut IndexReader,
     root: &ScanRoot,
     config: &EngineConfig,
     settings: &Settings,
-) -> Result<bool, EngineError> {
+) -> Result<Option<ScanReason>, EngineError> {
     let scan = reader.read(|snap| snap.scan())?;
     let current = scan.as_ref().is_some_and(|scan| scan.is_current());
     let pictured = scan.and_then(|scan| scan.picture);
-    let usable = current && pictured.is_some_and(|picture| picture.root == root.path());
+    let ours = pictured.is_some_and(|picture| picture.root == root.path());
     let streams = config.watching != Watching::Manual;
     let timing = config.profiles.of(config.profile).timing;
     let watched = settings.background && timing.is_some();
     let follows = !(streams && watched) || resumable(reader, root.device()).is_some();
-    Ok(!usable || !follows)
+    Ok(match (ours, current, follows) {
+        (false, ..) => Some(ScanReason::NoPicture),
+        (true, false, _) => Some(ScanReason::Redone),
+        (true, true, false) => Some(ScanReason::HistoryLost),
+        (true, true, true) => None,
+    })
 }
 
 /// What the engine shares between its threads, and the worktree worker.
@@ -193,7 +203,7 @@ fn share(
     parts: Parts,
     root: &ScanRoot,
     settings: Settings,
-    needs_full_scan: bool,
+    reason: Option<ScanReason>,
 ) -> (Arc<Shared>, JoinHandle<()>) {
     let rules = Arc::new(RuleSet::new(&parts.home, &parts.user));
     let cleaner = Cleaner::new(
@@ -217,14 +227,17 @@ fn share(
         git: parts.git,
         profiles: parts.profiles,
         trash: parts.trash,
+        dirs: parts.dirs,
         observer,
         status: Mutex::new(Status {
             profile: parts.profile,
-            needs_full_scan,
+            needs_full_scan: reason.is_some(),
+            reason,
             ..Status::default()
         }),
         scan: Mutex::default(),
         cleanup: Mutex::default(),
+        quiet: Mutex::default(),
         report: Mutex::default(),
         settings: Mutex::new(settings),
         cleaner: Mutex::new(cleaner),
@@ -235,8 +248,8 @@ fn share(
 }
 
 /// Starts the engine's thread: the scheduler with a reader of its own and
-/// the writer, and a coalescer that ignores the data directory and what
-/// the scan's scope leaves out.
+/// the writer, and a coalescer that ignores the data directory, what the
+/// scan's scope leaves out and the other volumes mounted below the root.
 fn start_scheduler(
     shared: &Arc<Shared>,
     (data_dir, index): (PathBuf, PathBuf),
@@ -248,6 +261,7 @@ fn start_scheduler(
     let scope = setup(root.path(), ScanScope::detect(&root))?;
     let mut ignored = vec![data_dir];
     ignored.extend(scope.excluded().map(Path::to_path_buf));
+    ignored.extend(mounted_below(&root));
     let coalescer = Coalescer::new(root.path(), ignored, shared.profile().timing);
     let scheduler = Scheduler {
         shared: Arc::clone(shared),
@@ -263,6 +277,7 @@ fn start_scheduler(
         origin: None,
         clock: Instant::now(),
         next_batch: None,
+        left: Vec::new(),
     };
     let thread = thread::Builder::new().name("metla-engine".into());
     setup(
@@ -280,6 +295,7 @@ struct Parts {
     trash: Arc<dyn TrashHost + Send + Sync>,
     profiles: Profiles,
     profile: PowerProfile,
+    dirs: Option<Arc<dyn DirObserver>>,
 }
 
 fn setup<T>(what: &Path, result: std::io::Result<T>) -> Result<T, EngineError> {
@@ -296,7 +312,7 @@ impl Engine {
         let settings = stored_settings(&mut reader)?;
         let report = kept_report(&mut reader)?;
         let root = setup(&config.root, ScanRoot::new(&config.root))?;
-        let needs_full_scan = needs_full_scan(&mut reader, &root, &config, &settings)?;
+        let reason = needs_full_scan(&mut reader, &root, &config, &settings)?;
         let watching = config.watching;
         let parts = Parts {
             // The scan reads the root's canonical path: the home must be
@@ -308,8 +324,9 @@ impl Engine {
             trash: config.trash,
             profiles: config.profiles,
             profile: config.profile,
+            dirs: config.dirs,
         };
-        let (shared, worktrees) = share(parts, &root, settings, needs_full_scan);
+        let (shared, worktrees) = share(parts, &root, settings, reason);
         *lock(&shared.report) = report.map(Ok);
         let (commands, queue) = mpsc::channel();
         let editor = writer.editor();
@@ -405,6 +422,7 @@ impl Engine {
             watching: status.watching,
             needs_full_scan: status.needs_full_scan,
             full_scans_ended: self.counters().full_scans,
+            scan_reason: status.reason,
         }
     }
 
@@ -608,18 +626,24 @@ impl Engine {
     }
 
     /// Executes the preview `id` as confirmed, on the engine's thread;
-    /// follow it with `cleanup_progress` and `last_report`.
+    /// follow it with `cleanup_progress` and `last_report`. It starts at
+    /// once: a full scan with a picture to fall back on gives way to it
+    /// and is done again afterwards, and a batch of rescans stops after
+    /// the task it is on.
     pub fn execute_confirmed(
         &self,
         id: PreviewId,
         confirmation: Confirmation,
     ) -> Result<(), EngineError> {
+        self.shared.want_cleanup();
         self.send(Command::Execute(id, confirmation))
     }
 
     /// Cleans the preselected candidates of exactly `categories` without
-    /// a confirmation step, on the engine's thread.
+    /// a confirmation step, on the engine's thread; it starts at once, as
+    /// `execute_confirmed` does.
     pub fn quick_clean(&self, categories: Vec<QuickCategory>) -> Result<(), EngineError> {
+        self.shared.want_cleanup();
         self.send(Command::Quick(categories))
     }
 
