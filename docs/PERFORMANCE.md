@@ -478,3 +478,93 @@ and has settled, within Interactive's 30 s cap. The bench now waits
 for a directory made after the churn to appear before it calls the
 engine quiet (66877a2): with fseventsd late, being idle right after the
 churn did not mean that the churn's events had arrived.
+
+## M7: the app on the real disk, the release build, removal throughput
+
+**Conditions.** Apple M3 Pro (6 performance and 6 efficiency cores),
+36 GB, macOS 26.6.2 (25G83), on AC power (battery charged); the internal
+SSD about 98 % full (13 GB available). Builds at 4cb5d3d, and at 0dc38a6
+for the second first scan: the release app linked with the **plain**
+library (`build-app.sh --release --plain`: it cannot clean anything but
+a fixture, and says so when it starts) for every number on the real
+root, read-only; the release app with the **production** library only
+on a fixture; release `metla-cli` (no LTO). No Full Disk Access, not
+root. Data directories, fixtures and indexes on the RAM disk (APFS,
+6 GB), deleted afterwards. Warm cache (purging it needs root). Nothing
+of ours or of the architect's ran meanwhile (one-minute load average
+2.4 to 6.3, the desktop in ordinary use); fseventsd at 0.0 to 4.6 % of a
+core. The apps were started from a terminal, so they were not the
+active app and their windows were behind others: App Nap applied to
+them (see the first scan). **Each number is one run unless a count is
+given; the M7 measurements were cut short by a decision to stop long
+runs (see "Not measured").**
+
+The app prints what it measures with `METLA_PRINT_LAUNCH_TIMING=1`
+(ARCHITECTURE section 11): its build and library, the time from the
+process's start (kernel start time) to its first window, the saved
+picture, a scan's first numbers and a full scan's end, its resident
+memory then and the peak, and how late its main thread was (a 50 ms
+heartbeat; macOS calls a stall of 250 ms or more a hang). Under App Nap
+the heartbeat's own timer is delayed too, so stalls are only reported
+for runs where the minute line came on time.
+
+**The release app with the production library, on a fixture** (the only
+place it is started), its picture saved, three launches, each followed
+for a minute:
+
+| run | first window | saved picture shown | RSS then | a minute later (peak) | main thread: longest stall, hangs | CPU in the minute |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 171 ms | 345 ms | 110.2 MB | 113.2 MB (116.4 MB) | 27 ms, 0 | 0.60 s |
+| 2 | 171 ms | 365 ms | 114.8 MB | 119.4 MB (122.4 MB) | 37 ms, 0 | 0.61 s |
+| 3 | 221 ms | 483 ms | 114.3 MB | 128.6 MB (142.4 MB) | 5 ms, 0 | 0.65 s |
+
+Into an empty data directory the fixture's first scan showed its first
+numbers after 909 ms and ended after 1,020 ms. M5's release app on a
+fixture: first window 380 to 460 ms, first picture 547 to 627 ms.
+
+**First scan of the real disk through the app** (plain release app,
+`/`, empty data directory, the window open but behind other windows):
+
+| build | first window | first numbers | full scan ended | RSS at the end (peak) | main thread | CPU |
+|---|---:|---:|---:|---:|---|---:|
+| 4cb5d3d: the engine's own scan (Background, 2 threads, no activity) | 738 ms | 1.1 s | **not after 27 min** (stopped; index 275 MB written) | 168.6 MB at the stop (153.8 MB peak in the first minute) | longest stall 111 ms, 0 hangs in the first minute | 19 min 58 s |
+| 0dc38a6: taken over as the user's scan (Interactive, activity held) | 208 ms | 0.4 s | **199 s** | 217.8 MB (268.6 MB) | longest stall 224 ms, 0 hangs during the scan | 2 min 58 s |
+
+Before 0dc38a6 the process ran at priority 4 (App Nap's background
+level) and a sample showed both scan threads waiting in `openat`; the
+first minute's numbers came on time, the rest of the scan crawled. The
+scan the app now takes over keeps the two threads it started with (the
+profile's thread count applies to the next scan), but runs at normal
+priority. For comparison, `metla-cli scan --root /` (8 threads, from a
+terminal) took 90 to 97 s in M5. Index after the scan: 276.6 MB.
+
+**Launch with the saved picture of the real disk** (plain release app,
+once): first window 286 ms, saved picture shown 575 ms, RSS 121.4 MB.
+The previous run had been stopped right after its scan, before the
+event history it would resume from was stored, so this start found the
+history lost and began a full scan of its own (Background, under App
+Nap); its minute line never came, and no further launch was measured.
+
+**Removal throughput** (`metla-cli clean` of one app cache inside a
+fixture on the RAM disk, release CLI, `/usr/bin/time -l`, once each;
+the fixture scanned first; the rule keeps the cache directory and
+empties it):
+
+| cache | wall | CPU user + system | peak RSS | found / removed | freed on disk (measured) |
+|---|---:|---:|---:|---:|---:|
+| 200,000 empty files in 2,000 directories | 10.92 s | 0.12 + 7.48 s | 8.5 MB | 282.6 kB / 282.6 kB (with the fixture's other cache) | 50.4 MB |
+| 20,000 files of 16 KiB in 200 directories | 1.39 s | 0.02 + 0.90 s | 8.4 MB | 328.0 MB / 328.0 MB | 335.6 MB |
+
+About 18,000 empty files a second, and 236 MB a second for files with
+data, on a RAM disk: the SSD was not measured (fixtures only ever live
+on the RAM disk). The 50.4 MB freed by the empty files is the file
+system's metadata, which allocated sizes do not count.
+
+**Not measured in M7** (each stays as M5 and M6 measured it, with the
+engine through the CLI): the app idle in the menu bar for ten minutes
+(CPU, RSS, wake-ups), the churn bench with the app running, the
+incremental refresh (`bench refresh`) and a full rescan through the
+app with a saved picture (`--rescan`); a second and third launch on the
+real disk's picture; RSS after a minute on the real disk; a first scan
+with the app active (frontmost); cold-cache numbers (root needed);
+removal on the SSD.

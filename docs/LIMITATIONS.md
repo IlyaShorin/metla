@@ -106,3 +106,15 @@ the gates in [QUALITY.md](QUALITY.md).
     directory whose entries cannot be listed for the Trash
     (`ActionFailure::Unlisted`) is not reached in tests: the check right
     before acting lists the same directory first.
+22. **No complete mutation run on the final commit.** Long runs were
+    stopped by the user's decision at the end of M7: the last complete
+    `MUTATE_ALL` run is at 88cd5b2, and the Rust files changed since were
+    mutated one by one ([QUALITY.md](QUALITY.md)).
+23. **The first scan of the real disk through the app was measured once
+    each way** (199 s taken over as the user's scan; not ended after
+    27 minutes before), with the app behind other windows; never with
+    the app active. The scan the app takes over keeps the two threads the
+    engine started it with.
+24. **Most app measurements on the real disk are single runs or were not
+    taken** (idle in the menu bar, churn with the app running, a full
+    rescan, repeated launches): see [PERFORMANCE.md](PERFORMANCE.md).
