@@ -150,8 +150,8 @@ The full list, each with its consequence, is
 not notarised; built for one architecture; freed space is measured, not promised
 (APFS clones, snapshots and purgeable space); sizes are allocated-size
 estimates; the Swift half is not covered by the mutation and complexity
-tools; a real hotkey press, the login item and the menu-bar panel on
-screen were not verified by an automated run.
+tools; a real hotkey press, the login item and the Full Disk Access
+pane were not verified by an automated run.
 
 ## Documents
 

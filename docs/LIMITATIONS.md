@@ -82,9 +82,10 @@ the gates in [QUALITY.md](QUALITY.md).
 16. **The Full Disk Access deep link.** The button opens the System Settings
     URL; that the right pane comes up was not checked, and granting access
     was never done on the development machine.
-17. **The real menu-bar panel on screen.** The panel's view is captured in a
-    window of its own; the status item's popover as macOS shows it was not
-    captured (opening it needs a click on the menu bar).
+17. **A person's click on the menu bar.** The capture opens the real
+    menu-bar panel by clicking the app's own status item in-process and
+    takes the window server's image of it; a click from outside the app
+    (the system's event path) was not simulated.
 18. **Removal on the internal SSD.** Removal throughput was measured on a RAM
     disk (fixtures only ever live there); an SSD and APFS will differ.
 19. **Cold-cache timings.** Purging the file-system cache needs root, so

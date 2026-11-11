@@ -74,6 +74,9 @@ struct MenuBarPanel: View {
                 }
                 HStack(spacing: 8) {
                     Text(summary.rest.name).foregroundStyle(.secondary).lineLimit(2)
+                        // The panel's window takes the view's size: without
+                        // this the second line is cut ("only with confi…").
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Text(summary.rest.size).monospacedDigit().foregroundStyle(.secondary)
                 }

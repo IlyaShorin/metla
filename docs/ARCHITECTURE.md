@@ -909,8 +909,9 @@ another user owns it stays `InspectionFailed` (a worktree) or
   `--rescan` starts a full scan as Refresh does once the picture shows;
   `--idle` closes the main window then, leaving the app in the menu bar.
 * `--capture <dir>` renders each main screen, light and dark, to PNG files,
-  then the cleanup preview, progress, a real report, the menu-bar panel,
-  the real Settings window at each tab, the first-run sheet and the
+  then the cleanup preview, progress, a real report, the real menu-bar
+  panel (the app clicks its own status item), the real Settings window
+  at each tab, the first-run sheet and the
   hotkey's panel, and quits. The debug build takes each picture from the
   window server (`CGWindowListCreateImage` of the app's own window, which
   needs no screen-recording permission; looked up by name, since the

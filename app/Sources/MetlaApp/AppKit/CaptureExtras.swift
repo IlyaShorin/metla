@@ -62,9 +62,58 @@ enum CaptureExtras {
         let hud = AppModel.hud(report, strings)
         shots.append(("hud", AnyView(HUDView(message: hud, strings: strings) {})))
         await model.refresh([.picture, .cleanup])
-        shots.append(("menubar", AnyView(MenuBarPanel(model: model, actions: PanelActions()))))
+        let realPanel = await drawMenuBar(into: directory)
+        if realPanel == 0 {
+            shots.append(("menubar", AnyView(MenuBarPanel(model: model, actions: PanelActions()))))
+        }
         shots.append(("firstrun", AnyView(FirstRunSheet(access: model.access, strings: strings))))
-        return await draw(shots, into: directory) + (await drawSettings(settings, into: directory))
+        return realPanel + (await draw(shots, into: directory)) + (await drawSettings(settings, into: directory))
+    }
+
+    /// The real menu-bar panel, light and dark: the app clicks its own
+    /// status item's button (no permission: both are the app's) and
+    /// paints the window that opens. 0 when there is no status item or no
+    /// panel opened; the capture then draws the panel's view in a window
+    /// of its own.
+    static func drawMenuBar(into directory: String) async -> Int {
+        let bar = NSApp.windows.first { NSStringFromClass(type(of: $0)).contains("StatusBarWindow") }
+        guard let button = bar.flatMap({ statusButton(in: $0.contentView) }) else {
+            FileHandle.standardError.write(Data("capture: no status item button\n".utf8))
+            return 0
+        }
+        let before = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+        button.performClick(nil)
+        var opened: NSWindow?
+        for _ in 0..<40 where opened == nil {
+            try? await Task.sleep(for: .milliseconds(100))
+            opened = NSApp.windows.first { $0.isVisible && !before.contains(ObjectIdentifier($0)) }
+        }
+        guard let panel = opened else {
+            FileHandle.standardError.write(Data("capture: the status item opened no panel\n".utf8))
+            return 0
+        }
+        var written = 0
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            await Capture.appear(appearance, panel)
+            try? await Task.sleep(for: .milliseconds(800))
+            let file = (directory as NSString).appendingPathComponent("menubar-\(suffix).png")
+            if let png = await Capture.png(of: panel, appearance), (try? png.write(to: URL(fileURLWithPath: file))) != nil {
+                written += 1
+            }
+        }
+        // A second click closes it, as on screen.
+        button.performClick(nil)
+        NSApp.appearance = nil
+        return written
+    }
+
+    private static func statusButton(in view: NSView?) -> NSButton? {
+        guard let view else { return nil }
+        if let button = view as? NSButton { return button }
+        for sub in view.subviews {
+            if let found = statusButton(in: sub) { return found }
+        }
+        return nil
     }
 
     /// The real Settings window, each tab, light and dark, title bar and
