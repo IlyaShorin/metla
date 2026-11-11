@@ -117,6 +117,7 @@ impl Place {
             profile,
             index_limit: None,
             dirs: None,
+            attention: false,
         }
     }
 
@@ -506,28 +507,34 @@ fn the_profile_in_force_and_its_priority_for_every_power_profile() {
 }
 
 /// The engine's own full scan: the first of a root (no picture) under
-/// Interactive or Background takes Interactive's threads and priority,
-/// and keeps the power profile's timing, pause, latency and say on full
-/// scans; Saver keeps its one thread, Off scans nothing, and once a
-/// picture exists every profile scans with its own.
+/// Interactive or Background, and any while someone looks under a
+/// profile that watches, takes Interactive's threads and priority, and
+/// keeps the power profile's timing, pause, latency and say on full
+/// scans; otherwise Saver keeps its one thread, Off scans nothing, and
+/// once a picture exists every profile scans with its own.
 #[test]
 fn the_first_full_scan_takes_interactive_threads_unless_saving_or_off() {
     use metla_core::scan::Priority::{Background as Low, Normal};
     let table = Profiles::standard(12);
     let rows = [
-        (PowerProfile::Interactive, false, 8, Normal),
-        (PowerProfile::Background, false, 8, Normal),
-        (PowerProfile::Saver, false, 1, Low),
-        (PowerProfile::Off, false, 0, Low),
-        (PowerProfile::Interactive, true, 8, Normal),
-        (PowerProfile::Background, true, 2, Normal),
-        (PowerProfile::Saver, true, 1, Low),
-        (PowerProfile::Off, true, 0, Low),
+        (PowerProfile::Interactive, false, false, 8, Normal),
+        (PowerProfile::Background, false, false, 8, Normal),
+        (PowerProfile::Saver, false, false, 1, Low),
+        (PowerProfile::Off, false, false, 0, Low),
+        (PowerProfile::Interactive, true, false, 8, Normal),
+        (PowerProfile::Background, true, false, 2, Normal),
+        (PowerProfile::Saver, true, false, 1, Low),
+        (PowerProfile::Off, true, false, 0, Low),
+        (PowerProfile::Background, true, true, 8, Normal),
+        (PowerProfile::Saver, true, true, 8, Normal),
+        (PowerProfile::Saver, false, true, 8, Normal),
+        (PowerProfile::Off, true, true, 0, Low),
+        (PowerProfile::Off, false, true, 0, Low),
     ];
-    for (power, picture, threads, priority) in rows {
-        let profile = table.full_scan(power, picture);
+    for (power, picture, looking, threads, priority) in rows {
+        let profile = table.full_scan(power, picture, looking);
         let own = table.of(power);
-        let case = format!("{power:?}, picture {picture}");
+        let case = format!("{power:?}, picture {picture}, attention {looking}");
         assert_eq!(profile.threads, threads, "{case}");
         assert_eq!(profile.priority(), priority, "{case}");
         let rest = Profile {

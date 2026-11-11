@@ -655,7 +655,11 @@ root with no picture yet (the first run, a lost index) runs with
 timing, pause and say on full scans stay the power profile's
 (`Profiles::full_scan`, a pure table). `Saver` keeps its one throttled
 thread and `Off` scans nothing. Once a picture exists, the engine's
-full scans use the power profile's own row. `Counters::scan_threads`
+full scans use the power profile's own row, unless someone looks:
+then `Interactive`'s threads and priority again. The app says at
+opening whether someone looks (`EngineConfig::attention`: its window
+opens, not the menu bar only), so a scan due at opening already
+follows that. `Counters::scan_threads`
 adds up the threads each full scan was given.
 
 **Deferred full scans.** A full scan the engine needs on its own

@@ -57,6 +57,9 @@ pub struct EngineOptions {
     /// Follow the root with an FSEvents stream; without, the picture
     /// changes only by scans.
     pub follow: bool,
+    /// Someone looks from the start: the app opened with its window, not
+    /// in the menu bar only.
+    pub attention: bool,
 }
 
 #[derive(uniffi::Object)]
@@ -91,6 +94,7 @@ impl Engine {
             profile: options.profile,
             index_limit: None,
             dirs: None,
+            attention: options.attention,
         };
         let inner = engine::Engine::open(config)?;
         Ok(Arc::new(Engine { inner }))

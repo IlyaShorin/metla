@@ -456,7 +456,10 @@ impl Scheduler {
             self.shared.profiles.interactive
         } else {
             let power = self.shared.effective();
-            self.shared.profiles.full_scan(power, had_picture)
+            let attention = lock(&self.shared.status).attention;
+            self.shared
+                .profiles
+                .full_scan(power, had_picture, attention)
         };
         self.shared.update(|s| s.reason = Some(reason));
         eprintln!("{}", started_line(reason, profile.threads));

@@ -327,6 +327,30 @@ fn the_first_scan_runs_on_interactive_threads_and_a_later_one_on_the_profiles() 
     );
 }
 
+/// Someone looking from the start (the app opened with its window): a
+/// full scan due at opening already runs on Interactive's threads.
+#[test]
+fn a_full_scan_due_at_opening_with_someone_looking_runs_on_interactive_threads() {
+    let place = Place::new(HOME);
+    let mut table = profiles();
+    table.interactive.threads = 3;
+    let first = EngineConfig {
+        profiles: table,
+        ..place.config(PowerProfile::Background)
+    };
+    let manual = Engine::open(first).unwrap();
+    settled(&manual);
+    drop(manual);
+    let looked_at = EngineConfig {
+        attention: true,
+        ..real(&place, Duration::from_millis(20), table)
+    };
+    let later = Engine::open(looked_at).unwrap();
+    settled(&later);
+    assert_eq!(later.counters().full_scans, 1, "no stored event");
+    assert_eq!(later.counters().scan_threads, 3, "Interactive's");
+}
+
 #[test]
 fn a_stored_event_from_another_history_or_none_at_all_means_a_full_scan() {
     let place = Place::new(HOME);

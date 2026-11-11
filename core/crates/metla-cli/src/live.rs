@@ -99,6 +99,7 @@ pub fn open(place: &Place) -> Result<(Engine, Receiver<Changed>), String> {
         profile: place.profile,
         index_limit: None,
         dirs: None,
+        attention: false,
     };
     let engine = Engine::open(config).map_err(|e| e.to_string())?;
     let (sender, receiver) = mpsc::channel();

@@ -89,6 +89,10 @@ pub struct EngineConfig {
     /// Shown every directory a scan or rescan reads: tests hold a scan
     /// at a directory with it. `None` in the app.
     pub dirs: Option<Arc<dyn DirObserver>>,
+    /// Someone looks from the start (the app opened with its window):
+    /// the first decisions, a full scan due at opening among them, follow
+    /// `Interactive` as `set_attention(true)` would make them.
+    pub attention: bool,
 }
 
 #[derive(Debug)]
@@ -236,6 +240,7 @@ fn share(
             profile: parts.profile,
             needs_full_scan: reason.is_some(),
             reason,
+            attention: parts.attention,
             ..Status::default()
         }),
         scan: Mutex::default(),
@@ -301,6 +306,7 @@ struct Parts {
     profiles: Profiles,
     profile: PowerProfile,
     dirs: Option<Arc<dyn DirObserver>>,
+    attention: bool,
 }
 
 fn setup<T>(what: &Path, result: std::io::Result<T>) -> Result<T, EngineError> {
@@ -330,6 +336,7 @@ impl Engine {
             profiles: config.profiles,
             profile: config.profile,
             dirs: config.dirs,
+            attention: config.attention,
         };
         let (shared, worktrees) = share(parts, &root, settings, reason);
         *lock(&shared.report) = report.map(Ok);

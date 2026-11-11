@@ -92,11 +92,12 @@ public struct LaunchSettings: Equatable, Sendable {
         StandardPreferences(preferencesSuite.flatMap(UserDefaults.init(suiteName:)) ?? .standard)
     }
 
-    /// The engine's options.
+    /// The engine's options: someone looks from the start unless the app
+    /// starts in the menu bar only.
     public var options: EngineOptions {
         EngineOptions(
             root: root, home: home, user: user, dataDir: dataDir,
-            profile: .background, follow: follow)
+            profile: .background, follow: follow, attention: !menuBarOnly)
     }
 
     /// The path with every link resolved, as the engine names the root

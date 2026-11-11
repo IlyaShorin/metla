@@ -13,7 +13,9 @@ import Testing
         #expect(settings.root == "/fx" && settings.home == "/fx/home" && settings.dataDir == "/data")
         #expect(settings.isFixture && settings.printLaunchTiming && settings.follow)
         #expect(settings.capture == nil && settings.language == "ru")
-        #expect(settings.options == EngineOptions(root: "/fx", home: "/fx/home", user: "u", dataDir: "/data", profile: .background, follow: true))
+        #expect(settings.options == EngineOptions(
+            root: "/fx", home: "/fx/home", user: "u", dataDir: "/data", profile: .background, follow: true,
+            attention: true))
     }
 
     @Test func withoutTheEnvironmentTheEngineReadsTheWholeDisk() {

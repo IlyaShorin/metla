@@ -48,6 +48,7 @@ impl Place {
             data_dir: text(&self.data),
             profile: PowerProfile::Background,
             follow: false,
+            attention: false,
         }
     }
 
