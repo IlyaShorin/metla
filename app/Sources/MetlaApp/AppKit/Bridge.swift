@@ -53,6 +53,12 @@ final class Bridge {
             // SwiftUI leaves the app running.
             exit(0)
         }
+        if settings.menuBarOnly {
+            NSApp.windows.first { $0.identifier?.rawValue == "main" }?.close()
+        }
+        if settings.printLaunchTiming {
+            Task { await Measure.follow(model) }
+        }
         hotkeys = HotkeyCenter { [weak self] action in self?.pressed(action) }
         if let hotkeys {
             await model.attachHotkeys(hotkeys)

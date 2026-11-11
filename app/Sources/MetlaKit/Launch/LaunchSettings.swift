@@ -12,7 +12,10 @@ import MetlaCoreFFI
 /// * `METLA_LANGUAGE`: `en` or `ru` instead of the system's choice;
 /// * `--capture <dir>`: render the screens to PNG files and quit;
 /// * `--scenario <name>`: drive a cleanup flow end to end on the fixture
-///   and quit, non-zero when the disk is not as expected.
+///   and quit, non-zero when the disk is not as expected;
+/// * `--rescan`, `--idle`: for measuring (docs/PERFORMANCE.md), start a
+///   full scan as Refresh does once the saved picture is shown, and close
+///   the main window then, leaving the app in the menu bar.
 public struct LaunchSettings: Equatable, Sendable {
     public var root: String
     public var home: String
@@ -28,6 +31,10 @@ public struct LaunchSettings: Equatable, Sendable {
     public var follow: Bool
     /// The app's language, when not the system's choice.
     public var language: String? = nil
+    /// Start a full scan once the saved picture is shown (`--rescan`).
+    public var rescanAtLaunch = false
+    /// Close the main window once the saved picture is shown (`--idle`).
+    public var menuBarOnly = false
 
     /// The marker of a synthetic tree (metla-core's `FIXTURE_MARKER`).
     public static let fixtureMarker = ".metla-fixture"
@@ -55,7 +62,9 @@ public struct LaunchSettings: Equatable, Sendable {
             capture: capture,
             scenario: scenario,
             follow: capture == nil && scenario == nil,
-            language: environment["METLA_LANGUAGE"]
+            language: environment["METLA_LANGUAGE"],
+            rescanAtLaunch: arguments.contains("--rescan"),
+            menuBarOnly: arguments.contains("--idle")
         )
     }
 

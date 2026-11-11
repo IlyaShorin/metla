@@ -39,6 +39,14 @@ import Testing
         #expect(settings.root == canonical && settings.home == canonical + "/home")
     }
 
+    @Test func measuringCanStartARescanAndLeaveOnlyTheMenuBar() {
+        let plain = LaunchSettings.read(environment: [:], arguments: ["Metla"], home: "/h", user: "u", exists: { _ in false })
+        #expect(!plain.rescanAtLaunch && !plain.menuBarOnly)
+        let measured = LaunchSettings.read(
+            environment: [:], arguments: ["Metla", "--rescan", "--idle"], home: "/h", user: "u", exists: { _ in false })
+        #expect(measured.rescanAtLaunch && measured.menuBarOnly && measured.follow)
+    }
+
     @Test func aCaptureNamesItsDirectoryAndFollowsNothing() {
         let settings = LaunchSettings.read(environment: [:], arguments: ["Metla", "--capture", "/shots"], home: "/h", user: "u", exists: { _ in true })
         #expect(settings.capture == "/shots")

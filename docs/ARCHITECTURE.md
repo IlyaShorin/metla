@@ -900,6 +900,14 @@ another user owns it stays `InspectionFailed` (a worktree) or
   to end on a fixture and exits non-zero when the disk is not as the
   flow confirmed (`scripts/run-scenarios.sh` runs all four on fresh
   fixtures; the Swift tests run them too).
+* **Measuring.** With `METLA_PRINT_LAUNCH_TIMING=1` the app prints, from
+  the process's start, when its first window and the saved picture show,
+  when a scan's first numbers show and when a full scan ends, the
+  resident memory then and its peak, the same one minute after the
+  first picture, and how late its main thread was meanwhile (a 50 ms
+  heartbeat: the longest stall and the stalls of 250 ms or more).
+  `--rescan` starts a full scan as Refresh does once the picture shows;
+  `--idle` closes the main window then, leaving the app in the menu bar.
 * `--capture <dir>` renders each main screen, light and dark, to PNG files,
   then the cleanup preview, progress, a real report, the menu-bar panel,
   the real Settings window at each tab, the first-run sheet and the
