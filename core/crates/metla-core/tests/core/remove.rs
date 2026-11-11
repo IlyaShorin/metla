@@ -11,7 +11,8 @@ use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 
 use metla_core::domain::{Bytes, Errno, Leftovers, UnixTime};
-use metla_core::fs::{DirHandle, Removal, remove_contents, survey};
+use metla_core::fs::{DirHandle, PARALLEL_DEPTH, Removal, Remover, remove_contents, survey};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::scan::deep_chain;
 use crate::support::{Fixture, write_file};
@@ -329,4 +330,177 @@ fn a_survey_totals_a_tree_on_its_device() {
     assert!(found.newest >= Some(UnixTime(newest)));
     let elsewhere = survey(&handle, device(&c) + 1);
     assert_eq!(elsewhere.files, 2, "a/ is on another device");
+}
+
+/// A file of `len` bytes, its directories made first.
+fn put(path: &Path, len: usize) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    write_file(path, len);
+}
+
+/// Empties `dir` with a remover of `threads` threads, adding up the bytes
+/// it reports as it goes.
+fn remove_with(dir: &Path, threads: usize) -> (Removal, u64) {
+    let handle = DirHandle::open(dir).unwrap();
+    let reported = AtomicU64::new(0);
+    let removal =
+        Remover::new(threads).remove_contents(&handle, device(dir), &|| false, &|bytes| {
+            reported.fetch_add(bytes.0, Ordering::Relaxed);
+        });
+    (removal, reported.into_inner())
+}
+
+/// Files, a symlink, hard links and nested directories, some of them
+/// locked, as the sequential and the parallel removal both meet them.
+fn mixed_tree(fx: &Fixture) -> PathBuf {
+    let c = fx.dir("c");
+    fx.build(&[
+        "c/a/one",
+        "c/a/two/three",
+        "c/b/x/y/z",
+        "c/b/w",
+        "c/top",
+        "c/locked1/f1",
+        "c/locked1/f2",
+        "c/d/locked2/g",
+        "c/d/free/h",
+    ]);
+    for n in 0..30 {
+        put(&c.join(format!("spread/s{}/f{n}", n % 7)), 5000);
+    }
+    std::os::unix::fs::symlink("/", c.join("a/link")).unwrap();
+    fs::hard_link(c.join("top"), c.join("b/top-link")).unwrap();
+    for locked in ["locked1", "d/locked2"] {
+        fs::set_permissions(c.join(locked), fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    c
+}
+
+fn unlock(c: &Path) {
+    for locked in ["locked1", "d/locked2"] {
+        fs::set_permissions(c.join(locked), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[test]
+fn the_parallel_removal_does_what_the_sequential_one_does() {
+    let (one, two) = (Fixture::new(), Fixture::new());
+    let (a, b) = (mixed_tree(&one), mixed_tree(&two));
+    let sequential = remove(&a);
+    let (parallel, reported) = remove_with(&b, 4);
+    unlock(&a);
+    unlock(&b);
+    assert_eq!(
+        parallel, sequential,
+        "removed, unlinked and leftovers, in the same order"
+    );
+    assert_eq!(
+        reported, parallel.removed.0,
+        "every byte removed was reported as it went"
+    );
+    assert_eq!(entries(&a), entries(&b));
+    assert_eq!(parallel.leftovers.failures, 3);
+}
+
+#[test]
+fn failures_in_several_subtrees_are_listed_in_the_same_order_every_time() {
+    let runs: Vec<Removal> = (0..5)
+        .map(|_| {
+            let fx = Fixture::new();
+            let c = fx.dir("c");
+            for d in 0..6 {
+                for f in 0..5 {
+                    fs::create_dir_all(c.join(format!("d{d}/locked"))).unwrap();
+                    fs::write(c.join(format!("d{d}/locked/f{f}")), "").unwrap();
+                }
+                fs::set_permissions(
+                    c.join(format!("d{d}/locked")),
+                    fs::Permissions::from_mode(0o555),
+                )
+                .unwrap();
+            }
+            let (removal, _) = remove_with(&c, 8);
+            for d in 0..6 {
+                fs::set_permissions(
+                    c.join(format!("d{d}/locked")),
+                    fs::Permissions::from_mode(0o755),
+                )
+                .unwrap();
+            }
+            removal
+        })
+        .collect();
+    assert_eq!(runs[0].leftovers.failures, 30);
+    assert_eq!(runs[0].leftovers.first.len(), Leftovers::FIRST);
+    assert!(
+        runs.iter().all(|run| run == &runs[0]),
+        "{:?}",
+        runs.iter().map(|r| &r.leftovers.first).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_cancelled_parallel_removal_stops_and_says_so() {
+    let fx = Fixture::new();
+    let c = fx.dir("c");
+    for d in 0..8 {
+        for f in 0..50 {
+            put(&c.join(format!("d{d}/f{f}")), 1);
+        }
+    }
+    let asked = AtomicU64::new(0);
+    let handle = DirHandle::open(&c).unwrap();
+    let removal = Remover::new(4).remove_contents(
+        &handle,
+        device(&c),
+        &|| asked.fetch_add(1, Ordering::Relaxed) >= 20,
+        &|_| {},
+    );
+    assert!(removal.leftovers.cancelled);
+    assert!(
+        removal.unlinked < 400,
+        "it stopped: {} unlinked",
+        removal.unlinked
+    );
+    assert!(!entries(&c).is_empty());
+}
+
+#[test]
+fn the_parallel_removal_leaves_a_directory_on_another_device() {
+    let fx = Fixture::new();
+    let c = fx.dir("c");
+    fx.build(&["c/vol/data", "c/file"]);
+    let handle = DirHandle::open(&c).unwrap();
+    let removal = Remover::new(4).remove_contents(&handle, device(&c) + 1, &|| false, &|_| {});
+    assert_eq!(removal.leftovers.mounts, [PathBuf::from("vol")]);
+    assert_eq!(entries(&c), ["vol"]);
+    assert!(c.join("vol/data").exists());
+}
+
+#[test]
+fn a_tree_deeper_than_the_parallel_levels_is_removed() {
+    assert_eq!(
+        PARALLEL_DEPTH, 32,
+        "levels emptied in parallel; below them the iterative walk"
+    );
+    let fx = Fixture::new();
+    let c = fx.dir("c");
+    let deep = (0..PARALLEL_DEPTH + 40).fold(c.clone(), |p, n| p.join(format!("l{n}")));
+    put(&deep.join("leaf"), 4);
+    put(&c.join("l0/l1/side"), 4);
+    let (removal, reported) = remove_with(&c, 4);
+    assert!(removal.leftovers.is_empty(), "{:?}", removal.leftovers);
+    assert_eq!(entries(&c), Vec::<OsString>::new());
+    assert_eq!(removal.unlinked, (PARALLEL_DEPTH + 40) as u64 + 2);
+    assert_eq!(reported, removal.removed.0);
+}
+
+#[test]
+fn a_remover_of_one_thread_empties_the_tree() {
+    let fx = Fixture::new();
+    let c = mixed_tree(&fx);
+    let (removal, _) = remove_with(&c, 1);
+    unlock(&c);
+    assert_eq!(removal.leftovers.failures, 3);
+    assert_eq!(entries(&c), ["d", "locked1"]);
 }
