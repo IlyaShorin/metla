@@ -10,13 +10,15 @@ import SwiftUI
 /// and dark, to PNG files, from a fixture engine, then every M6 screen
 /// (`CaptureExtras`), then the app quits.
 ///
-/// It draws the app's own layers in-process (no screen recording, which
-/// needs a permission): sidebar, title, toolbar and the screens' content
-/// as they are shown. On macOS 26 the window server composes Liquid Glass
-/// itself: the glass surfaces (the sidebar's and toolbar items' panes,
-/// the blur behind them) are left out. The tables' checkboxes are drawn
-/// with SwiftUI shapes (`SymbolCheckbox`), so their marks are in the
-/// images.
+/// The debug build takes each picture from the window server: the
+/// image of one of the app's own windows, which needs no screen-recording
+/// permission (the app asks for none and never touches it), with the
+/// Liquid Glass panes, materials and accent colours as they are on
+/// screen, at the scale of the screen the window is on (the capture moves
+/// its windows to the screen with the most pixels per point). Where the
+/// window server gives no image, or a blank one, and in the release
+/// build, the app's own layers are painted in-process (`LayerPainter`),
+/// without what the window server composes itself.
 @MainActor
 enum Capture {
     static let screens: [(String, Screen)] = [
@@ -42,9 +44,12 @@ enum Capture {
         // The toolbar's items come up a moment after the first picture,
         // and the first painting of the window leaves them out: paint it
         // once and throw that away.
+        sharpest(window)
         await model.show(.overview)
         try? await Task.sleep(for: .seconds(2))
         _ = image(of: window)
+        let source = composed(window) == nil ? "painted in-process" : "the window server's images of its own windows"
+        print("capture: \(source), \(window.backingScaleFactor)x")
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             await appear(appearance, window)
             for (name, screen) in screens {
@@ -92,34 +97,28 @@ enum Capture {
     static func png(of window: NSWindow, _ appearance: NSAppearance.Name) async -> Data? {
         var picture = image(of: window)
         for _ in 0..<10 {
-            guard let shown = picture, looksLight(shown) != (appearance == .aqua) else {
+            guard let shown = picture, looksLight(shown, of: window) != (appearance == .aqua) else {
                 break
             }
             try? await Task.sleep(for: .milliseconds(300))
             window.display()
             picture = image(of: window)
         }
-        if let shown = picture, looksLight(shown) != (appearance == .aqua) {
+        if let shown = picture, looksLight(shown, of: window) != (appearance == .aqua) {
             FileHandle.standardError.write(
                 Data("capture: a picture's title bar does not show \(appearance.rawValue)\n".utf8))
         }
         return picture.flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
     }
 
-    /// Whether the picture's top band (its title bar, 28 points at 2x) is
-    /// light: its mean brightness above one half.
-    static func looksLight(_ picture: CGImage) -> Bool {
-        let band = CGRect(x: 0, y: 0, width: picture.width, height: min(56, picture.height))
-        guard let top = picture.cropping(to: band),
-            let context = CGContext(
-                data: nil, width: 32, height: 4, bitsPerComponent: 8, bytesPerRow: 32,
-                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue),
-            let bytes = context.data
-        else {
+    /// Whether the picture's top band (its title bar, 28 points) is light:
+    /// its mean brightness above one half.
+    static func looksLight(_ picture: CGImage, of window: NSWindow) -> Bool {
+        let scale = CGFloat(picture.width) / max(1, window.frame.width)
+        let band = CGRect(x: 0, y: 0, width: CGFloat(picture.width), height: min(28 * scale, CGFloat(picture.height)))
+        guard let gray = sample(picture, band) else {
             return true
         }
-        context.draw(top, in: CGRect(x: 0, y: 0, width: 32, height: 4))
-        let gray = UnsafeBufferPointer(start: bytes.assumingMemoryBound(to: UInt8.self), count: 128)
         return gray.reduce(0) { $0 + Int($1) } > 128 * 128
     }
 
@@ -160,10 +159,72 @@ enum Capture {
         }
     }
 
+    /// The window as it is on screen, else painted.
+    private static func image(of window: NSWindow) -> CGImage? {
+        composed(window) ?? painted(window)
+    }
+
+    /// The window server's image of one of the app's own windows, without
+    /// its shadow; `nil` when it gives none or a blank one. Debug builds
+    /// only. `CGWindowListCreateImage` is marked obsoleted in the macOS 26
+    /// SDK, so it is looked up by name; for a process's own windows it
+    /// needs no screen-recording permission.
+    private static func composed(_ window: NSWindow) -> CGImage? {
+        #if DEBUG
+            typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+            guard let symbol = dlsym(dlopen(nil, RTLD_NOW), "CGWindowListCreateImage") else {
+                return nil
+            }
+            let create = unsafeBitCast(symbol, to: Create.self)
+            let includingWindow: UInt32 = 1 << 3
+            let ignoreFraming: UInt32 = 1 << 0, bestResolution: UInt32 = 1 << 3
+            let picture = create(.null, includingWindow, UInt32(window.windowNumber), ignoreFraming | bestResolution)?
+                .takeRetainedValue()
+            return picture.flatMap { blank($0) ? nil : $0 }
+        #else
+            return nil
+        #endif
+    }
+
+    /// Whether the picture is one flat colour (what a refused capture
+    /// returns).
+    static func blank(_ picture: CGImage) -> Bool {
+        guard let gray = sample(picture, CGRect(x: 0, y: 0, width: picture.width, height: picture.height)) else {
+            return true
+        }
+        return gray.max()! - gray.min()! < 8
+    }
+
+    /// The region of the picture shrunk to 32 x 4 grey pixels.
+    static func sample(_ picture: CGImage, _ region: CGRect) -> [UInt8]? {
+        guard let part = picture.cropping(to: region),
+            let context = CGContext(
+                data: nil, width: 32, height: 4, bitsPerComponent: 8, bytesPerRow: 32,
+                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue),
+            let bytes = context.data
+        else {
+            return nil
+        }
+        context.draw(part, in: CGRect(x: 0, y: 0, width: 32, height: 4))
+        return Array(UnsafeBufferPointer(start: bytes.assumingMemoryBound(to: UInt8.self), count: 128))
+    }
+
+    /// Puts the window on the screen with the most pixels per point, so
+    /// that the window server's image is as sharp as the app can be.
+    static func sharpest(_ window: NSWindow) {
+        guard let screen = NSScreen.screens.max(by: { $0.backingScaleFactor < $1.backingScaleFactor }),
+            window.screen != screen
+        else {
+            return
+        }
+        let visible = screen.visibleFrame
+        window.setFrameTopLeftPoint(NSPoint(x: visible.minX + 40, y: visible.maxY - 40))
+    }
+
     /// The whole window, title bar and toolbar included, drawn layer by
     /// layer (`LayerPainter`): SwiftUI draws into layers that neither
     /// `cacheDisplay` nor `CALayer.render(in:)` can draw.
-    private static func image(of window: NSWindow) -> CGImage? {
+    private static func painted(_ window: NSWindow) -> CGImage? {
         guard let frame = window.contentView?.superview, let layer = frame.layer else {
             return nil
         }

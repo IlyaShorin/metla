@@ -888,14 +888,19 @@ another user owns it stays `InspectionFailed` (a worktree) or
   to end on a fixture and exits non-zero when the disk is not as the
   flow confirmed (`scripts/run-scenarios.sh` runs all four on fresh
   fixtures; the Swift tests run them too).
-* `--capture <dir>` renders each main screen, light and dark, to PNG files
-  from the app's own layers (sidebar, title, toolbar and content), then
-  the cleanup preview, progress, a real report, the menu-bar panel, the
-  Settings tabs, the first-run sheet and the hotkey's panel, and quits;
-  on macOS 26 what the window server composes itself (the Liquid Glass
-  panes and blur, the accent colour of bordered buttons) is left out,
-  since a picture of it needs screen recording. Checkboxes are drawn by
-  the app (`SymbolCheckbox`), so their marks are in the pictures.
+* `--capture <dir>` renders each main screen, light and dark, to PNG files,
+  then the cleanup preview, progress, a real report, the menu-bar panel,
+  the real Settings window at each tab, the first-run sheet and the
+  hotkey's panel, and quits. The debug build takes each picture from the
+  window server (`CGWindowListCreateImage` of the app's own window, which
+  needs no screen-recording permission; looked up by name, since the
+  macOS 26 SDK marks it obsoleted), on the screen with the most pixels
+  per point; where it gives no image or a blank one, and in the release
+  build, the app's own layers are painted in-process, without what the
+  window server composes (Liquid Glass panes, accent colours). It waits
+  until the window has taken each appearance, and checks that every
+  picture's title bar is light in the light appearance and dark in the
+  dark one. Checkboxes are drawn by the app (`SymbolCheckbox`).
 
 ## 12. Development safety
 

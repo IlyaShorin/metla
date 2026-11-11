@@ -80,6 +80,7 @@ enum CaptureExtras {
                 guard let window = await open(tab) else {
                     continue
                 }
+                Capture.sharpest(window)
                 await Capture.appear(appearance, window)
                 try? await Task.sleep(for: .milliseconds(800))
                 window.displayIfNeeded()
@@ -124,6 +125,7 @@ enum CaptureExtras {
                 let host = NSHostingView(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
                 window.contentView = host
                 window.setContentSize(host.fittingSize)
+                Capture.sharpest(window)
                 window.orderFront(nil)
                 try? await Task.sleep(for: .milliseconds(800))
                 window.setContentSize(host.fittingSize)
