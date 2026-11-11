@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use metla_cli::{
-    BURST, Bench, CHURN, Command, PATIENCE, Place, asked_scan_done, churn_quiet, freshness_line,
-    parse, profiles, spent, state_text,
+    BURST, Bench, CHURN, Command, PATIENCE, Place, asked_scan_done, churn_quiet, config,
+    freshness_line, parse, profiles, spent, state_text,
 };
 use metla_core::domain::{Bytes, ProgressSnapshot, UnixTime};
 use metla_core::engine::{
@@ -417,4 +417,30 @@ fn benchmarks_that_write_need_a_fixture_and_a_data_directory_outside_it() {
             .unwrap()
             .contains("must lie outside the root")
     );
+}
+
+/// The CLI's engine looks from the start when the place asks for the
+/// Interactive profile, as the app's open window would; never otherwise.
+#[test]
+fn the_engine_looks_from_the_start_only_for_the_interactive_profile() {
+    let place = |profile| Place {
+        root: "/r".into(),
+        data_dir: "/d".into(),
+        home: None,
+        latency: None,
+        settle: None,
+        profile,
+        patience: PATIENCE,
+    };
+    let rows = [
+        (PowerProfile::Interactive, true),
+        (PowerProfile::Background, false),
+        (PowerProfile::Saver, false),
+        (PowerProfile::Off, false),
+    ];
+    for (profile, attention) in rows {
+        let config = config(&place(profile), "/h".into(), "u".into());
+        assert_eq!(config.attention, attention, "{profile:?}");
+        assert_eq!(config.profile, profile);
+    }
 }

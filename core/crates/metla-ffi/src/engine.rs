@@ -241,7 +241,9 @@ impl Engine {
 /// "unstamped" in a cargo build of its own.
 #[uniffi::export]
 pub fn core_stamp() -> String {
-    option_env!("METLA_CORE_STAMP").unwrap_or("unstamped").to_owned()
+    option_env!("METLA_CORE_STAMP")
+        .unwrap_or("unstamped")
+        .to_owned()
 }
 
 /// Whether this build can clean a root that is not a fixture: only the

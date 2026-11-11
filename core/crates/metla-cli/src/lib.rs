@@ -26,7 +26,7 @@ pub use bench::{asked_scan_done, churn_quiet};
 pub use cleaned::{Cleaned, clean_text, outcome_text};
 pub use commands::{ScanHow, default_threads};
 pub use format::{ago, bytes, count, per_second, signed_bytes};
-pub use live::{Place, freshness_line, profiles, spent, state_text};
+pub use live::{Place, config, freshness_line, profiles, spent, state_text};
 pub use overview::{
     Edited, Freshness, Overview, Shown, candidates_json, candidates_text, edited_text,
     summary_json, summary_text,

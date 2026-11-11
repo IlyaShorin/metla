@@ -37,9 +37,12 @@ struct Frame {
     kept: bool,
 }
 
+/// Lists a directory: `list_dir`, or a stand-in a test gives the remover.
+pub type Lister = fn(&DirHandle) -> Result<Vec<Entry>, ListError>;
+
 impl Frame {
-    fn open(dir: DirHandle, path: PathBuf) -> Result<Frame, Errno> {
-        let entries = list_dir(&dir).map_err(errno)?;
+    fn open(dir: DirHandle, path: PathBuf, list: Lister) -> Result<Frame, Errno> {
+        let entries = list(&dir).map_err(errno)?;
         Ok(Frame {
             dir,
             path,
@@ -61,6 +64,7 @@ pub fn remove_contents(dir: &DirHandle, device: u64, cancelled: &dyn Fn() -> boo
         device,
         cancelled,
         removed: &|_| {},
+        list: list_dir,
     };
     match dir.reopen() {
         Ok(dir) => iterative(dir, PathBuf::new(), &walk).removal,
@@ -77,6 +81,7 @@ pub const PARALLEL_DEPTH: usize = 32;
 /// cleanup: the subdirectories of a directory are emptied in parallel.
 pub struct Remover {
     pool: Option<rayon::ThreadPool>,
+    list: Lister,
 }
 
 impl Remover {
@@ -87,7 +92,16 @@ impl Remover {
             .num_threads(threads.get())
             .thread_name(|n| format!("metla-remove-{n}"))
             .build();
-        Remover { pool: pool.ok() }
+        Remover {
+            pool: pool.ok(),
+            list: list_dir,
+        }
+    }
+
+    /// The same remover, listing directories with `list` (tests: a
+    /// listing that fails after the directory opened).
+    pub fn listing(self, list: Lister) -> Remover {
+        Remover { list, ..self }
     }
 
     /// The threads of its pool; `None` when it has none and empties on
@@ -115,6 +129,7 @@ impl Remover {
             device,
             cancelled,
             removed,
+            list: self.list,
         };
         let Ok(dir) = dir.reopen() else {
             return failed_at(PathBuf::new(), Errno(libc::EBADF));
@@ -135,6 +150,7 @@ struct Walk<'a, C: ?Sized, R: ?Sized> {
     device: u64,
     cancelled: &'a C,
     removed: &'a R,
+    list: Lister,
 }
 
 /// A directory emptied as far as it could be, and whether it stays (it
@@ -197,7 +213,7 @@ where
     if !in_parallel(path.components().count()) {
         return iterative(dir, path, walk);
     }
-    let entries = match list_dir(&dir) {
+    let entries = match (walk.list)(&dir) {
         Ok(entries) => entries,
         Err(error) => return unread(path, errno(error)),
     };
@@ -326,7 +342,7 @@ where
     R: Fn(Bytes) + ?Sized,
 {
     let mut removal = Removal::default();
-    let root = match Frame::open(dir, path.clone()) {
+    let root = match Frame::open(dir, path.clone(), walk.list) {
         Ok(root) => root,
         Err(error) => return unread(path, error),
     };
@@ -360,7 +376,7 @@ where
     let frame = stack.last_mut().expect("a frame to step in");
     let path = frame.path.join(&entry.name);
     let outcome = match entry.meta.kind {
-        EntryKind::Dir => descend(frame, &entry.name, walk.device).map(Some),
+        EntryKind::Dir => descend(frame, &entry.name, walk.device, walk.list).map(Some),
         kind => frame
             .dir
             .remove(&entry.name, kind)
@@ -398,9 +414,9 @@ fn leave(removal: &mut Removal, path: PathBuf, problem: Problem) -> bool {
 
 /// The subdirectory `name`, opened without following a symlink, when it
 /// is on `device`.
-fn descend(frame: &Frame, name: &OsStr, device: u64) -> Result<Frame, Problem> {
+fn descend(frame: &Frame, name: &OsStr, device: u64, list: Lister) -> Result<Frame, Problem> {
     let child = open_on(&frame.dir, name, device)?;
-    Frame::open(child, PathBuf::new()).map_err(Problem::Failed)
+    Frame::open(child, PathBuf::new(), list).map_err(Problem::Failed)
 }
 
 /// Removes the innermost directory, now empty, from its parent, unless

@@ -640,3 +640,48 @@ fn the_top_levels_are_emptied_on_more_than_one_thread() {
     assert!(removal.leftovers.is_empty());
     assert!(seen.lock().unwrap().len() >= 2, "one thread did it all");
 }
+
+/// The inode whose listing fails in `failing_listing`.
+static UNLISTABLE: AtomicU64 = AtomicU64::new(0);
+
+/// Lists as `list_dir` does, but fails with EIO for the directory whose
+/// inode is UNLISTABLE: an I/O error after the directory opened, which
+/// no permission can cause.
+fn failing_listing(
+    dir: &DirHandle,
+) -> Result<Vec<metla_core::domain::Entry>, metla_core::fs::ListError> {
+    match dir.meta().map(|meta| meta.inode) {
+        Ok(inode) if inode == UNLISTABLE.load(Ordering::SeqCst) => {
+            Err(metla_core::fs::ListError::Io(Errno(libc::EIO)))
+        }
+        _ => metla_core::fs::list_dir(dir),
+    }
+}
+
+/// A directory that opens but cannot be listed stays, with what is in it
+/// and its parents, both in the parallel levels and below them, and is
+/// reported once with its error.
+#[test]
+fn a_directory_that_opens_but_cannot_be_listed_stays_once_reported() {
+    for depth in [1, PARALLEL_DEPTH + 2] {
+        let fx = Fixture::new();
+        let c = fx.dir("c");
+        let deep = (0..depth).fold(c.join("chain"), |p, n| p.join(format!("l{n}")));
+        put(&deep.join("held"), 4);
+        put(&c.join("other"), 4);
+        UNLISTABLE.store(fs::metadata(&deep).unwrap().ino(), Ordering::SeqCst);
+        let handle = DirHandle::open(&c).unwrap();
+        let remover = Remover::new(threads_of(2)).listing(failing_listing);
+        let removal = remover.remove_contents(&handle, device(&c), &|| false, &|_| {});
+        assert_eq!(
+            removal.leftovers.failures, 1,
+            "depth {depth}: {:?}",
+            removal.leftovers
+        );
+        assert_eq!(removal.leftovers.first[0].1, Errno(libc::EIO));
+        assert!(
+            deep.join("held").exists() && !c.join("other").exists(),
+            "depth {depth}"
+        );
+    }
+}

@@ -4,6 +4,7 @@
 //! CLI has no production capability, and these commands ask for no
 //! cleanup.
 
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -84,9 +85,19 @@ impl EngineObserver for Relay {
 /// Opens an engine on `place` following an FSEvents stream (unless its
 /// profile watches nothing), its notifications on the receiver.
 pub fn open(place: &Place) -> Result<(Engine, Receiver<Changed>), String> {
-    let watching = Watching::FsEvents;
     let (home, user) = home_and_user(place.home.as_deref())?;
-    let config = EngineConfig {
+    let engine = Engine::open(config(place, home, user)).map_err(|e| e.to_string())?;
+    let (sender, receiver) = mpsc::channel();
+    engine.set_observer(Arc::new(Relay(Mutex::new(sender))));
+    Ok((engine, receiver))
+}
+
+/// The engine's configuration for `place`: an FSEvents stream, no
+/// cleaning beyond fixtures, and someone looking from the start when the
+/// place asks for the `Interactive` profile, as the app's open window
+/// would.
+pub fn config(place: &Place, home: PathBuf, user: OsString) -> EngineConfig {
+    EngineConfig {
         root: place.root.clone(),
         home,
         user,
@@ -94,17 +105,13 @@ pub fn open(place: &Place) -> Result<(Engine, Receiver<Changed>), String> {
         git: Git::system(),
         production: None,
         trash: Arc::new(NoTrash),
-        watching,
+        watching: Watching::FsEvents,
         profiles: profiles(place.settle, place.latency),
         profile: place.profile,
         index_limit: None,
         dirs: None,
-        attention: false,
-    };
-    let engine = Engine::open(config).map_err(|e| e.to_string())?;
-    let (sender, receiver) = mpsc::channel();
-    engine.set_observer(Arc::new(Relay(Mutex::new(sender))));
-    Ok((engine, receiver))
+        attention: place.profile == PowerProfile::Interactive,
+    }
 }
 
 /// The state, in a word or two.

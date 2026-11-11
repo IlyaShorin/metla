@@ -21,6 +21,8 @@ pub use process::{
     Usage, background_thread, now, peak_rss, raise_open_file_limit, raised_open_file_limit,
     thread_cpu, usage,
 };
-pub use remove::{PARALLEL_DEPTH, Removal, Remover, Survey, in_parallel, remove_contents, survey};
+pub use remove::{
+    Lister, PARALLEL_DEPTH, Removal, Remover, Survey, in_parallel, remove_contents, survey,
+};
 pub use sys::retry_interrupted;
 pub use volume::{Mount, Volume, mounts, volume};
