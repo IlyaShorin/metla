@@ -110,9 +110,10 @@ the gates in [QUALITY.md](QUALITY.md).
     stopped by the user's decision at the end of M7: the last complete
     `MUTATE_ALL` run is at 88cd5b2 (850 of 852 mutants killed, the two
     survivors fixed afterwards). On the final Rust sources only the 53
-    mutants in functions changed since ran again, all killed; the other
-    797 verdicts are that run's, 18 of them kills by timeout on a loaded
-    machine that were not checked again ([QUALITY.md](QUALITY.md)).
+    mutants in functions changed since ran again (two differential
+    runs, 53 and 26 mutants), all killed; the other verdicts are that
+    run's, 18 of them kills by timeout on a loaded machine, not checked
+    again unless they are among those ([QUALITY.md](QUALITY.md)).
 23. **The first scan of the real disk through the app was measured once
     each way** (199 s taken over as the user's scan; not ended after
     27 minutes before), with the app behind other windows; never with
@@ -121,15 +122,14 @@ the gates in [QUALITY.md](QUALITY.md).
 24. **Most app measurements on the real disk are single runs or were not
     taken** (idle in the menu bar, churn with the app running, a full
     rescan, repeated launches): see [PERFORMANCE.md](PERFORMANCE.md).
-25. **The Swift gate is not stable.** Of three runs in a row on the final
-    Swift sources two were green and one was red: the test that a scan
-    asked for with Refresh stays the user's until it ends fails now and
-    then. The model takes a picture change as the sign that a scan too
-    quick to be seen is over; a change left over from the scan before
-    can end the user's scan early. In the app that scan then runs with
-    the background profile instead of the interactive one: slower,
-    nothing else. It needs a signal of its own from the engine (a scan
-    counter).
+25. **A Refresh pressed while the engine starts a scan of its own.**
+    The app decides which full scan the user waits for from a reading
+    taken just before it asks for the scan. If the engine starts a full
+    scan of its own between the two, the app gives the interactive
+    profile and its activity back one scan early; the scan asked for
+    still runs. No test pins this. The Swift gate failed in some runs
+    before the last three timing defects were fixed and passed eight
+    times in a row afterwards, which does not prove that none is left.
 26. **`scripts/quality-swift.sh` has no full-disk guard**, unlike
     `scripts/quality.sh`: on a volume that runs full its tests fail for
     reasons that are not in the code.
