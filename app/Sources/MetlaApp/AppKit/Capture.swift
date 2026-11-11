@@ -95,9 +95,9 @@ enum Capture {
     /// bar shows `appearance`: a picture whose top band is light in the
     /// dark appearance (or dark in the light one) is painted again after
     /// a moment, up to ten times, and reported if it never matches.
-    static func png(of window: NSWindow, _ appearance: NSAppearance.Name) async -> Data? {
+    static func png(of window: NSWindow, _ appearance: NSAppearance.Name, checked: Bool = true) async -> Data? {
         var picture = image(of: window)
-        for _ in 0..<10 {
+        for _ in 0..<(checked ? 10 : 0) {
             guard let shown = picture, looksLight(shown, of: window) != (appearance == .aqua) else {
                 break
             }
@@ -105,7 +105,7 @@ enum Capture {
             window.display()
             picture = image(of: window)
         }
-        if let shown = picture, looksLight(shown, of: window) != (appearance == .aqua) {
+        if checked, let shown = picture, looksLight(shown, of: window) != (appearance == .aqua) {
             FileHandle.standardError.write(
                 Data("capture: a picture's title bar does not show \(appearance.rawValue)\n".utf8))
         }

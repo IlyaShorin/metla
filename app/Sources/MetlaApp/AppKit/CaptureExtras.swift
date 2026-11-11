@@ -60,14 +60,45 @@ enum CaptureExtras {
         _ = try? await client.addExclusion((root as NSString).appendingPathComponent("home/.codex"))
         await model.exclusions?.load()
         let hud = AppModel.hud(report, strings)
-        shots.append(("hud", AnyView(HUDView(message: hud, strings: strings) {})))
+        let realHUD = await drawHUD(hud, strings: strings, into: directory)
+        if realHUD == 0 {
+            shots.append(("hud", AnyView(HUDView(message: hud, strings: strings) {})))
+        }
         await model.refresh([.picture, .cleanup])
         let realPanel = await drawMenuBar(into: directory)
         if realPanel == 0 {
             shots.append(("menubar", AnyView(MenuBarPanel(model: model, actions: PanelActions()))))
         }
         shots.append(("firstrun", AnyView(FirstRunSheet(access: model.access, strings: strings))))
-        return realPanel + (await draw(shots, into: directory)) + (await drawSettings(settings, into: directory))
+        return realHUD + realPanel + (await draw(shots, into: directory))
+            + (await drawSettings(settings, into: directory))
+    }
+
+    /// The hotkey's real panel (`HUD`, a HUD-style panel that is dark in
+    /// either appearance), shown as the hotkey shows it, in the light and
+    /// the dark appearance of the app. 0 when no panel came up.
+    static func drawHUD(_ message: HUDMessage, strings: Strings, into directory: String) async -> Int {
+        let hud = HUD()
+        var written = 0
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            NSApp.appearance = NSAppearance(named: appearance)
+            hud.show(message, strings: strings) {}
+            try? await Task.sleep(for: .milliseconds(800))
+            guard let panel = NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.hudWindow) }) else {
+                break
+            }
+            let file = (directory as NSString).appendingPathComponent("hud-\(suffix).png")
+            // A HUD panel is translucent and dark whatever the appearance:
+            // its top band says nothing about the appearance.
+            if let png = await Capture.png(of: panel, .darkAqua, checked: false),
+                (try? png.write(to: URL(fileURLWithPath: file))) != nil
+            {
+                written += 1
+            }
+            hud.close()
+        }
+        NSApp.appearance = nil
+        return written
     }
 
     /// The real menu-bar panel, light and dark: the app clicks its own

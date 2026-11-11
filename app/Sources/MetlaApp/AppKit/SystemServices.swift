@@ -84,8 +84,13 @@ final class HUD {
         })
         let panel = self.panel ?? NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 300, height: 120),
-            styleMask: [.nonactivatingPanel, .hudWindow, .utilityWindow, .titled],
+            styleMask: [.nonactivatingPanel, .hudWindow, .utilityWindow, .titled, .fullSizeContentView],
             backing: .buffered, defer: false)
+        // No empty title bar band above the message: the panel has no
+        // title and no buttons.
+        panel.titlebarAppearsTransparent = true
+        panel.titleVisibility = .hidden
+        content.safeAreaRegions = []
         panel.isFloatingPanel = true
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
