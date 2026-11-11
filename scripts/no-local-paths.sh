@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Fails when a Mach-O file under <dir> (an app bundle) holds a local path:
-# the user's name, the home directory or the repository's path, as
-# `strings` finds them. scripts/build-app.sh runs it on every release
-# bundle before signing it.
+# the user's name, the home directory, the repository's path or any other
+# path given, as `strings` finds them. scripts/build-app.sh runs it on
+# every release bundle before signing it, with its build directory.
 #
-#   scripts/no-local-paths.sh <dir>
+#   scripts/no-local-paths.sh <dir> [path ...]
 
 set -uo pipefail
 
 dir="${1:?usage: $0 <dir>}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-needles=("$(id -un)" "$HOME" "$repo" "$(cd "$repo" && pwd -P)")
+needles=("$(id -un)" "$HOME" "$repo" "$(cd "$repo" && pwd -P)" "${@:2}")
 
 checked=0
 found=0

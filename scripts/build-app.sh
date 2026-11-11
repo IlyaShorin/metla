@@ -100,7 +100,7 @@ PLIST
 
 if [[ "$configuration" == release ]]; then
     strip -x "$app/Contents/MacOS/Metla"
-    "$repo/scripts/no-local-paths.sh" "$app" >&2
+    "$repo/scripts/no-local-paths.sh" "$app" "$build" >&2
 fi
 codesign --force --sign - "$app" >&2
 if [[ "$configuration" == release ]]; then

@@ -38,10 +38,20 @@ public struct Strings: Sendable {
         String(format: text(key), locale: locale, arguments: arguments)
     }
 
-    /// MetlaKit's resource bundle: inside the app's Resources, or where
-    /// the package build put it.
+    /// MetlaKit's resource bundle: inside the app's Resources, or, in a
+    /// debug build (the tests), where the package build put it. A release
+    /// build never names that place: SwiftPM's `Bundle.module` holds the
+    /// build directory's absolute path, which must not be in a published
+    /// binary (scripts/no-local-paths.sh).
     static let resources: Bundle = {
         let inApp = Bundle.main.resourceURL?.appendingPathComponent("Metla_MetlaKit.bundle")
-        return inApp.flatMap(Bundle.init(url:)) ?? Bundle.module
+        if let bundle = inApp.flatMap(Bundle.init(url:)) {
+            return bundle
+        }
+        #if DEBUG
+            return Bundle.module
+        #else
+            return Bundle.main
+        #endif
     }()
 }
