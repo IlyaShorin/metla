@@ -43,8 +43,9 @@ pub use listing::{LISTED_FILES, Largest, Rest};
 pub use profile::{OFF, PowerProfile, Profile, Profiles, ScanStart, scan_start};
 pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
 pub use scheduler::{
-    EVENTS_NOTE, MAX_REPLAYS, OnLoss, QUIET_AFTER, Watching, applied, deferred_line, needs, news,
-    news_of, on_loss, quiet_after, redone, replays_after, started_line, stream_exclusions, tally,
+    EVENTS_NOTE, MAX_REPLAYS, OnLoss, QUIET_AFTER, Replays, Watching, applied, deferred_line,
+    exclusion_line, needs, news, news_of, on_loss, quiet_after, redone, replays_after,
+    started_line, stream_exclusions, tally,
 };
 pub use settings::{HotkeyMode, Settings};
 pub use shared::Quiet;
@@ -269,12 +270,8 @@ fn start_scheduler(
     let scope = setup(root.path(), ScanScope::detect(&root))?;
     let volumes = mounted_below(&root);
     let (excluded, left) = stream_exclusions(root.path(), &data_dir, &volumes);
-    if !left.is_empty() {
-        eprintln!(
-            "metla: the event stream leaves out {} directories, {} more are dropped after delivery",
-            excluded.len(),
-            left.len()
-        );
+    if let Some(line) = exclusion_line(excluded.len(), left.len()) {
+        eprintln!("{line}");
     }
     let mut ignored = vec![data_dir.clone()];
     ignored.extend(scope.excluded().map(Path::to_path_buf));
@@ -300,8 +297,7 @@ fn start_scheduler(
         data_dir,
         excluded,
         pictured: false,
-        generation: 0,
-        replays: 0,
+        replays: Replays::default(),
     };
     let thread = thread::Builder::new().name("metla-engine".into());
     setup(

@@ -17,9 +17,9 @@ use metla_core::domain::{
 };
 use metla_core::engine::{
     Completeness, Engine, EngineConfig, EngineState, Losses, MAX_REPLAYS, OnLoss, PowerProfile,
-    Profile, QUIET_AFTER, Quiet, ScanReason, ScanStart, applied, deferred_line, needs, news,
-    news_of, on_loss, quiet_after, redone, replays_after, scan_start, started_line,
-    stream_exclusions, tally,
+    Profile, QUIET_AFTER, Quiet, Replays, ScanReason, ScanStart, applied, deferred_line,
+    exclusion_line, needs, news, news_of, on_loss, quiet_after, redone, replays_after, scan_start,
+    started_line, stream_exclusions, tally,
 };
 use metla_core::fs::Mount;
 use metla_core::scan::{DirObserver, other_volumes};
@@ -865,5 +865,80 @@ fn a_replay_catches_up_at_the_end_of_its_history_and_a_replaced_streams_losses_a
         applied(OnLoss::Replay, &batch),
         batch,
         "nothing to replay with: applied"
+    );
+}
+
+/// Which stream runs and the replays not caught up: each stream opened
+/// is a new generation; a batch of an older one is applied without its
+/// losses; losses of the running one are replayed until MAX_REPLAYS have
+/// not caught up; the end of the history resets the count.
+#[test]
+fn the_replays_follow_the_stream_running_and_its_history() {
+    let event = |flags: Flags| Event {
+        path: PathBuf::from("/"),
+        flags,
+        id: 1,
+    };
+    let lost = [event(Flags::MUST_SCAN_SUBDIRS.with(Flags::USER_DROPPED))];
+    let done = [event(Flags::HISTORY_DONE)];
+    let mut replays = Replays::default();
+    assert_eq!(replays.opened(), 1);
+    assert_eq!(replays.opened(), 2, "a new generation each time");
+    assert_eq!(
+        replays.batch(Some(1), &lost),
+        OnLoss::FeedOthers,
+        "a replaced stream's"
+    );
+    assert_eq!(replays.batch(Some(2), &lost), OnLoss::Replay);
+    assert_eq!(
+        replays.batch(None, &lost),
+        OnLoss::Replay,
+        "handed over as the running one's"
+    );
+    for _ in 0..MAX_REPLAYS {
+        replays.replaying();
+    }
+    assert_eq!(replays.pending(), MAX_REPLAYS);
+    assert_eq!(
+        replays.batch(Some(2), &lost),
+        OnLoss::Feed,
+        "replays that never caught up"
+    );
+    assert_eq!(replays.batch(Some(1), &done), OnLoss::Feed);
+    assert_eq!(
+        replays.pending(),
+        MAX_REPLAYS,
+        "an old stream's end says nothing"
+    );
+    assert_eq!(replays.batch(Some(2), &done), OnLoss::Feed);
+    assert_eq!(replays.pending(), 0, "caught up");
+    assert_eq!(exclusion_line(8, 0), None);
+    assert_eq!(
+        exclusion_line(8, 3).as_deref(),
+        Some("metla: the event stream leaves out 8 directories, 3 more are dropped after delivery")
+    );
+}
+
+/// Without a stream to open again (changes reported by hand), a loss at
+/// the root is taken for what it says: a full scan.
+#[test]
+fn a_loss_with_no_stream_to_replay_is_a_full_scan() {
+    let place = Place::new(HOME);
+    let engine = place.open();
+    settled(&engine);
+    let root = engine.snapshot().unwrap().root;
+    let before = engine.counters();
+    let lost = Event {
+        path: root,
+        flags: Flags::MUST_SCAN_SUBDIRS.with(Flags::USER_DROPPED),
+        id: 1,
+    };
+    engine.events(vec![lost]).unwrap();
+    until(&engine, |e| e.counters().since(&before).full_scans == 1);
+    let after = engine.counters().since(&before);
+    assert_eq!(after.losses.replays, 0);
+    assert_eq!(
+        engine.freshness().unwrap().scan_reason,
+        Some(ScanReason::UserDropped)
     );
 }

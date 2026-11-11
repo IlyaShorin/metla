@@ -407,3 +407,27 @@ fn events_lost_on_their_way_are_replayed_and_not_scanned_again() {
     assert_eq!(after.streams, 1, "the stream opened again");
     assert_eq!(after.losses.user_dropped, 1);
 }
+
+/// A volume mounted or unmounted below the root renews what the stream
+/// leaves out; when that does not change, the stream runs on as it is.
+#[test]
+fn a_mount_that_changes_nothing_left_out_keeps_the_stream() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(real(&place, Duration::from_millis(20), profiles())).unwrap();
+    settled(&engine);
+    let root = engine.snapshot().unwrap().root;
+    let before = engine.counters();
+    let mounted = Event {
+        path: root.join("home"),
+        flags: Flags::MOUNT,
+        id: 1,
+    };
+    engine.events(vec![mounted]).unwrap();
+    until(&engine, |e| e.counters().since(&before).events == 1);
+    settled(&engine);
+    assert_eq!(
+        engine.counters().since(&before).streams,
+        0,
+        "the same stream"
+    );
+}

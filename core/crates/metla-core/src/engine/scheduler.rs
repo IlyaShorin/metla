@@ -108,11 +108,8 @@ pub struct Scheduler {
     /// serve and to fall back on (a scan replaces it only when it ends),
     /// so a read that fails never counts as "no picture".
     pub pictured: bool,
-    /// The stream running now: a batch of an older one comes from before
-    /// a replay.
-    pub generation: u64,
-    /// Replays of lost events that have not caught up yet.
-    pub replays: u32,
+    /// Which stream runs, and the replays of lost events not caught up.
+    pub replays: Replays,
 }
 
 impl Scheduler {
@@ -180,10 +177,7 @@ impl Scheduler {
     /// from the history (`on_loss`) rather than taken for a full scan.
     fn receive(&mut self, generation: Option<u64>, events: &[Event]) {
         self.shared.count(|c| tally(&mut c.losses, events));
-        let current = generation.is_none_or(|g| g == self.generation);
-        let dropped = events.iter().any(|e| e.flags.contains(Flags::USER_DROPPED));
-        self.replays = replays_after(self.replays, current, dropped, events);
-        match on_loss(dropped, current, self.replays) {
+        match self.replays.batch(generation, events) {
             OnLoss::Replay if self.replay() => {}
             action => self.feed(&applied(action, events)),
         }
@@ -196,12 +190,18 @@ impl Scheduler {
         let Some(latency) = self.stream.as_ref().map(|following| following.latency) else {
             return false;
         };
-        self.replays += 1;
+        self.replays.replaying();
         self.shared.count(|c| c.losses.replays += 1);
+        self.reopen(latency);
+        true
+    }
+
+    /// Replaces the stream by one with `latency` (and the exclusions in
+    /// force) that replays what the old one had not handed over yet.
+    fn reopen(&mut self, latency: Duration) {
         let since = self.coalescer.settled().or(self.origin);
         self.stream = None;
         self.open_stream(latency, since);
-        true
     }
 
     /// Hands the events to the coalescer, but those below what a cleanup
@@ -237,11 +237,7 @@ impl Scheduler {
         match (wanted, running) {
             (None, _) => self.stream = None,
             (Some(latency), Some(now)) if latency == now => {}
-            (Some(latency), Some(_)) => {
-                let since = self.coalescer.settled().or(self.origin);
-                self.stream = None;
-                self.open_stream(latency, since);
-            }
+            (Some(latency), Some(_)) => self.reopen(latency),
             (Some(latency), None) => {
                 let since = resumable(&mut self.reader, self.root.device());
                 if !self.open_stream(latency, since) {
@@ -270,14 +266,11 @@ impl Scheduler {
     /// replaced by one that replays what it had not handed over yet.
     fn exclude(&mut self, volumes: &[PathBuf]) {
         let (excluded, _) = stream_exclusions(self.root.path(), &self.data_dir, volumes);
-        if excluded == self.excluded {
-            return;
-        }
+        let changed = excluded != self.excluded;
         self.excluded = excluded;
-        if let Some(latency) = self.stream.as_ref().map(|following| following.latency) {
-            let since = self.coalescer.settled().or(self.origin);
-            self.stream = None;
-            self.open_stream(latency, since);
+        let running = self.stream.as_ref().map(|following| following.latency);
+        if let Some(latency) = running.filter(|_| changed) {
+            self.reopen(latency);
         }
     }
 
@@ -288,8 +281,7 @@ impl Scheduler {
     fn open_stream(&mut self, latency: Duration, since: Option<u64>) -> bool {
         let sender = self.sender.clone();
         let shared = Arc::clone(&self.shared);
-        self.generation += 1;
-        let generation = Some(self.generation);
+        let generation = Some(self.replays.opened());
         let sink = move |events: Vec<Event>| {
             if let Some(events) = news_of(events, &shared.quiet_paths(Instant::now())) {
                 let _ = sender.send(Command::Events(generation, events));
@@ -826,6 +818,41 @@ pub fn on_loss(dropped: bool, current: bool, replays: u32) -> OnLoss {
     }
 }
 
+/// Which stream runs (its generation) and the replays of lost events
+/// that have not caught up: what a batch leads to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Replays {
+    generation: u64,
+    pending: u32,
+}
+
+impl Replays {
+    /// A new stream opens: its generation.
+    pub fn opened(&mut self) -> u64 {
+        self.generation += 1;
+        self.generation
+    }
+
+    /// A replay starts.
+    pub fn replaying(&mut self) {
+        self.pending += 1;
+    }
+
+    /// Replays that have not caught up.
+    pub fn pending(&self) -> u32 {
+        self.pending
+    }
+
+    /// What a batch of the stream of `generation` (`None`: the running
+    /// one's) leads to, the replays not caught up counted again.
+    pub fn batch(&mut self, generation: Option<u64>, events: &[Event]) -> OnLoss {
+        let current = generation.is_none_or(|g| g == self.generation);
+        let dropped = events.iter().any(|e| e.flags.contains(Flags::USER_DROPPED));
+        self.pending = replays_after(self.pending, current, dropped, events);
+        on_loss(dropped, current, self.pending)
+    }
+}
+
 /// The replays not caught up after a batch: none once the running
 /// stream's history has handed over its end without losing more.
 pub fn replays_after(replays: u32, current: bool, dropped: bool, events: &[Event]) -> u32 {
@@ -851,6 +878,14 @@ pub fn tally(losses: &mut Losses, events: &[Event]) {
     losses.must_scan += count(Flags::MUST_SCAN_SUBDIRS);
     losses.root_changed += count(Flags::ROOT_CHANGED);
     losses.ids_wrapped += count(Flags::EVENT_IDS_WRAPPED);
+}
+
+/// The line written to stderr when the stream cannot leave out every
+/// directory it should (`left` of them beyond the `excluded`), or none.
+pub fn exclusion_line(excluded: usize, left: usize) -> Option<String> {
+    (left > 0).then(|| {
+        format!("metla: the event stream leaves out {excluded} directories, {left} more are dropped after delivery")
+    })
 }
 
 /// The events of a batch that may be news (`news`), or none.
