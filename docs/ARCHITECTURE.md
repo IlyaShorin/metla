@@ -658,6 +658,21 @@ thread and `Off` scans nothing. Once a picture exists, the engine's
 full scans use the power profile's own row. `Counters::scan_threads`
 adds up the threads each full scan was given.
 
+**Deferred full scans.** A full scan the engine needs on its own
+starts at once without a picture, for the user (Refresh) and for a
+history found lost at opening. Otherwise (events dropped or the root
+reported, too many changes, a rescan too large or failed, a stopped
+scan done again) it waits, `profile::scan_start`, a pure table: no
+earlier than the profile's `scan_gap` after the last full scan ended
+(or the engine opened) and its `scan_quiet` after the last event that
+asked for one, whichever is later; 10 min and 60 s while someone looks
+(`Interactive`'s row), 30 min and 60 s in the background. A new drop
+pushes it back; the scheduler sleeps until then. Meanwhile the state is
+`Idle`, the picture stays shown and usable, `needs_full_scan` says it
+is behind (the status line: "updated N min ago · out of date"), and
+stderr has one line with the reason and the wait. A scan the user asked
+for that gave way to a cleanup is done again at once, as theirs.
+
 The pause between batches sets how often Background and Saver change
 the picture: about once a minute and every three minutes. Their streams
 hold events back for 15 s; macOS was measured to deliver every 15 s or

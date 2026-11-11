@@ -40,10 +40,11 @@ use crate::watch::Coalescer;
 
 pub use kept::{decode_report, encode_report};
 pub use listing::{LISTED_FILES, Largest, Rest};
-pub use profile::{OFF, PowerProfile, Profile, Profiles};
+pub use profile::{OFF, PowerProfile, Profile, Profiles, ScanStart, scan_start};
 pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
 pub use scheduler::{
-    EVENTS_NOTE, QUIET_AFTER, Watching, needs, news, news_of, quiet_after, started_line,
+    EVENTS_NOTE, QUIET_AFTER, Watching, deferred_line, needs, news, news_of, quiet_after, redone,
+    started_line,
 };
 pub use settings::{HotkeyMode, Settings};
 pub use shared::Quiet;
@@ -280,6 +281,8 @@ fn start_scheduler(
         clock: Instant::now(),
         next_batch: None,
         left: Vec::new(),
+        ended: Instant::now(),
+        deferred: None,
     };
     let thread = thread::Builder::new().name("metla-engine".into());
     setup(

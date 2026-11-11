@@ -70,6 +70,8 @@ pub fn quick(full_scans: bool) -> Profile {
         pause: Duration::ZERO,
         full_scans,
         throttled: false,
+        scan_gap: Duration::ZERO,
+        scan_quiet: Duration::ZERO,
     }
 }
 

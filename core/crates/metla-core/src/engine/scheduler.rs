@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use super::REPORT_NOTE;
 use super::kept::encode_report;
-use super::profile::Profile;
+use super::profile::{Profile, ScanStart, scan_start};
 use super::refresh::{RefreshError, Refreshed, refresh};
 use super::shared::{Quiet, RunningScan, Shared, lock};
 use super::view::{Changed, Failure, ScanReason};
@@ -93,6 +93,10 @@ pub struct Scheduler {
     /// Tasks of a batch that gave way to a cleanup: due before the
     /// coalescer's next ones.
     pub left: Vec<RescanTask>,
+    /// When the last full scan ended (at first, when the engine opened).
+    pub ended: Instant,
+    /// When the deferred full scan may start.
+    pub deferred: Option<Instant>,
 }
 
 impl Scheduler {
@@ -129,11 +133,12 @@ impl Scheduler {
     /// tasks were left), and not before the pause after a batch; `None`
     /// when nothing waits.
     fn wait(&self) -> Option<Duration> {
-        let at = match self.left.is_empty() {
-            true => self.clock + self.coalescer.next_deadline()?,
-            false => Instant::now(),
+        let tasks = match self.left.is_empty() {
+            true => self.coalescer.next_deadline().map(|due| self.clock + due),
+            false => Some(Instant::now()),
         };
-        let at = self.next_batch.map_or(at, |next| at.max(next));
+        let tasks = tasks.map(|at| self.next_batch.map_or(at, |next| at.max(next)));
+        let at = tasks.into_iter().chain(self.deferred).min()?;
         Some(at.saturating_duration_since(Instant::now()))
     }
 
@@ -326,14 +331,37 @@ impl Scheduler {
         self.full_scan_if_due(&now);
     }
 
-    /// The engine's own full scan, when one is needed, not held, the
-    /// profile allows it and no cleanup waits.
+    /// The engine's own full scan, when one is needed, not held, no
+    /// cleanup waits, and the profile lets it start now
+    /// (`profile::scan_start`); else when it may, the scheduler sleeping
+    /// until then.
     fn full_scan_if_due(&mut self, profile: &Profile) {
         let status = *lock(&self.shared.status);
-        let due = status.scan_due() && profile.full_scans && status.waiting_cleanups == 0;
-        if let Some(reason) = status.reason.filter(|_| due) {
-            self.full_scan(reason);
+        let due = status.scan_due() && status.waiting_cleanups == 0;
+        let Some(reason) = status.reason.filter(|_| due) else {
+            return self.defer(None);
+        };
+        let picture = self.picture().ok().flatten().is_some();
+        let now = Instant::now();
+        match scan_start(reason, picture, self.ended, status.trouble, now, profile) {
+            ScanStart::Now => self.full_scan(reason),
+            ScanStart::NotBefore(at) => {
+                if self.deferred.is_none() {
+                    eprintln!(
+                        "{}",
+                        deferred_line(reason, at.saturating_duration_since(now))
+                    );
+                }
+                self.defer(Some(at));
+            }
+            ScanStart::Never => self.defer(None),
         }
+    }
+
+    fn defer(&mut self, until: Option<Instant>) {
+        self.deferred = until;
+        let deferred = until.is_some();
+        self.shared.update(|s| s.deferred = deferred);
     }
 
     /// Applies one task and notes what it wrote; why only a full scan
@@ -422,6 +450,7 @@ impl Scheduler {
     /// (Shared::want_cleanup) and is done again after it.
     fn full_scan(&mut self, reason: ScanReason) {
         let interactive = reason == ScanReason::UserAsked;
+        self.defer(None);
         let had_picture = self.picture().ok().flatten().is_some();
         let profile = if interactive {
             self.shared.profiles.interactive
@@ -457,12 +486,13 @@ impl Scheduler {
             c.scan_threads += profile.threads as u64;
         });
         *lock(&self.shared.scan) = None;
+        self.ended = Instant::now();
         let cancelled = control.is_cancelled();
         let gave_way = cancelled && self.shared.cleanup_waiting();
         if finished || gave_way {
             self.shared.update(|s| {
                 s.needs_full_scan = cancelled;
-                s.reason = Some(ScanReason::Redone).filter(|_| cancelled).or(s.reason);
+                s.reason = s.reason.map(|was| redone(was, cancelled));
             });
         }
         self.shared.notify(Changed::Picture);
@@ -681,6 +711,25 @@ pub fn needs(task: &RescanTask, cause: Option<FullCause>) -> ScanReason {
         (RescanTask::Full, _) => ScanReason::EventsDropped,
         _ => ScanReason::RescanTooLarge,
     }
+}
+
+/// Why a scan stopped (`cancelled`) is done again: as the user's scan
+/// if it was theirs, else as one redone, which waits like the others.
+pub fn redone(was: ScanReason, cancelled: bool) -> ScanReason {
+    match (cancelled, was) {
+        (true, ScanReason::UserAsked) | (false, _) => was,
+        (true, _) => ScanReason::Redone,
+    }
+}
+
+/// The line written to stderr when a full scan is deferred, once until
+/// it starts: its reason and how long it waits at least, never a path.
+pub fn deferred_line(reason: ScanReason, wait: Duration) -> String {
+    format!(
+        "metla: full scan deferred ({}), may start in {} s",
+        reason.says(),
+        wait.as_secs()
+    )
 }
 
 /// The line written to stderr when a full scan starts: its reason and

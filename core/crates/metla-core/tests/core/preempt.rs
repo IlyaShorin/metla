@@ -16,8 +16,9 @@ use metla_core::domain::{
     Category, Confirmation, DirFacts, DirId, PreviewId, QuickCategory, RescanTask, Separate,
 };
 use metla_core::engine::{
-    Completeness, Engine, EngineConfig, EngineState, PowerProfile, QUIET_AFTER, Quiet, ScanReason,
-    needs, news, news_of, quiet_after, started_line,
+    Completeness, Engine, EngineConfig, EngineState, PowerProfile, Profile, QUIET_AFTER, Quiet,
+    ScanReason, ScanStart, deferred_line, needs, news, news_of, quiet_after, redone, scan_start,
+    started_line,
 };
 use metla_core::fs::Mount;
 use metla_core::scan::{DirObserver, other_volumes};
@@ -200,7 +201,11 @@ fn the_users_own_scan_gives_way_to_a_cleanup_and_still_counts_as_ended() {
     assert!(now > ended, "the user's scan ended: {ended} -> {now}");
     settled(&engine);
     let freshness = engine.freshness().unwrap();
-    assert_eq!(freshness.scan_reason, Some(ScanReason::Redone));
+    assert_eq!(
+        freshness.scan_reason,
+        Some(ScanReason::UserAsked),
+        "done again at once, as the user's"
+    );
     assert_eq!(
         freshness.full_scans_ended,
         ended + 2,
@@ -431,4 +436,184 @@ fn other_volumes_below_the_root_are_the_mounts_of_other_devices_under_it() {
     let below_users = other_volumes(Path::new("/Users"), 1, &mounts);
     assert_eq!(below_users, [PathBuf::from("/Users/me/disk")]);
     assert!(other_volumes(Path::new("/Volumes/Build"), 2, &mounts).is_empty());
+}
+
+/// When the engine's own full scan may start: at once without a picture,
+/// for the user and for a history lost at opening; otherwise a gap after
+/// the last full scan and a quiet after the last event that asked for
+/// it, whichever is later; never under a profile without full scans.
+#[test]
+fn a_full_scan_the_engine_needs_waits_for_its_gap_and_for_quiet() {
+    let t = Instant::now();
+    let s = Duration::from_secs;
+    let profile = Profile {
+        scan_gap: s(600),
+        scan_quiet: s(60),
+        ..quick(true)
+    };
+    let saving = Profile {
+        full_scans: false,
+        ..profile
+    };
+    let rows = [
+        (
+            ScanReason::NoPicture,
+            true,
+            None,
+            s(0),
+            &profile,
+            ScanStart::Now,
+        ),
+        (
+            ScanReason::UserAsked,
+            true,
+            None,
+            s(0),
+            &profile,
+            ScanStart::Now,
+        ),
+        (
+            ScanReason::HistoryLost,
+            true,
+            None,
+            s(0),
+            &profile,
+            ScanStart::Now,
+        ),
+        (
+            ScanReason::EventsDropped,
+            false,
+            None,
+            s(0),
+            &profile,
+            ScanStart::Now,
+        ),
+        (
+            ScanReason::EventsDropped,
+            true,
+            None,
+            s(0),
+            &profile,
+            ScanStart::NotBefore(t + s(600)),
+        ),
+        (
+            ScanReason::TooManyChanges,
+            true,
+            Some(s(590)),
+            s(595),
+            &profile,
+            ScanStart::NotBefore(t + s(650)),
+        ),
+        (
+            ScanReason::RescanTooLarge,
+            true,
+            Some(s(10)),
+            s(600),
+            &profile,
+            ScanStart::Now,
+        ),
+        (
+            ScanReason::RescanFailed,
+            true,
+            Some(s(10)),
+            s(599),
+            &profile,
+            ScanStart::NotBefore(t + s(600)),
+        ),
+        (
+            ScanReason::Redone,
+            true,
+            None,
+            s(601),
+            &profile,
+            ScanStart::Now,
+        ),
+        (
+            ScanReason::UserAsked,
+            true,
+            None,
+            s(0),
+            &saving,
+            ScanStart::Never,
+        ),
+        (
+            ScanReason::NoPicture,
+            false,
+            None,
+            s(0),
+            &saving,
+            ScanStart::Never,
+        ),
+    ];
+    for (reason, picture, trouble, now, profile, start) in rows {
+        let trouble = trouble.map(|at| t + at);
+        let case = format!("{reason:?}, picture {picture}, trouble {trouble:?}, now +{now:?}");
+        assert_eq!(
+            scan_start(reason, picture, t, trouble, t + now, profile),
+            start,
+            "{case}"
+        );
+    }
+    assert_eq!(redone(ScanReason::UserAsked, true), ScanReason::UserAsked);
+    assert_eq!(redone(ScanReason::EventsDropped, true), ScanReason::Redone);
+    assert_eq!(
+        redone(ScanReason::EventsDropped, false),
+        ScanReason::EventsDropped
+    );
+    assert_eq!(
+        deferred_line(ScanReason::EventsDropped, s(90)),
+        "metla: full scan deferred (the event stream lost events or reported the root), may start in 90 s"
+    );
+}
+
+/// The engine's profiles with `gap` and `quiet` for its own full scans.
+fn waiting(place: &Place, gap: Duration, quiet: Duration) -> Engine {
+    let mut config = place.config(PowerProfile::Background);
+    for profile in [
+        &mut config.profiles.interactive,
+        &mut config.profiles.background,
+    ] {
+        profile.scan_gap = gap;
+        profile.scan_quiet = quiet;
+    }
+    Engine::open(config).unwrap()
+}
+
+#[test]
+fn a_full_scan_the_engine_needs_waits_and_the_picture_shows_its_age_until_refresh() {
+    let place = place();
+    let engine = waiting(&place, Duration::from_secs(600), Duration::from_secs(60));
+    settled(&engine);
+    too_many_changes(&engine, &place);
+    until(&engine, |e| {
+        let f = e.freshness().unwrap();
+        f.needs_full_scan && f.state == EngineState::Idle
+    });
+    too_many_changes(&engine, &place);
+    std::thread::sleep(Duration::from_millis(200));
+    let freshness = engine.freshness().unwrap();
+    assert_eq!(freshness.state, EngineState::Idle, "not updating: waiting");
+    assert_eq!(freshness.scan_reason, Some(ScanReason::TooManyChanges));
+    assert_eq!(engine.counters().full_scans, 1, "deferred");
+    engine.start_scan().unwrap();
+    until(&engine, |e| e.counters().full_scans == 2);
+    settled(&engine);
+    assert!(
+        !engine.freshness().unwrap().needs_full_scan,
+        "the user's refresh did it"
+    );
+}
+
+#[test]
+fn two_drops_a_moment_apart_make_one_full_scan_once_it_is_quiet() {
+    let place = place();
+    let engine = waiting(&place, Duration::ZERO, Duration::from_millis(400));
+    settled(&engine);
+    too_many_changes(&engine, &place);
+    std::thread::sleep(Duration::from_millis(150));
+    too_many_changes(&engine, &place);
+    until(&engine, |e| e.counters().full_scans == 2);
+    settled(&engine);
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(engine.counters().full_scans, 2, "one scan for both");
 }

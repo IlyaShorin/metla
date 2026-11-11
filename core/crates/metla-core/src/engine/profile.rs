@@ -2,8 +2,9 @@
 //! (ARCHITECTURE §7). The app picks the profile from the power state; the
 //! engine owns what each one means.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use super::view::ScanReason;
 use crate::scan::Priority;
 use crate::watch::Timing;
 
@@ -39,6 +40,12 @@ pub struct Profile {
     /// Whether the engine's threads run at background priority, with
     /// throttled I/O.
     pub throttled: bool,
+    /// The least time from the end of a full scan to the start of a
+    /// deferred one (`scan_start`).
+    pub scan_gap: Duration,
+    /// The quiet a deferred full scan waits for after the last event
+    /// that asked for it.
+    pub scan_quiet: Duration,
 }
 
 /// The table: one row per profile but `Off`, which is fixed.
@@ -61,6 +68,8 @@ pub const OFF: Profile = Profile {
     pause: Duration::ZERO,
     full_scans: false,
     throttled: true,
+    scan_gap: Duration::ZERO,
+    scan_quiet: Duration::ZERO,
 };
 
 impl Profile {
@@ -97,6 +106,8 @@ impl Profiles {
                 pause: Duration::ZERO,
                 full_scans: true,
                 throttled: false,
+                scan_gap: Duration::from_secs(600),
+                scan_quiet: Duration::from_secs(60),
             },
             background: Profile {
                 threads: 2,
@@ -105,6 +116,8 @@ impl Profiles {
                 pause: Duration::from_secs(60),
                 full_scans: true,
                 throttled: false,
+                scan_gap: Duration::from_secs(1800),
+                scan_quiet: Duration::from_secs(60),
             },
             saver: Profile {
                 threads: 1,
@@ -113,6 +126,8 @@ impl Profiles {
                 pause: Duration::from_secs(180),
                 full_scans: false,
                 throttled: true,
+                scan_gap: Duration::from_secs(1800),
+                scan_quiet: Duration::from_secs(60),
             },
         }
     }
@@ -157,5 +172,49 @@ impl Profiles {
             },
             _ => own,
         }
+    }
+}
+
+/// When the engine's own full scan may start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScanStart {
+    Now,
+    NotBefore(Instant),
+    /// The profile starts none (`Saver`, `Off`).
+    Never,
+}
+
+/// When the engine's own full scan for `reason` may start under
+/// `profile`. At once without a `picture`, when the user asked, and for
+/// a history found lost at opening. Otherwise (events dropped, too many
+/// changes, a rescan too large or failed, a stopped scan done again) not
+/// before the profile's `scan_gap` after the last full scan `ended` (or
+/// the engine opened) and its `scan_quiet` after the last event that
+/// asked for it (`trouble`): a busy disk cannot make the engine scan
+/// everything again and again. A pure table.
+pub fn scan_start(
+    reason: ScanReason,
+    picture: bool,
+    ended: Instant,
+    trouble: Option<Instant>,
+    now: Instant,
+    profile: &Profile,
+) -> ScanStart {
+    let urgent = matches!(
+        reason,
+        ScanReason::NoPicture | ScanReason::UserAsked | ScanReason::HistoryLost
+    );
+    if !profile.full_scans {
+        return ScanStart::Never;
+    }
+    if urgent || !picture {
+        return ScanStart::Now;
+    }
+    let after_gap = ended + profile.scan_gap;
+    let after_quiet = trouble.map_or(after_gap, |at| at + profile.scan_quiet);
+    let at = after_gap.max(after_quiet);
+    match now >= at {
+        true => ScanStart::Now,
+        false => ScanStart::NotBefore(at),
     }
 }

@@ -72,6 +72,11 @@ pub struct Status {
     /// Why the running or last full scan was started, or why the one
     /// needed is.
     pub reason: Option<ScanReason>,
+    /// When the last event that asked for a full scan came.
+    pub trouble: Option<Instant>,
+    /// The full scan needed waits (`profile::scan_start`): the picture
+    /// shows its age, not an update in progress.
+    pub deferred: bool,
 }
 
 impl Status {
@@ -160,7 +165,7 @@ impl Shared {
     fn between_scans(&self, status: Status) -> EngineState {
         let effective = self.effective();
         let deferred = status.needs_full_scan && !self.power().full_scans;
-        let due = status.pending > 0 || status.scan_due();
+        let due = status.pending > 0 || status.scan_due() && !status.deferred;
         match (effective, deferred, due, status.failure) {
             (PowerProfile::Off, ..) => EngineState::Off,
             (profile, true, ..) => EngineState::Paused(profile),
@@ -223,11 +228,13 @@ impl Shared {
     /// Only a full scan will make the picture right, for `reason`; a scan
     /// already needed keeps its first reason.
     pub fn need_full_scan(&self, reason: ScanReason) {
+        let now = Instant::now();
         self.update(|s| {
             if !s.needs_full_scan {
                 s.reason = Some(reason);
             }
             s.needs_full_scan = true;
+            s.trouble = Some(now);
         });
     }
 
