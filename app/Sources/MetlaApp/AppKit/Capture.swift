@@ -31,6 +31,39 @@ enum Capture {
     /// The window's content size in the images, in points.
     static let size = NSSize(width: 1120, height: 720)
 
+    /// What the capture saw go wrong; the app exits with 1 when there is
+    /// any.
+    static var failures: [String] = []
+
+    static func fail(_ what: String) {
+        failures.append(what)
+        FileHandle.standardError.write(Data("capture: FAIL \(what)\n".utf8))
+    }
+
+    /// Shows `screen` in `window` at the capture's size, and fails the
+    /// capture when showing it changed the window's frame or laid the
+    /// content out at another size than the window's: no detail may size
+    /// the main window.
+    static func kept(_ window: NSWindow, on screen: Screen, of model: AppModel, name: String) async {
+        window.setContentSize(size)
+        try? await Task.sleep(for: .milliseconds(300))
+        let before = window.frame
+        await model.show(screen)
+        await prepare(model, screen)
+        try? await Task.sleep(for: .milliseconds(1200))
+        window.displayIfNeeded()
+        // The window's own frame, and the content laid out in it: SwiftUI
+        // lays its root out at the size the content asks for, and a root
+        // taller than the window is drawn shifted up under the title bar.
+        if window.frame != before {
+            fail("\(name): the main window went from \(before) to \(window.frame)")
+        }
+        let bounds = window.contentView?.bounds ?? .zero
+        for laid in window.contentView?.subviews.map(\.frame) ?? [] where laid != bounds {
+            fail("\(name): the content is laid out at \(laid) in a window of \(bounds.size)")
+        }
+    }
+
     /// Renders every screen in both appearances; how many files it wrote.
     static func run(
         _ model: AppModel, into directory: String, settings: @MainActor (SettingsTab) async -> NSWindow?
@@ -54,10 +87,7 @@ enum Capture {
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             await appear(appearance, window)
             for (name, screen) in screens {
-                await model.show(screen)
-                await prepare(model, screen)
-                window.setContentSize(size)
-                try? await Task.sleep(for: .milliseconds(900))
+                await kept(window, on: screen, of: model, name: "\(name)-\(suffix)")
                 window.setContentSize(size)
                 window.displayIfNeeded()
                 let file = (directory as NSString).appendingPathComponent("\(name)-\(suffix).png")
@@ -67,7 +97,8 @@ enum Capture {
             }
         }
         NSApp.appearance = nil
-        return written + (await CaptureExtras.run(model, into: directory, settings: settings))
+        written += await CaptureExtras.run(model, into: directory, settings: settings)
+        return written + (await CaptureReport.run(model, window: window, into: directory))
     }
 
     /// Switches the app to `name` and waits until the window has it.
@@ -139,7 +170,7 @@ enum Capture {
 
     /// Waits until the worktrees' states are known; opens the outline a
     /// few levels deep and selects a row in it.
-    private static func prepare(_ model: AppModel, _ screen: Screen) async {
+    static func prepare(_ model: AppModel, _ screen: Screen) async {
         if case .category(let category) = screen, let table = model.category(category) {
             let deadline = Date().addingTimeInterval(30)
             while table.rows.contains(where: { $0.state == model.strings.text("worktree.checking") }), Date() < deadline {

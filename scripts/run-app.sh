@@ -46,7 +46,9 @@ for name in METLA_ROOT METLA_HOME METLA_DATA_DIR METLA_LANGUAGE TMPDIR; do
 done
 open -n -W -a "$app" --stdout "$log" --stderr "$log" "${environment[@]}" --args "$@"
 cat "$log"
-grep -q '^capture: [0-9]* images' "$log"
+# `open` does not pass the app's exit status on: the log says whether the
+# capture wrote its images and whether any of its checks failed.
+grep -q '^capture: [0-9]* images' "$log" && ! grep -q '^capture: FAIL' "$log"
 code=$?
 rm -f -- "$log"
 exit "$code"

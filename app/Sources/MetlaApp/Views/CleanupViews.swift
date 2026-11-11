@@ -257,6 +257,9 @@ struct ReportView: View {
     let strings: Strings
     @Binding var problemsOnly: Bool
 
+    /// The list's ideal height, in points, however many rows it has.
+    static let listHeight: CGFloat = 480
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(strings.text("report.title")).font(.headline)
@@ -273,14 +276,16 @@ struct ReportView: View {
                 }
                 Toggle(strings.text("report.problemsOnly"), isOn: $problemsOnly)
                     .toggleStyle(.symbolCheckbox)
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(report.rows(problemsOnly: problemsOnly)) { row in
-                            ReportLine(row: row, strings: strings)
-                        }
-                    }
+                // A list (a table view underneath) scrolls in whatever height
+                // it is given and asks for none of its rows' height.
+                List(report.rows(problemsOnly: problemsOnly)) { row in
+                    ReportLine(row: row, strings: strings)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                 }
-                .frame(minHeight: 80)
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 80, idealHeight: Self.listHeight, maxHeight: .infinity)
             }
         }
     }

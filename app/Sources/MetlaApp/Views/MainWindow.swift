@@ -13,8 +13,15 @@ struct MainWindow: View {
             SidebarView(model: model)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 232, max: 300)
         } detail: {
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The detail takes exactly the space the window gives it and
+            // never sizes the window: measured inside the split view's
+            // detail column, a long report's list made the column 1,731
+            // to 1,926 points tall in a 720-point window, and the content
+            // was laid out at that height, shifted up under the title bar.
+            GeometryReader { space in
+                detail
+                    .frame(width: space.size.width, height: space.size.height)
+            }
         }
         .navigationTitle(title)
         .navigationSubtitle(subtitle)

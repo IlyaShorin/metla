@@ -47,11 +47,11 @@ final class Bridge {
             let written = await Capture.run(model, into: directory) { [weak self] tab in
                 await self?.showSettings(tab)
             }
-            print("capture: \(written) images in \(directory)")
+            print("capture: \(written) images in \(directory), \(Capture.failures.count) failures")
             fflush(stdout)
             // Not NSApp.terminate: with the capture's report sheet up,
             // SwiftUI leaves the app running.
-            exit(0)
+            exit(Capture.failures.isEmpty ? 0 : 1)
         }
         if settings.menuBarOnly {
             NSApp.windows.first { $0.identifier?.rawValue == "main" }?.close()
