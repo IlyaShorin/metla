@@ -17,8 +17,9 @@ use metla_core::domain::{
 };
 use metla_core::engine::{
     Completeness, Engine, EngineConfig, EngineState, Losses, MAX_REPLAYS, OnLoss, PowerProfile,
-    Profile, QUIET_AFTER, Quiet, ScanReason, ScanStart, deferred_line, needs, news, news_of,
-    on_loss, quiet_after, redone, scan_start, started_line, stream_exclusions, tally,
+    Profile, QUIET_AFTER, Quiet, ScanReason, ScanStart, applied, deferred_line, needs, news,
+    news_of, on_loss, quiet_after, redone, replays_after, scan_start, started_line,
+    stream_exclusions, tally,
 };
 use metla_core::fs::Mount;
 use metla_core::scan::{DirObserver, other_volumes};
@@ -822,4 +823,47 @@ fn a_loss_is_replayed_until_replays_keep_losing() {
         replays: 0,
     };
     assert_eq!(losses, expected);
+}
+
+/// After a batch, the replays not caught up: none once the running
+/// stream's history has handed over its end without a new loss; and what
+/// is applied: everything, but the loss markers of a replaced stream.
+#[test]
+fn a_replay_catches_up_at_the_end_of_its_history_and_a_replaced_streams_losses_are_dropped() {
+    let event = |path: &str, flags: Flags| Event {
+        path: PathBuf::from(path),
+        flags,
+        id: 1,
+    };
+    let done = [event("/", Flags::HISTORY_DONE)];
+    let lost_and_done = [
+        event("/", Flags::HISTORY_DONE),
+        event("/", Flags::USER_DROPPED),
+    ];
+    let plain = [event("/a", Flags::NONE)];
+    let rows: [(u32, bool, bool, &[Event], u32); 5] = [
+        (2, true, false, &done, 0),
+        (2, false, false, &done, 2),
+        (2, true, true, &lost_and_done, 2),
+        (2, true, false, &plain, 2),
+        (0, true, false, &done, 0),
+    ];
+    for (replays, current, dropped, events, after) in rows {
+        assert_eq!(
+            replays_after(replays, current, dropped, events),
+            after,
+            "{replays} {current} {dropped} {events:?}"
+        );
+    }
+    let batch = [
+        event("/a", Flags::NONE),
+        event("/", Flags::MUST_SCAN_SUBDIRS.with(Flags::USER_DROPPED)),
+    ];
+    assert_eq!(applied(OnLoss::FeedOthers, &batch), [batch[0].clone()]);
+    assert_eq!(applied(OnLoss::Feed, &batch), batch);
+    assert_eq!(
+        applied(OnLoss::Replay, &batch),
+        batch,
+        "nothing to replay with: applied"
+    );
 }

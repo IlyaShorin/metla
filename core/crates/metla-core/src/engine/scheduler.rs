@@ -182,24 +182,10 @@ impl Scheduler {
         self.shared.count(|c| tally(&mut c.losses, events));
         let current = generation.is_none_or(|g| g == self.generation);
         let dropped = events.iter().any(|e| e.flags.contains(Flags::USER_DROPPED));
-        if current && !dropped && events.iter().any(|e| e.flags.contains(Flags::HISTORY_DONE)) {
-            self.replays = 0;
-        }
+        self.replays = replays_after(self.replays, current, dropped, events);
         match on_loss(dropped, current, self.replays) {
-            OnLoss::Feed => self.feed(events),
-            OnLoss::FeedOthers => {
-                let others: Vec<Event> = events
-                    .iter()
-                    .filter(|e| !e.flags.contains(Flags::USER_DROPPED))
-                    .cloned()
-                    .collect();
-                self.feed(&others);
-            }
-            OnLoss::Replay => {
-                if !self.replay() {
-                    self.feed(events);
-                }
-            }
+            OnLoss::Replay if self.replay() => {}
+            action => self.feed(&applied(action, events)),
         }
     }
 
@@ -838,6 +824,23 @@ pub fn on_loss(dropped: bool, current: bool, replays: u32) -> OnLoss {
         (true, true) if replays < MAX_REPLAYS => OnLoss::Replay,
         (true, true) => OnLoss::Feed,
     }
+}
+
+/// The replays not caught up after a batch: none once the running
+/// stream's history has handed over its end without losing more.
+pub fn replays_after(replays: u32, current: bool, dropped: bool, events: &[Event]) -> u32 {
+    let done = events.iter().any(|e| e.flags.contains(Flags::HISTORY_DONE));
+    match current && !dropped && done {
+        true => 0,
+        false => replays,
+    }
+}
+
+/// The events of a batch that are applied for `action`: all of them,
+/// but the loss markers of a batch from a stream already replaced.
+pub fn applied(action: OnLoss, events: &[Event]) -> Vec<Event> {
+    let keep = |e: &&Event| action != OnLoss::FeedOthers || !e.flags.contains(Flags::USER_DROPPED);
+    events.iter().filter(keep).cloned().collect()
 }
 
 /// Counts the marks of `events` into `losses`.

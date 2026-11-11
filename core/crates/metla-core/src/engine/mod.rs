@@ -43,8 +43,8 @@ pub use listing::{LISTED_FILES, Largest, Rest};
 pub use profile::{OFF, PowerProfile, Profile, Profiles, ScanStart, scan_start};
 pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
 pub use scheduler::{
-    EVENTS_NOTE, MAX_REPLAYS, OnLoss, QUIET_AFTER, Watching, deferred_line, needs, news, news_of,
-    on_loss, quiet_after, redone, started_line, stream_exclusions, tally,
+    EVENTS_NOTE, MAX_REPLAYS, OnLoss, QUIET_AFTER, Watching, applied, deferred_line, needs, news,
+    news_of, on_loss, quiet_after, redone, replays_after, started_line, stream_exclusions, tally,
 };
 pub use settings::{HotkeyMode, Settings};
 pub use shared::Quiet;
