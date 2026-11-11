@@ -52,9 +52,16 @@ for map in "$HOME=/home" "${CARGO_HOME:-$HOME/.cargo}=/cargo" "${RUSTUP_HOME:-$H
     remap="${remap:+$remap$separator}--remap-path-prefix=$map"
 done
 
+# The core's stamp: a hash of its sources (paths relative to core/ and
+# contents) and the kind, compiled into the library (metla_ffi's
+# core_stamp) and written beside it, so build-app.sh can check that the
+# app links the core it just built. No path and no time go into it: the
+# same sources give the same stamp.
+stamp="$(cd "$core" && { find . -path ./target -prune -o \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock \) -type f -print | LC_ALL=C sort | while IFS= read -r file; do printf '%s\n' "$file"; cat "$file"; done; } | shasum -a 256 | cut -c1-16)-$kind"
+
 libraries=()
 for triple in "${triples[@]}"; do
-    (cd "$core" && CARGO_ENCODED_RUSTFLAGS="$remap" cargo rustc -q -p metla-ffi --lib --release \
+    (cd "$core" && METLA_CORE_STAMP="$stamp" CARGO_ENCODED_RUSTFLAGS="$remap" cargo rustc -q -p metla-ffi --lib --release \
         --target "$triple" ${features[@]+"${features[@]}"} --crate-type staticlib) >&2
     libraries+=("$core/target/$triple/release/libmetla_ffi.a")
 done
@@ -62,14 +69,19 @@ done
 # Both kinds build to the same file per triple: join them at once.
 mkdir -p "$lib_dir" "$bindings"
 lipo -create "${libraries[@]}" -output "$lib_dir/libmetla_ffi.a"
+printf '%s\n' "$stamp" >"$lib_dir/stamp"
 
 (cd "$core" && cargo run -q -p metla-ffi --features bindgen --bin uniffi-bindgen-swift -- \
     --swift-sources --headers --metadata-no-deps \
     "$lib_dir/libmetla_ffi.a" "$bindings") >&2
 
 mkdir -p "$generated/include"
-cp "$bindings/metla_ffi.swift" "$generated/metla_ffi.swift"
-cp "$bindings/metla_ffiFFI.h" "$generated/include/metla_ffiFFI.h"
+# Copied only when they differ: an unchanged interface leaves the Swift
+# build alone (build-app.sh links the app anew in any case).
+cmp -s "$bindings/metla_ffi.swift" "$generated/metla_ffi.swift" \
+    || cp "$bindings/metla_ffi.swift" "$generated/metla_ffi.swift"
+cmp -s "$bindings/metla_ffiFFI.h" "$generated/include/metla_ffiFFI.h" \
+    || cp "$bindings/metla_ffiFFI.h" "$generated/include/metla_ffiFFI.h"
 # What the static library needs at link time, as
 # `cargo rustc ... -- --print native-static-libs` lists it.
 cat >"$generated/include/module.modulemap" <<'MAP'

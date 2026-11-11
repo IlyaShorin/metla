@@ -32,6 +32,7 @@ final class Bridge {
     func launch() async {
         guard !launched else { return }
         launched = true
+        LaunchTiming.identify()
         let settings = model.settings
         LaunchTiming.firstWindow(print: settings.printLaunchTiming)
         if let scenario = settings.scenario {

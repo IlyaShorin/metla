@@ -77,9 +77,18 @@ if [[ "$configuration" == release ]]; then
         swift_flags+=(-Xswiftc -file-prefix-map -Xswiftc "$map")
     done
 fi
-(cd "$repo/app" && swift build -c "$configuration" --scratch-path "$scratch" "${swift_flags[@]}") >&2
 products="$(cd "$repo/app" && swift build -c "$configuration" --scratch-path "$scratch" \
     "${swift_flags[@]}" --show-bin-path)"
+# SwiftPM does not know the core library as an input of the link: when no
+# Swift source changed it would not link again, and the bundle would get
+# the old core. The executable goes first, so it is always linked anew.
+rm -f -- "$products/Metla"
+(cd "$repo/app" && swift build -c "$configuration" --scratch-path "$scratch" "${swift_flags[@]}") >&2
+stamp="$(cat "$lib/stamp")"
+if ! LC_ALL=C grep -q -a -F "$stamp" "$products/Metla"; then
+    echo "the app does not contain the core just built (stamp $stamp): not bundled" >&2
+    exit 1
+fi
 
 app="$build/$name/Metla.app"
 rm -rf -- "$app"

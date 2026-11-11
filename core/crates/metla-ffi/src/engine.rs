@@ -236,6 +236,14 @@ impl Engine {
     }
 }
 
+/// The stamp scripts/build-core.sh compiled in: a hash of the core's
+/// sources and its kind, so a build can tell which core it linked;
+/// "unstamped" in a cargo build of its own.
+#[uniffi::export]
+pub fn core_stamp() -> String {
+    option_env!("METLA_CORE_STAMP").unwrap_or("unstamped").to_owned()
+}
+
 /// Whether this build can clean a root that is not a fixture: only the
 /// app's release build can.
 #[uniffi::export]

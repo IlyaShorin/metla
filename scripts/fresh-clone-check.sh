@@ -6,7 +6,8 @@
 #
 #   scripts/fresh-clone-check.sh <dir>
 #
-# Steps: build-core.sh; build-app.sh --debug; run-app.sh --capture (a
+# Steps: build-core.sh; build-app.sh --debug; relink-check.sh (a change
+# to the core alone reaches the app); run-app.sh --capture (a
 # fixture made by metla-cli, the pictures in <dir>/shots); run-scenarios.sh;
 # build-app.sh --release (with its local-path check); quality-swift.sh;
 # quality.sh with QUALITY_STEPS=tests (fmt, clippy, tests, slow tests,
@@ -38,6 +39,7 @@ step() {
 
 step build-core scripts/build-core.sh
 step build-debug scripts/build-app.sh --debug
+step relink scripts/relink-check.sh
 step run-app scripts/run-app.sh --capture "$clone/target/shots"
 step scenarios scripts/run-scenarios.sh
 step build-release scripts/build-app.sh --release

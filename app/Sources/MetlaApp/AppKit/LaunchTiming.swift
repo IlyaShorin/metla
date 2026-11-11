@@ -7,6 +7,13 @@ import MetlaKit
 /// process started its first window appeared and the saved picture was
 /// shown, and its resident memory then.
 enum LaunchTiming {
+    /// The app's version and the stamp of the core it links, the first
+    /// line on stderr.
+    static func identify() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development"
+        FileHandle.standardError.write(Data("metla \(version), core \(coreStamp())\n".utf8))
+    }
+
     @MainActor
     static func firstWindow(print enabled: Bool) {
         if enabled {

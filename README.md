@@ -114,7 +114,10 @@ scripts/build-app.sh --release      # Metla.app and Metla.zip: can clean your di
 ```
 
 The bundles land under `target/app/`, built for the machine's own
-architecture. The release app is ad-hoc signed and not notarised: a copy
+architecture. Every build links the core it has just built: the core
+carries a stamp (a hash of its sources), `build-app.sh` refuses to bundle
+an executable without it, and the app prints it in its first line on
+stderr (`metla 0.7.1, core <stamp>`). The release app is ad-hoc signed and not notarised: a copy
 you build yourself opens normally; a downloaded one is quarantined, and
 macOS lets you open it from System Settings → Privacy & Security → Open
 Anyway. Start a
