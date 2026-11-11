@@ -136,22 +136,36 @@ code is held to this instead (`scripts/quality-swift.sh`):
   a debug build that makes a blocking engine call on the main thread
   (tested).
 
-**Swift numbers at M7** (`scripts/quality-swift.sh` at f76e238; MetlaKit
-changed once after it, in 0dc38a6, `AppModel.takesOver` with its test,
-and was built and tested but its coverage not measured again): 0
-diagnostics in the strict build; 79
-tests in 14 suites passed (the scenario test counts its four runs as
-one); line coverage per gated file (floor 85 %): Power, RefreshPacer,
-ReportModel, Format, StatusLine 100 %, OverviewData 98.4 %, Names
-97.7 %, Hotkeys 97.1 %, SettingsModels 96.6 %, CategoryModel 96.3 %,
-AppModel 94.2 %, MenuBarSummary 92.0 %, CleanupModel 90.5 %, Scenarios
-89.7 %, FoldersModel 87.9 %, Strings 87.9 %, PreviewModel 87.7 %. Below
-the floor and not gated: LaunchSettings 81.0 % (`current()` reads the
-real process's environment and is only called by the app), EngineClient
-94.6 %, MainThreadGuard 66.7 % (the standard guard's report, an
-assertion that stops a debug build at a blocking call on the main
-thread; the tests check the guard with a reporter of their own). MetlaKit in all: 93.6 % of 2,234 lines (89.5 % of
-regions, 90.8 % of functions).
+**Swift numbers at M7** (`scripts/quality-swift.sh` at 3c12f54, the
+last commit that changes Swift, three runs in a row in a clean clone on
+2026-11-11). **The gate is not stable: two runs were green, one was
+red.** In the green runs: 0 diagnostics in the strict build; 83 tests in
+14 suites passed (the scenario test counts its four runs as one); line
+coverage per gated file (floor 85 %): Power, RefreshPacer, ReportModel,
+Format, StatusLine 100 %, OverviewData 98.4 %, Names 97.7 %, Hotkeys
+97.1 %, SettingsModels 96.6 %, CategoryModel 96.3 %, AppModel 94.2 %,
+MenuBarSummary 92.0 %, CleanupModel 89.5 %, Scenarios 88.8 %, Strings
+87.9 %, PreviewModel 87.7 %, FoldersModel 86.4 %. Below the floor and
+not gated: LaunchSettings 81.0 % (`current()` reads the real process's
+environment and is only called by the app), EngineClient 94.6 %,
+MainThreadGuard 66.7 % (the standard guard's report, an assertion that
+stops a debug build at a blocking call on the main thread; the tests
+check the guard with a reporter of their own). MetlaKit in all: 93.3 %
+of 2,288 lines (88.8 % of regions, 90.3 % of functions).
+
+The red run: `SettingsTests.aScanTheUserAskedForRunsAsInteractiveUntilItEnds`
+(`model.userScan` already false right after `rescan()`); the same test
+failed 3 of 16 times run alone. The model decides that the user's scan
+is over from a picture change or a newer full scan in the picture, and
+on a fixture that scans in milliseconds a picture change left over from
+the scan before can end it early ([LIMITATIONS.md](LIMITATIONS.md)).
+Two other timing defects found by the same gate on d348f86 were fixed
+test-first before these runs: the Folders outline lost what was expanded
+when a reload overlapped (7b2cf73), and the status kept the user's scan
+profile after the scan had ended (3c12f54). One earlier run on d348f86
+failed ten tests at once after a 26-second stall; the RAM disk was close
+to full then, the cause was not established, and the script has no
+full-disk guard of its own.
 
 ## What no tool checks
 

@@ -121,3 +121,15 @@ the gates in [QUALITY.md](QUALITY.md).
 24. **Most app measurements on the real disk are single runs or were not
     taken** (idle in the menu bar, churn with the app running, a full
     rescan, repeated launches): see [PERFORMANCE.md](PERFORMANCE.md).
+25. **The Swift gate is not stable.** Of three runs in a row on the final
+    Swift sources two were green and one was red: the test that a scan
+    asked for with Refresh stays the user's until it ends fails now and
+    then. The model takes a picture change as the sign that a scan too
+    quick to be seen is over; a change left over from the scan before
+    can end the user's scan early. In the app that scan then runs with
+    the background profile instead of the interactive one: slower,
+    nothing else. It needs a signal of its own from the engine (a scan
+    counter).
+26. **`scripts/quality-swift.sh` has no full-disk guard**, unlike
+    `scripts/quality.sh`: on a volume that runs full its tests fail for
+    reasons that are not in the code.
