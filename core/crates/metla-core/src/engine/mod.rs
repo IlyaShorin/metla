@@ -44,7 +44,7 @@ pub use profile::{OFF, PowerProfile, Profile, Profiles, ScanStart, scan_start};
 pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
 pub use scheduler::{
     EVENTS_NOTE, QUIET_AFTER, Watching, deferred_line, needs, news, news_of, quiet_after, redone,
-    started_line,
+    started_line, stream_exclusions,
 };
 pub use settings::{HotkeyMode, Settings};
 pub use shared::Quiet;
@@ -267,9 +267,18 @@ fn start_scheduler(
     (sender, commands): (&Sender<Command>, Receiver<Command>),
 ) -> Result<JoinHandle<()>, EngineError> {
     let scope = setup(root.path(), ScanScope::detect(&root))?;
-    let mut ignored = vec![data_dir];
+    let volumes = mounted_below(&root);
+    let (excluded, left) = stream_exclusions(root.path(), &data_dir, &volumes);
+    if !left.is_empty() {
+        eprintln!(
+            "metla: the event stream leaves out {} directories, {} more are dropped after delivery",
+            excluded.len(),
+            left.len()
+        );
+    }
+    let mut ignored = vec![data_dir.clone()];
     ignored.extend(scope.excluded().map(Path::to_path_buf));
-    ignored.extend(mounted_below(&root));
+    ignored.extend(volumes);
     let coalescer = Coalescer::new(root.path(), ignored, shared.profile().timing);
     let scheduler = Scheduler {
         shared: Arc::clone(shared),
@@ -288,6 +297,8 @@ fn start_scheduler(
         left: Vec::new(),
         ended: Instant::now(),
         deferred: None,
+        data_dir,
+        excluded,
     };
     let thread = thread::Builder::new().name("metla-engine".into());
     setup(

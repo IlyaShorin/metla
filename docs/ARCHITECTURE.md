@@ -523,7 +523,14 @@ M4 changes:
   * drops events outside the root, inside the engine's data directory,
     inside the scope's excluded paths and inside the other volumes
     mounted below the root (`scan::other_volumes`, read again when a
-    volume is mounted: the scan never enters them);
+    volume is mounted: the scan never enters them). The stream itself
+    leaves out the data directory and those volumes, at most eight,
+    those outside `/System` first (`engine::stream_exclusions`,
+    `FSEventStreamSetExclusionPaths`): fseventsd filters them before it
+    queues anything, so churn on a RAM disk or an external volume no
+    longer fills the stream's queue (a stream that cannot keep up loses
+    events for everything it watches). What does not fit is dropped
+    after delivery, as before;
   * hands out at most a batch of due tasks at a time, deepest first, and
     says when the next one is due (`next_deadline`); `Off` forgets
     everything and hands out nothing.

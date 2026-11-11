@@ -26,7 +26,8 @@ use crate::git::verify_outputs;
 use crate::index::{IndexError, IndexReader, IndexWriter, Page, PictureId, Snapshot};
 use crate::scan::{ScanControl, ScanOptions, ScanRoot, ScanScope, mounted_below, run};
 use crate::watch::{
-    Coalescer, Event, Flags, FullCause, Stream, current_event_id, resume_after, volume_uuid,
+    Coalescer, Event, Flags, FullCause, MAX_EXCLUDED, Stream, current_event_id, resume_after,
+    volume_uuid,
 };
 
 /// Shallow directories with live counters during a full scan.
@@ -97,6 +98,10 @@ pub struct Scheduler {
     pub ended: Instant,
     /// When the deferred full scan may start.
     pub deferred: Option<Instant>,
+    /// Where the index lives: the stream leaves it out.
+    pub data_dir: PathBuf,
+    /// What the stream leaves out (`stream_exclusions`).
+    pub excluded: Vec<PathBuf>,
 }
 
 impl Scheduler {
@@ -167,7 +172,9 @@ impl Scheduler {
         let at = self.clock.elapsed();
         let quiet = self.shared.quiet_paths(Instant::now());
         if events.iter().any(|e| e.flags.mount_changed()) {
-            self.coalescer.ignore_too(mounted_below(&self.root));
+            let volumes = mounted_below(&self.root);
+            self.coalescer.ignore_too(volumes.clone());
+            self.exclude(&volumes);
         }
         for event in events.iter().filter(|e| news(e, &quiet)) {
             self.coalescer.on_event(event, at);
@@ -219,6 +226,22 @@ impl Scheduler {
         }
     }
 
+    /// Leaves the data directory and the other volumes below the root
+    /// out of the stream; a stream that runs with other exclusions is
+    /// replaced by one that replays what it had not handed over yet.
+    fn exclude(&mut self, volumes: &[PathBuf]) {
+        let (excluded, _) = stream_exclusions(self.root.path(), &self.data_dir, volumes);
+        if excluded == self.excluded {
+            return;
+        }
+        self.excluded = excluded;
+        if let Some(latency) = self.stream.as_ref().map(|following| following.latency) {
+            let since = self.coalescer.settled().or(self.origin);
+            self.stream = None;
+            self.open_stream(latency, since);
+        }
+    }
+
     /// Starts the stream after the event `since` (`None`: from now on);
     /// true when it replays from there.
     /// Events below what a cleanup removes are dropped as they come, so
@@ -232,7 +255,7 @@ impl Scheduler {
             }
         };
         self.origin = Some(since.unwrap_or_else(current_event_id));
-        let stream = Stream::start(self.root.path(), since, latency, sink).ok();
+        let stream = Stream::start(self.root.path(), &self.excluded, since, latency, sink).ok();
         self.shared
             .count(|c| c.streams += u64::from(stream.is_some()));
         self.stream = stream.map(|stream| Following {
@@ -698,6 +721,33 @@ pub fn quiet_after(quiet: &mut Quiet, removed: Vec<PathBuf>, now: Instant, laten
     }
     quiet.paths.extend(removed);
     quiet.until = Some(now + latency + QUIET_AFTER);
+}
+
+/// What a stream on `root` leaves out, at most `MAX_EXCLUDED`, and what
+/// does not fit (filtered after delivery, as before): the engine's data
+/// directory, then the other volumes mounted below the root, those
+/// outside `/System` first (RAM disks, external and network volumes,
+/// where churn is likely), shallowest first. Their events would only
+/// fill the stream's queue: a stream that cannot keep up loses events
+/// for everything it watches.
+pub fn stream_exclusions(
+    root: &Path,
+    data_dir: &Path,
+    volumes: &[PathBuf],
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let below = |path: &&PathBuf| path.starts_with(root) && path.as_path() != root;
+    let mut others: Vec<PathBuf> = volumes.iter().filter(below).cloned().collect();
+    others.sort_by_key(|path| {
+        (
+            path.starts_with("/System"),
+            path.components().count(),
+            path.clone(),
+        )
+    });
+    let data = Some(data_dir.to_path_buf());
+    let mut wanted: Vec<PathBuf> = data.iter().filter(below).cloned().chain(others).collect();
+    let left = wanted.split_off(wanted.len().min(MAX_EXCLUDED));
+    (wanted, left)
 }
 
 /// The events of a batch that may be news (`news`), or none.

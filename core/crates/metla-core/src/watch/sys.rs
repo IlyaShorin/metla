@@ -43,6 +43,8 @@ struct StreamContext {
 const UTF8: u32 = 0x0800_0100;
 const SINCE_NOW: u64 = u64::MAX;
 const WATCH_ROOT: u32 = 0x04;
+/// The most directories a stream can leave out.
+pub const MAX_EXCLUDED: usize = 8;
 
 #[link(name = "CoreServices", kind = "framework")]
 unsafe extern "C" {
@@ -56,6 +58,7 @@ unsafe extern "C" {
         flags: u32,
     ) -> FSEventStreamRef;
     fn FSEventStreamSetDispatchQueue(stream: FSEventStreamRef, queue: DispatchQueue);
+    fn FSEventStreamSetExclusionPaths(stream: FSEventStreamRef, paths: CFTypeRef) -> u8;
     fn FSEventStreamStart(stream: FSEventStreamRef) -> u8;
     fn FSEventStreamFlushSync(stream: FSEventStreamRef);
     fn FSEventStreamStop(stream: FSEventStreamRef);
@@ -115,16 +118,24 @@ pub struct Stream {
 unsafe impl Send for Stream {}
 
 impl Stream {
-    /// Watches `root`, replaying from the event after `since` (`None`:
+    /// Watches `root` but the directories `excluded` (at most
+    /// `MAX_EXCLUDED`: fseventsd filters them before it queues anything
+    /// for the stream), replaying from the event after `since` (`None`:
     /// from now on). Batches arrive at most every `latency`.
     pub fn start(
         root: &Path,
+        excluded: &[PathBuf],
         since: Option<u64>,
         latency: Duration,
         sink: impl Fn(Vec<Event>) + Send + 'static,
     ) -> Result<Stream, String> {
         let root_text = CString::new(root.as_os_str().as_bytes())
             .map_err(|_| format!("{} holds a NUL byte", root.display()))?;
+        let excluded_text: Vec<CString> = excluded
+            .iter()
+            .take(MAX_EXCLUDED)
+            .filter_map(|path| CString::new(path.as_os_str().as_bytes()).ok())
+            .collect();
         let sink: *mut Sink = Box::into_raw(Box::new(Box::new(sink)));
         let context = StreamContext {
             version: CFIndex::default(),
@@ -168,6 +179,11 @@ impl Stream {
             drop(unsafe { Box::from_raw(sink) });
             return Err(format!("no event stream for {}", root.display()));
         }
+        if !excluded_text.is_empty() {
+            // SAFETY: the stream is valid and not started yet; the strings
+            // outlive the call, which copies them.
+            unsafe { exclude(stream, &excluded_text) };
+        }
         // SAFETY: a valid NUL-terminated label; serial queue (no attributes).
         let queue = unsafe { dispatch_queue_create(c"metla-events".as_ptr(), std::ptr::null()) };
         // SAFETY: the stream and the queue are valid; started once.
@@ -206,6 +222,32 @@ impl Drop for Stream {
             dispatch_sync_f(self.queue, self.stream, end);
             dispatch_release(self.queue);
             drop(Box::from_raw(self.sink));
+        }
+    }
+}
+
+/// Leaves `paths` out of `stream`, which must not be started yet.
+///
+/// # Safety
+/// `stream` is a valid, not yet started stream.
+unsafe fn exclude(stream: FSEventStreamRef, paths: &[CString]) {
+    // SAFETY: NUL-terminated strings that outlive the calls, which copy
+    // them; the array retains its strings, and both are released once.
+    unsafe {
+        let strings: Vec<CFTypeRef> = paths
+            .iter()
+            .map(|text| CFStringCreateWithCString(std::ptr::null(), text.as_ptr(), UTF8))
+            .collect();
+        let array = CFArrayCreate(
+            std::ptr::null(),
+            strings.as_ptr(),
+            strings.len() as CFIndex,
+            (&raw const kCFTypeArrayCallBacks).cast(),
+        );
+        FSEventStreamSetExclusionPaths(stream, array);
+        CFRelease(array);
+        for string in strings {
+            CFRelease(string);
         }
     }
 }

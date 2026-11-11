@@ -19,7 +19,7 @@ type Seen = Arc<Mutex<Vec<Event>>>;
 fn start(root: &Path, since: Option<u64>) -> (Stream, Seen) {
     let seen = Seen::default();
     let sink = Arc::clone(&seen);
-    let stream = Stream::start(root, since, Duration::from_secs(30), move |events| {
+    let stream = Stream::start(root, &[], since, Duration::from_secs(30), move |events| {
         sink.lock().unwrap().extend(events);
     })
     .unwrap();
@@ -88,7 +88,7 @@ fn a_stopped_stream_delivers_nothing() {
     let dir = fx.dir("quiet");
     let calls = Arc::new(Mutex::new(0));
     let counted = Arc::clone(&calls);
-    let stream = Stream::start(fx.root(), None, Duration::from_secs(30), move |_| {
+    let stream = Stream::start(fx.root(), &[], None, Duration::from_secs(30), move |_| {
         *counted.lock().unwrap() += 1;
     })
     .unwrap();
@@ -114,7 +114,7 @@ fn the_history_has_ids_that_grow_and_a_volume_uuid() {
     assert_eq!(uuid.len(), 36, "{uuid}");
     assert_eq!(volume_uuid(device as u64), Some(uuid));
     assert!(current_event_id() > 0);
-    assert!(Stream::start(Path::new("/no\0where"), None, Duration::ZERO, |_| {}).is_err());
+    assert!(Stream::start(Path::new("/no\0where"), &[], None, Duration::ZERO, |_| {}).is_err());
 }
 
 /// From now on, and replaying from the latest event: either way the
@@ -149,4 +149,107 @@ fn a_batch_is_decoded_event_by_event_in_order() {
         ]
     );
     assert!(events_of(&[], &[], &[]).is_empty());
+}
+
+/// A disk image of its own, attached (under /Volumes, where macOS mounts
+/// it) and detached when dropped; its file lives in a fixture.
+struct Image {
+    mount: PathBuf,
+}
+
+impl Image {
+    fn attach(fx: &Fixture) -> Image {
+        let file = fx.path("volume.dmg");
+        let name = format!("metla-test-{}", std::process::id());
+        let made = std::process::Command::new("/usr/bin/hdiutil")
+            .args([
+                "create", "-quiet", "-size", "16m", "-fs", "APFS", "-volname",
+            ])
+            .arg(&name)
+            .arg(&file)
+            .status()
+            .unwrap();
+        assert!(made.success(), "hdiutil create");
+        let out = std::process::Command::new("/usr/bin/hdiutil")
+            .args(["attach", "-nobrowse"])
+            .arg(&file)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&out.stdout).into_owned();
+        let mount = said
+            .lines()
+            .filter_map(|line| line.split('\t').next_back())
+            .map(str::trim)
+            .find(|path| path.starts_with("/Volumes/"))
+            .unwrap_or_else(|| panic!("no mount point in {said:?}"));
+        Image {
+            mount: PathBuf::from(mount),
+        }
+    }
+}
+
+impl Drop for Image {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("/usr/bin/hdiutil")
+            .args(["detach", "-force", "-quiet"])
+            .arg(&self.mount)
+            .status();
+    }
+}
+
+/// A stream on / that leaves a volume out gets nothing from churn on it;
+/// one that does not gets that churn. Both get a change elsewhere.
+#[test]
+#[ignore = "mounts a disk image of its own and waits for fseventsd; run with --ignored"]
+fn a_volume_left_out_of_the_stream_sends_it_nothing() {
+    let fx = Fixture::new();
+    let image = Image::attach(&fx);
+    let collect = |excluded: &[PathBuf]| {
+        let seen = Seen::default();
+        let sink = Arc::clone(&seen);
+        let stream = Stream::start(
+            Path::new("/"),
+            excluded,
+            None,
+            Duration::from_millis(50),
+            move |events| {
+                sink.lock().unwrap().extend(events);
+            },
+        )
+        .unwrap();
+        (stream, seen)
+    };
+    let (plain, all) = collect(&[]);
+    let (left_out, rest) = collect(std::slice::from_ref(&image.mount));
+    for i in 0..300 {
+        let dir = image.mount.join(format!("d{i}"));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("f"), b"x").unwrap();
+    }
+    let marker = fx.dir("marker");
+    std::fs::write(marker.join("f"), b"m").unwrap();
+    let marker = marker.canonicalize().unwrap();
+    wait_for(&plain, &all, &marker, Flags::NONE);
+    wait_for(&left_out, &rest, &marker, Flags::NONE);
+    let below = |seen: &Seen| {
+        let seen = seen.lock().unwrap();
+        let inside = seen
+            .iter()
+            .filter(|e| e.path.starts_with(&image.mount) && e.path != image.mount);
+        inside.count()
+    };
+    assert!(
+        below(&all) >= 100,
+        "{} events from inside the image",
+        below(&all)
+    );
+    let rest = rest.lock().unwrap();
+    let from_image: Vec<&Event> = rest
+        .iter()
+        .filter(|e| e.path.starts_with(&image.mount))
+        .collect();
+    assert!(
+        from_image.iter().all(|e| e.path == image.mount),
+        "only the left-out directory itself, never what is inside: {from_image:?}"
+    );
 }

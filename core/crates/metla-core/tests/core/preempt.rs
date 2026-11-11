@@ -18,7 +18,7 @@ use metla_core::domain::{
 use metla_core::engine::{
     Completeness, Engine, EngineConfig, EngineState, PowerProfile, Profile, QUIET_AFTER, Quiet,
     ScanReason, ScanStart, deferred_line, needs, news, news_of, quiet_after, redone, scan_start,
-    started_line,
+    started_line, stream_exclusions,
 };
 use metla_core::fs::Mount;
 use metla_core::scan::{DirObserver, other_volumes};
@@ -616,4 +616,46 @@ fn two_drops_a_moment_apart_make_one_full_scan_once_it_is_quiet() {
     settled(&engine);
     std::thread::sleep(Duration::from_millis(600));
     assert_eq!(engine.counters().full_scans, 2, "one scan for both");
+}
+
+/// The stream leaves out the engine's data directory and the other
+/// volumes below the root, those outside /System first, at most eight;
+/// what does not fit is filtered after delivery, as before.
+#[test]
+fn the_stream_leaves_out_the_data_directory_and_other_volumes_below_the_root() {
+    let paths = |list: &[&str]| -> Vec<PathBuf> { list.iter().map(PathBuf::from).collect() };
+    let volumes = paths(&[
+        "/System/Volumes/VM",
+        "/Volumes/B",
+        "/Volumes/A",
+        "/System/Volumes/Preboot",
+        "/",
+    ]);
+    let data = Path::new("/Users/u/Library/Application Support/Metla");
+    let (left_out, rest) = stream_exclusions(Path::new("/"), data, &volumes);
+    let expected = paths(&[
+        "/Users/u/Library/Application Support/Metla",
+        "/Volumes/A",
+        "/Volumes/B",
+        "/System/Volumes/Preboot",
+        "/System/Volumes/VM",
+    ]);
+    assert_eq!((left_out, rest), (expected, vec![]));
+    let fixture = stream_exclusions(
+        Path::new("/fx"),
+        Path::new("/aux/data"),
+        &paths(&["/fx/vol", "/other"]),
+    );
+    assert_eq!(
+        fixture,
+        (paths(&["/fx/vol"]), vec![]),
+        "only what is below the root"
+    );
+    let many: Vec<PathBuf> = (0..10)
+        .map(|i| PathBuf::from(format!("/Volumes/v{i}")))
+        .collect();
+    let (left_out, rest) = stream_exclusions(Path::new("/"), Path::new("/d"), &many);
+    assert_eq!(left_out.len(), 8);
+    assert_eq!(left_out[0], PathBuf::from("/d"));
+    assert_eq!(rest, paths(&["/Volumes/v7", "/Volumes/v8", "/Volumes/v9"]));
 }
