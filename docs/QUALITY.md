@@ -112,6 +112,62 @@ with the `bindgen` feature and has no mutation site.
   the 850 verdicts were made after the complete run; the rest are that
   run's.
 
+**Rust numbers at 0.7.1** (parallel removal, live cleanup progress,
+the first scan on Interactive's threads, preemption by a cleanup, why a
+full scan starts, the cleanup's own events). The ub-mode tools ran on
+the changed functions only, not as `scripts/quality.sh`'s differential
+run: this working copy has no `.metrics/mutate` snapshot, so a
+differential run would have mutated every site. The script's test steps
+ran as they are (`STABLE_RUNS=3 QUALITY_STEPS=tests scripts/quality.sh`);
+crapper and dryer ran with the script's gates; the mutator ran file by
+file with `--lines` set to the functions that changed since the last
+gated commit, two workers, the script's timeout factors (6 for
+`metla-core`, 45 for `metla-ffi`), `scripts/mutant-test.sh` as the test
+command. All on the RAM disk, the machine otherwise in ordinary use.
+
+* Round 1 at 2c8da0b (21:59 to 22:42 on 2026-11-11, functions changed
+  since aa29acd): fmt, clippy, tests (73 + 419 + 23), the slow group
+  (1 + 11) and stability 3 of 3 (515 tests each) green. crapper: 935
+  functions, one over the limit, `refresh::Attempt::attempt` at 10.02;
+  dryer: 701 functions, two pairs at or above 0.8 (`CleanControl`'s two
+  lock helpers, 1.00; `Flags::lost_history` and `must_scan`, 0.85).
+  Mutator: 129 mutants run (the sites of the changed functions in 11
+  files; 9 changed files had none): 113 killed (2 by timeout: one in
+  `engine/scheduler.rs`, one in `watch/coalescer.rs`), 13 survived, 3
+  uncovered: `fs/remove.rs` 8 and 2 (most equivalent by construction:
+  the parallel and the iterative walks give the same result, so the
+  depth where one hands over to the other could not be seen),
+  `clean/control.rs` 2, `engine/refresh.rs` 2, `engine/shared.rs` 1,
+  `engine/scheduler.rs` 1 uncovered (the stream's sink). Fixed in
+  f1fb786 (see its message).
+* Round 2 at f1fb786 (22:50 to 23:02, functions changed since
+  20889c4): tests (73 + 423 + 23), slow group (1 + 11), stability 3 of
+  3 (519 tests each) green; crapper 940 functions, worst CRAP 9.18
+  (`fs::remove::parallel`), none at 10; dryer 701 functions, highest
+  similarity 0.79, no pair at 0.8. Mutator: 36 mutants run, 32 killed
+  (none by timeout), 4 survived, 2 uncovered: `clean/control.rs` 1 (the
+  live count's reset, unseen while it was subtracted with saturation;
+  fixed in c272bf6, which counts finished and live bytes apart) and
+  `fs/remove.rs` 3 and 2 (a pool of zero threads, which rayon sizes
+  itself, unseen where its automatic size was one; the fallback of
+  `threads()`; the negation that picks the parallel walk, which gives
+  the same result on one thread: fixed in 9bdb2ec, NonZeroUsize thread
+  counts and a test that holds each removal until a second thread has
+  removed something). The two uncovered sites are one now (`unread`): a
+  directory that opens but cannot be listed needs an I/O error after a
+  successful open, which no test causes.
+* Round 3 at 9bdb2ec (23:07 to 23:16, functions changed since
+  f1fb786): tests, slow group and stability 3 of 3 (520 tests each)
+  green; crapper 941 functions, worst CRAP 9.16
+  (`Scheduler::handle`); dryer 701 functions, highest similarity 0.79,
+  no pair at 0.8. Mutator: 10 sites, 9 killed (none by timeout), 0
+  survived, 1 uncovered: `fs::remove::unread`, the directory that opens
+  but cannot be listed (above). That one uncovered site is what the
+  gate does not close.
+* Verdicts not executed in either round are carried over from the
+  runs above (the complete run at 88cd5b2 and the differential gates at
+  0dc38a6 and 15027ac) for every function that did not change.
+
 ## Swift: what the ub-mode tools do not cover
 
 crapper, dryer and mutator do not read Swift. Nothing in the app is
@@ -177,6 +233,24 @@ compares that count). One earlier run on d348f86 failed ten tests at
 once after a 26-second stall; the RAM disk was close to full then, the
 cause was not established, and the script has no full-disk guard of its
 own. Eight green runs do not prove that no timing defect is left.
+
+**Swift numbers at 0.7.1** (`scripts/quality-swift.sh` in this
+working copy at f1fb786, 23:02 to 23:03 on 2026-11-11, once, 1,314 MB
+free on the volume of `TMPDIR`; MetlaKit last changed in 2c8da0b, and
+20889c4 changed only the app target and the capture): green. 0
+diagnostics in the strict build; 87 tests in 14 suites passed; line
+coverage per gated file (floor 85 %): Power, RefreshPacer,
+ReportModel, Format, StatusLine 100 %, OverviewData 98.4 %, Names
+97.7 %, Hotkeys 97.1 %, SettingsModels 96.6 %, CategoryModel 96.3 %,
+AppModel 93.7 %, MenuBarSummary 92.0 %, CleanupModel 90.1 %, Scenarios
+88.8 %, Strings 87.9 %, PreviewModel 87.7 %, FoldersModel 86.4 %; not
+gated: LaunchSettings 75.8 % (lower than at M7: the preferences suite
+of aa29acd is read only by the app), EngineClient 94.6 %,
+MainThreadGuard 66.7 %. MetlaKit in all: 93.06 % of 2,319 lines. One
+run only, not the five in a row of M7. The capture (`scripts/run-app.sh
+--capture`), which is not part of the gate, now fails when a main
+screen changes the window's frame or lays its content out at another
+size than the window's; it passed with 0 failures at 20889c4.
 
 ## What no tool checks
 
