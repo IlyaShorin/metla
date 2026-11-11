@@ -70,7 +70,10 @@ enum Capture {
     ) async -> Int {
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         await settle(model)
-        guard let window = NSApp.windows.first(where: { $0.isVisible }) else {
+        // The main window by its id: the first visible window can be the
+        // status item's (its number, 2^32, trapped as a 32-bit id).
+        guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" && $0.isVisible }) else {
+            fail("the main window is not open")
             return 0
         }
         var written = 0
@@ -197,20 +200,24 @@ enum Capture {
     }
 
     /// The window server's image of one of the app's own windows, without
-    /// its shadow; `nil` when it gives none or a blank one. Debug builds
-    /// only. `CGWindowListCreateImage` is marked obsoleted in the macOS 26
-    /// SDK, so it is looked up by name; for a process's own windows it
-    /// needs no screen-recording permission.
+    /// its shadow; `nil` when it gives none or a blank one, or when the
+    /// window's number is not a positive 32-bit window id (the status
+    /// item's window has 2^32). Debug builds only.
+    /// `CGWindowListCreateImage` is marked obsoleted in the macOS 26 SDK,
+    /// so it is looked up by name; for a process's own windows it needs no
+    /// screen-recording permission.
     static func composed(_ window: NSWindow) -> CGImage? {
         #if DEBUG
             typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
-            guard let symbol = dlsym(dlopen(nil, RTLD_NOW), "CGWindowListCreateImage") else {
+            guard let number = UInt32(exactly: window.windowNumber), number > 0,
+                let symbol = dlsym(dlopen(nil, RTLD_NOW), "CGWindowListCreateImage")
+            else {
                 return nil
             }
             let create = unsafeBitCast(symbol, to: Create.self)
             let includingWindow: UInt32 = 1 << 3
             let ignoreFraming: UInt32 = 1 << 0, bestResolution: UInt32 = 1 << 3
-            let picture = create(.null, includingWindow, UInt32(window.windowNumber), ignoreFraming | bestResolution)?
+            let picture = create(.null, includingWindow, number, ignoreFraming | bestResolution)?
                 .takeRetainedValue()
             return picture.flatMap { blank($0) ? nil : $0 }
         #else
