@@ -41,6 +41,13 @@ pub struct Quiet {
     pub until: Option<Instant>,
 }
 
+impl Quiet {
+    /// Whether the paths are still quiet at `now`.
+    pub fn holds(&self, now: Instant) -> bool {
+        self.until.is_some_and(|until| now < until)
+    }
+}
+
 /// What the engine is doing, as the scheduler last said.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Status {
@@ -207,7 +214,7 @@ impl Shared {
         let running = lock(&self.cleanup).as_ref().map(|c| c.begun());
         let mut paths = running.unwrap_or_default();
         let last = lock(&self.quiet);
-        if last.until.is_some_and(|until| now < until) {
+        if last.holds(now) {
             paths.extend(last.paths.iter().cloned());
         }
         paths

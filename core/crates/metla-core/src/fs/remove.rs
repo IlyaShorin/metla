@@ -89,6 +89,13 @@ impl Remover {
         Remover { pool: pool.ok() }
     }
 
+    /// The threads it empties directories on.
+    pub fn threads(&self) -> usize {
+        self.pool
+            .as_ref()
+            .map_or(1, rayon::ThreadPool::current_num_threads)
+    }
+
     /// As `remove_contents`, with the subdirectories of each of the top
     /// `PARALLEL_DEPTH` levels emptied in parallel; `removed` is told the
     /// bytes of every entry as it is unlinked. The result does not depend
@@ -112,7 +119,7 @@ impl Remover {
         };
         match &self.pool {
             Some(pool) => {
-                pool.install(|| parallel(dir, PathBuf::new(), 0, &walk))
+                pool.install(|| parallel(dir, PathBuf::new(), &walk))
                     .removal
             }
             None => iterative(dir, PathBuf::new(), &walk).removal,
@@ -171,12 +178,12 @@ enum Part {
 /// threads times the depth, not by how many subdirectories a directory
 /// has. The parts are joined in the order the sequential walk visits
 /// them, the listing from its end.
-fn parallel<C, R>(dir: DirHandle, path: PathBuf, depth: usize, walk: &Walk<'_, C, R>) -> Emptied
+fn parallel<C, R>(dir: DirHandle, path: PathBuf, walk: &Walk<'_, C, R>) -> Emptied
 where
     C: Fn() -> bool + Sync + ?Sized,
     R: Fn(Bytes) + Sync + ?Sized,
 {
-    if depth >= PARALLEL_DEPTH {
+    if !in_parallel(path.components().count()) {
         return iterative(dir, path, walk);
     }
     let entries = match list_dir(&dir) {
@@ -201,7 +208,7 @@ where
         .into_par_iter()
         .map(|part| match part {
             Part::Done(removal, kept) => (removal, kept),
-            Part::Child(at) => child(&dir, at, depth + 1, walk),
+            Part::Child(at) => child(&dir, at, walk),
         })
         .collect();
     let mut removal = Removal::default();
@@ -216,7 +223,7 @@ where
 
 /// Opens the subdirectory at `at` of `dir`, empties it and removes it
 /// unless it stays.
-fn child<C, R>(dir: &DirHandle, at: PathBuf, depth: usize, walk: &Walk<'_, C, R>) -> (Removal, bool)
+fn child<C, R>(dir: &DirHandle, at: PathBuf, walk: &Walk<'_, C, R>) -> (Removal, bool)
 where
     C: Fn() -> bool + Sync + ?Sized,
     R: Fn(Bytes) + Sync + ?Sized,
@@ -224,7 +231,7 @@ where
     let name = at.file_name().unwrap_or_default();
     match open_on(dir, name, walk.device) {
         Ok(opened) => {
-            let emptied = parallel(opened, at.clone(), depth, walk);
+            let emptied = parallel(opened, at.clone(), walk);
             close_child(dir, at, emptied)
         }
         Err(problem) => {
@@ -233,6 +240,13 @@ where
             (removal, kept)
         }
     }
+}
+
+/// Whether a directory `depth` levels below the emptied one is emptied
+/// in parallel; below `PARALLEL_DEPTH` levels the iterative walk takes
+/// over.
+pub fn in_parallel(depth: usize) -> bool {
+    depth < PARALLEL_DEPTH
 }
 
 /// Unlinks a non-directory now, or names a subdirectory to empty.
@@ -316,19 +330,24 @@ where
         }
     };
     let mut stack = vec![root];
-    let mut kept = false;
-    while let Some(frame) = stack.last_mut() {
+    loop {
         if (walk.cancelled)() {
             removal.leftovers.cancelled = true;
-            kept = true;
-            break;
+            return Emptied {
+                removal,
+                kept: true,
+            };
         }
+        let frame = stack.last_mut().expect("a frame to work in");
         match frame.entries.pop() {
             Some(entry) => step(&mut stack, entry, walk, &mut removal),
-            None => kept = close(&mut stack, &mut removal),
+            None => {
+                if let Some(kept) = close(&mut stack, &mut removal) {
+                    return Emptied { removal, kept };
+                }
+            }
         }
     }
-    Emptied { removal, kept }
 }
 
 /// Removes one entry of the innermost directory, or descends into it.
@@ -385,22 +404,23 @@ fn descend(frame: &Frame, name: &OsStr, device: u64) -> Result<Frame, Problem> {
 
 /// Removes the innermost directory, now empty, from its parent, unless
 /// something inside it stayed; at the top, whether the walk's directory
-/// stays.
-fn close(stack: &mut Vec<Frame>, removal: &mut Removal) -> bool {
+/// stays (`None` below it).
+fn close(stack: &mut Vec<Frame>, removal: &mut Removal) -> Option<bool> {
     let done = stack.pop().expect("a frame to close");
     let Some(parent) = stack.last_mut() else {
-        return done.kept;
+        return Some(done.kept);
     };
-    if done.kept {
-        parent.kept = true;
-        return false;
+    match done.kept {
+        true => parent.kept = true,
+        false => {
+            let name = done.path.file_name().unwrap_or_default();
+            match parent.dir.remove(name, EntryKind::Dir) {
+                Ok(()) => removal.unlinked += 1,
+                Err(error) => parent.kept |= leave(removal, done.path, Problem::Failed(error)),
+            }
+        }
     }
-    let name = done.path.file_name().unwrap_or_default();
-    match parent.dir.remove(name, EntryKind::Dir) {
-        Ok(()) => removal.unlinked += 1,
-        Err(error) => parent.kept |= leave(removal, done.path, Problem::Failed(error)),
-    }
-    false
+    None
 }
 
 fn errno(error: ListError) -> Errno {

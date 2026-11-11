@@ -69,12 +69,12 @@ pub fn refresh(
     control: &ScanControl,
     now: UnixTime,
 ) -> Result<Refreshed, RefreshError> {
-    let (mut path, mut whole, bounded) = match task {
+    let (mut path, mut whole) = match task {
         RescanTask::Full => return Ok(Refreshed::NeedsFullScan),
-        RescanTask::Shallow(path) => (path.clone(), false, true),
-        RescanTask::Recursive(path) => (path.clone(), true, true),
-        RescanTask::Emptied(path) => (path.clone(), true, false),
+        RescanTask::Shallow(path) => (path.clone(), false),
+        RescanTask::Recursive(path) | RescanTask::Emptied(path) => (path.clone(), true),
     };
+    let bounded = !matches!(task, RescanTask::Emptied(_));
     let mut ctx = Attempt {
         options,
         reader,
@@ -111,8 +111,7 @@ impl Attempt<'_> {
             return Ok(Step::Done(Refreshed::NoPicture));
         };
         let root = plan.target.parent.is_none();
-        let large = self.bounded && plan.size > MAX_SUBTREE;
-        if plan.target.stored.is_none() && (root || large) {
+        if self.left_to_a_full_scan(&plan) {
             return Ok(Step::Done(Refreshed::NeedsFullScan));
         }
         let parent = plan.target.path.parent().map(Path::to_path_buf);
@@ -122,6 +121,15 @@ impl Attempt<'_> {
             (None, Some(parent)) if !root => Ok(Step::Parent(parent)),
             (None, _) => Ok(Step::Done(Refreshed::NeedsFullScan)),
         }
+    }
+
+    /// Whether only a full scan walks `plan`'s target: the root, or a
+    /// subtree the picture holds as larger than `MAX_SUBTREE`, to be walked
+    /// whole (a directory a cleanup emptied is walked whatever its size).
+    fn left_to_a_full_scan(&self, plan: &Plan) -> bool {
+        let root = plan.target.parent.is_none();
+        let large = self.bounded && plan.size > MAX_SUBTREE;
+        plan.target.stored.is_none() && (root || large)
     }
 
     fn write(&self, picture: PictureId, change: Rescanned) -> Result<Step, RefreshError> {

@@ -17,7 +17,7 @@ use metla_core::domain::{
 };
 use metla_core::engine::{
     Completeness, Engine, EngineConfig, EngineState, PowerProfile, QUIET_AFTER, Quiet, ScanReason,
-    needs, news, quiet_after, started_line,
+    needs, news, news_of, quiet_after, started_line,
 };
 use metla_core::fs::Mount;
 use metla_core::scan::{DirObserver, other_volumes};
@@ -319,6 +319,26 @@ fn a_cleanup_keeps_the_last_ones_paths_quiet_while_they_still_are() {
     let later = soon + QUIET_AFTER;
     quiet_after(&mut quiet, vec![PathBuf::from("/c")], later, second);
     assert_eq!(quiet.paths, [PathBuf::from("/c")], "the rest had ended");
+}
+
+#[test]
+fn quiet_paths_hold_until_their_end_and_a_batch_with_no_news_is_dropped() {
+    let start = Instant::now();
+    let quiet = Quiet {
+        paths: vec![PathBuf::from("/r/cache")],
+        until: Some(start + QUIET_AFTER),
+    };
+    assert!(quiet.holds(start));
+    assert!(!quiet.holds(start + QUIET_AFTER), "ended at its end");
+    assert!(!Quiet::default().holds(start));
+    let event = |path: &str| Event {
+        path: PathBuf::from(path),
+        flags: Flags::NONE,
+        id: 1,
+    };
+    assert_eq!(news_of(vec![event("/r/cache/a")], &quiet.paths), None);
+    let kept = news_of(vec![event("/r/cache/a"), event("/r/b")], &quiet.paths);
+    assert_eq!(kept.map(|e| e.len()), Some(1));
 }
 
 #[test]

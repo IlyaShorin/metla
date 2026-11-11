@@ -11,7 +11,9 @@ use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 
 use metla_core::domain::{Bytes, Errno, Leftovers, UnixTime};
-use metla_core::fs::{DirHandle, PARALLEL_DEPTH, Removal, Remover, remove_contents, survey};
+use metla_core::fs::{
+    DirHandle, PARALLEL_DEPTH, Removal, Remover, in_parallel, remove_contents, survey,
+};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::scan::deep_chain;
@@ -541,4 +543,60 @@ fn a_directory_with_more_subdirectories_than_descriptors_is_emptied() {
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{said}");
     assert!(said.contains("1 passed"), "{said}");
+}
+
+#[test]
+fn the_top_levels_are_emptied_in_parallel_and_the_rest_iteratively() {
+    let rows = [(0, true), (1, true), (31, true), (32, false), (100, false)];
+    for (depth, parallel) in rows {
+        assert_eq!(in_parallel(depth), parallel, "depth {depth}");
+    }
+    assert_eq!(Remover::new(0).threads(), 1, "at least one thread");
+    assert_eq!(Remover::new(3).threads(), 3);
+}
+
+/// `name` made unreadable (writable and searchable only), with a file in
+/// it; `unreadable` gives it back its permissions.
+fn unreadable(dir: &Path) {
+    put(&dir.join("held"), 4);
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o300)).unwrap();
+}
+
+fn readable(dir: &Path) {
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn a_directory_that_cannot_be_listed_stays_with_its_parents_at_any_depth() {
+    let fx = Fixture::new();
+    let c = fx.dir("c");
+    let deep = (0..PARALLEL_DEPTH + 2).fold(c.join("chain"), |p, n| p.join(format!("l{n}")));
+    let shallow = c.join("top/closed");
+    put(&c.join("top/other"), 4);
+    unreadable(&shallow);
+    fs::create_dir_all(&deep).unwrap();
+    unreadable(&deep);
+    let (removal, _) = remove_with(&c, 4);
+    readable(&shallow);
+    readable(&deep);
+    assert_eq!(removal.leftovers.failures, 2, "{:?}", removal.leftovers);
+    let errors: Vec<Errno> = removal.leftovers.first.iter().map(|(_, e)| *e).collect();
+    assert_eq!(errors, [Errno(libc::EACCES); 2]);
+    assert!(shallow.join("held").exists() && deep.join("held").exists());
+    assert!(!c.join("top/other").exists());
+}
+
+#[test]
+fn a_removal_cancelled_below_the_parallel_levels_keeps_what_it_did_not_reach() {
+    let fx = Fixture::new();
+    let c = fx.dir("c");
+    let deep = (0..PARALLEL_DEPTH + 8).fold(c.clone(), |p, n| p.join(format!("l{n}")));
+    put(&deep.join("leaf"), 4);
+    let asked = AtomicU64::new(0);
+    let cancel = || asked.fetch_add(1, Ordering::SeqCst) >= PARALLEL_DEPTH as u64 + 4;
+    let handle = DirHandle::open(&c).unwrap();
+    let removal = Remover::new(2).remove_contents(&handle, device(&c), &cancel, &|_| {});
+    assert!(removal.leftovers.cancelled);
+    assert_eq!(removal.leftovers.failures, 0, "{:?}", removal.leftovers);
+    assert!(deep.join("leaf").exists(), "not reached");
 }

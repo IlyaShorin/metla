@@ -221,10 +221,8 @@ impl Scheduler {
     fn open_stream(&mut self, latency: Duration, since: Option<u64>) -> bool {
         let sender = self.sender.clone();
         let shared = Arc::clone(&self.shared);
-        let sink = move |mut events: Vec<Event>| {
-            let quiet = shared.quiet_paths(Instant::now());
-            events.retain(|event| news(event, &quiet));
-            if !events.is_empty() {
+        let sink = move |events: Vec<Event>| {
+            if let Some(events) = news_of(events, &shared.quiet_paths(Instant::now())) {
                 let _ = sender.send(Command::Events(events));
             }
         };
@@ -662,11 +660,17 @@ pub fn news(event: &Event, quiet: &[PathBuf]) -> bool {
 /// last cleanup's while they are still quiet, until `QUIET_AFTER` past
 /// the latency.
 pub fn quiet_after(quiet: &mut Quiet, removed: Vec<PathBuf>, now: Instant, latency: Duration) {
-    if quiet.until.is_none_or(|until| until <= now) {
+    if !quiet.holds(now) {
         quiet.paths.clear();
     }
     quiet.paths.extend(removed);
     quiet.until = Some(now + latency + QUIET_AFTER);
+}
+
+/// The events of a batch that may be news (`news`), or none.
+pub fn news_of(mut events: Vec<Event>, quiet: &[PathBuf]) -> Option<Vec<Event>> {
+    events.retain(|event| news(event, quiet));
+    (!events.is_empty()).then_some(events)
 }
 
 /// Why only a full scan applies `task`: for the coalescer's full rescan,

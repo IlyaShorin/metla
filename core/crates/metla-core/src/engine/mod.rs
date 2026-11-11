@@ -42,7 +42,9 @@ pub use kept::{decode_report, encode_report};
 pub use listing::{LISTED_FILES, Largest, Rest};
 pub use profile::{OFF, PowerProfile, Profile, Profiles};
 pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
-pub use scheduler::{EVENTS_NOTE, QUIET_AFTER, Watching, needs, news, quiet_after, started_line};
+pub use scheduler::{
+    EVENTS_NOTE, QUIET_AFTER, Watching, needs, news, news_of, quiet_after, started_line,
+};
 pub use settings::{HotkeyMode, Settings};
 pub use shared::Quiet;
 pub use view::{
