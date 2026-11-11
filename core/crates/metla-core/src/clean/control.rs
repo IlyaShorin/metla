@@ -13,8 +13,9 @@ pub struct CleanControl {
     cancelled: AtomicBool,
     items: AtomicU64,
     done: AtomicU64,
+    /// Bytes of the items finished, as each reported at its end.
     removed: AtomicU64,
-    /// Bytes of the current item already counted in `removed`.
+    /// Bytes of the current item, counted as they go.
     item_removed: AtomicU64,
     planned: AtomicU64,
     current: Mutex<Option<PathBuf>>,
@@ -56,7 +57,9 @@ impl CleanControl {
         CleanProgress {
             items: self.items.load(Ordering::Relaxed),
             done: self.done.load(Ordering::Relaxed),
-            removed: Bytes(self.removed.load(Ordering::Relaxed)),
+            removed: Bytes(
+                self.removed.load(Ordering::Relaxed) + self.item_removed.load(Ordering::Relaxed),
+            ),
             planned: Bytes(self.planned.load(Ordering::Relaxed)),
             current: lock(&self.current).clone(),
         }
@@ -69,7 +72,6 @@ impl CleanControl {
 
     /// Counts bytes of the current item as they are removed.
     pub(super) fn removed_now(&self, bytes: Bytes) {
-        self.removed.fetch_add(bytes.0, Ordering::Relaxed);
         self.item_removed.fetch_add(bytes.0, Ordering::Relaxed);
     }
 
@@ -78,20 +80,19 @@ impl CleanControl {
         lock(&self.begun).clone()
     }
 
-    /// An item starts; what its removal counts live is kept apart until
-    /// it finishes (`finish_item` leaves that count at zero).
+    /// An item starts; what its removal counts as it goes is kept apart
+    /// until it finishes (`finish_item` leaves that count at zero).
     pub(super) fn begin_item(&self, path: &Path) {
         *lock(&self.current) = Some(path.to_path_buf());
         lock(&self.begun).push(path.to_path_buf());
     }
 
-    /// The item is done: what it removed and was not counted yet (a
-    /// worktree's, measured at the end) is added now.
+    /// The item is done: what it removed in all (a worktree's measured
+    /// only at the end) replaces what was counted as it went.
     pub(super) fn finish_item(&self, removed: Bytes) {
         *lock(&self.current) = None;
-        let counted = self.item_removed.swap(0, Ordering::Relaxed);
-        self.removed
-            .fetch_add(removed.0.saturating_sub(counted), Ordering::Relaxed);
+        self.removed.fetch_add(removed.0, Ordering::Relaxed);
+        self.item_removed.store(0, Ordering::Relaxed);
         self.done.fetch_add(1, Ordering::Relaxed);
     }
 }
