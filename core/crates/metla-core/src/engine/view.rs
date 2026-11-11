@@ -76,9 +76,17 @@ pub enum ScanReason {
     /// The stored event history could not be resumed: what changed while
     /// the engine was not watching is unknown.
     HistoryLost,
-    /// The event stream said events were lost, or reported the root
-    /// itself as changed.
-    EventsDropped,
+    /// Events were lost on their way to the stream (`UserDropped`) at the
+    /// root, and replaying them from the history failed again and again.
+    UserDropped,
+    /// The kernel lost events (`KernelDropped`) at the root.
+    KernelDropped,
+    /// The root was reported for a walk of its own (`MustScanSubDirs`).
+    RootWalk,
+    /// The root itself changed (`RootChanged`).
+    RootChanged,
+    /// The event ids wrapped (`EventIdsWrapped`).
+    IdsWrapped,
     /// More changed directories than the engine tracks, up to the root.
     TooManyChanges,
     /// A change only a full scan can apply: the root itself, or a
@@ -100,7 +108,11 @@ impl ScanReason {
         match self {
             ScanReason::NoPicture => "no picture of the root yet",
             ScanReason::HistoryLost => "the event history could not be resumed",
-            ScanReason::EventsDropped => "the event stream lost events or reported the root",
+            ScanReason::UserDropped => "events lost on their way to the stream (user dropped)",
+            ScanReason::KernelDropped => "events lost by the kernel (kernel dropped)",
+            ScanReason::RootWalk => "the root reported for a walk of its own (must scan)",
+            ScanReason::RootChanged => "the root changed",
+            ScanReason::IdsWrapped => "the event ids wrapped",
             ScanReason::TooManyChanges => "more changed directories than tracked",
             ScanReason::RescanTooLarge => "a change too large to rescan in place",
             ScanReason::RescanFailed => "a rescan failed",
@@ -274,8 +286,42 @@ pub struct Counters {
     /// deadline. An idle engine does not wake up.
     pub wakeups: u64,
     /// FSEvents streams started: one at opening, and one more for each
-    /// change of latency.
+    /// change of latency, of what it leaves out, and each replay.
     pub streams: u64,
+    /// What the stream said it lost, and the replays that recovered it.
+    pub losses: Losses,
+}
+
+/// Events the stream marked, by kind, and the replays from the history.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Losses {
+    /// Lost on their way to the stream (`UserDropped`).
+    pub user_dropped: u64,
+    /// Lost by the kernel (`KernelDropped`).
+    pub kernel_dropped: u64,
+    /// A directory to walk whole (`MustScanSubDirs`).
+    pub must_scan: u64,
+    /// The root changed (`RootChanged`).
+    pub root_changed: u64,
+    /// The event ids wrapped (`EventIdsWrapped`).
+    pub ids_wrapped: u64,
+    /// Streams opened again from the last event applied, after events
+    /// were lost on their way.
+    pub replays: u64,
+}
+
+impl Losses {
+    /// What happened between `earlier` and these.
+    pub fn since(&self, earlier: &Losses) -> Losses {
+        Losses {
+            user_dropped: self.user_dropped.saturating_sub(earlier.user_dropped),
+            kernel_dropped: self.kernel_dropped.saturating_sub(earlier.kernel_dropped),
+            must_scan: self.must_scan.saturating_sub(earlier.must_scan),
+            root_changed: self.root_changed.saturating_sub(earlier.root_changed),
+            ids_wrapped: self.ids_wrapped.saturating_sub(earlier.ids_wrapped),
+            replays: self.replays.saturating_sub(earlier.replays),
+        }
+    }
 }
 
 impl Counters {
@@ -289,6 +335,7 @@ impl Counters {
             events: self.events.saturating_sub(earlier.events),
             wakeups: self.wakeups.saturating_sub(earlier.wakeups),
             streams: self.streams.saturating_sub(earlier.streams),
+            losses: self.losses.since(&earlier.losses),
         }
     }
 }

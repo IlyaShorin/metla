@@ -172,7 +172,7 @@ fn freshness() -> Freshness {
         watching: true,
         needs_full_scan: false,
         full_scans_ended: 0,
-        scan_reason: Some(metla_core::engine::ScanReason::EventsDropped),
+        scan_reason: Some(metla_core::engine::ScanReason::UserDropped),
     }
 }
 

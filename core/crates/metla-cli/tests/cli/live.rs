@@ -161,6 +161,7 @@ fn the_freshness_line_says_what_was_done_and_whether_it_may_be_out_of_date() {
         events: 40,
         wakeups: 9,
         streams: 1,
+        losses: Default::default(),
     };
     let fresh = Freshness {
         full_scan: Some(UnixTime(100)),

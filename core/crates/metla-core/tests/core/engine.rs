@@ -614,6 +614,7 @@ fn counters_since_earlier_ones_are_what_was_done_in_between() {
         events: 40,
         wakeups: 9,
         streams: 1,
+        losses: Default::default(),
     };
     let later = metla_core::engine::Counters {
         full_scans: 2,
@@ -623,6 +624,7 @@ fn counters_since_earlier_ones_are_what_was_done_in_between() {
         events: 140,
         wakeups: 30,
         streams: 4,
+        losses: Default::default(),
     };
     let done = later.since(&earlier);
     let fields = [

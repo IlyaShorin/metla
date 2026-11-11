@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use metla_core::domain::RescanTask;
-use metla_core::watch::{Coalescer, Event, Flags, FullCause, Timing};
+use metla_core::watch::{Coalescer, Event, Flags, FullCause, Timing, cause_of};
 
 use crate::support::Rng;
 
@@ -236,7 +236,7 @@ fn walking_the_whole_root_again_is_a_full_rescan_and_many_changed_children_are_n
     let mut c = coalescer();
     c.on_event(&event("/r", Flags::MUST_SCAN_SUBDIRS, 2), secs(0.0));
     assert_eq!(c.due(secs(100.0)), [RescanTask::Full]);
-    assert_eq!(c.full_cause(), Some(FullCause::Dropped));
+    assert_eq!(c.full_cause(), Some(FullCause::RootWalk));
     let names = ["a", "b", "c", "d", "e"];
     for name in names {
         changed(&mut c, &format!("/r/{name}"), 200.0);
@@ -274,9 +274,13 @@ fn the_cause_of_a_full_rescan_is_kept_until_another_one() {
     let mut c = coalescer();
     assert_eq!(c.full_cause(), None);
     c.on_event(&event("/r", Flags::USER_DROPPED, 2), secs(0.0));
-    assert_eq!(c.full_cause(), Some(FullCause::Dropped));
-    c.on_event(&event("/r/a", Flags::KERNEL_DROPPED, 3), secs(0.5));
-    assert_eq!(c.full_cause(), Some(FullCause::Dropped), "the first cause");
+    assert_eq!(c.full_cause(), Some(FullCause::UserDropped));
+    c.on_event(&event("/r", Flags::KERNEL_DROPPED, 3), secs(0.5));
+    assert_eq!(
+        c.full_cause(),
+        Some(FullCause::UserDropped),
+        "the first cause"
+    );
     assert_eq!(c.due(secs(100.0)), [RescanTask::Full]);
     let tight = Timing {
         max_dirs: 2,
@@ -581,5 +585,32 @@ fn a_stream_resumes_only_within_the_same_history_and_not_from_the_future() {
             expected,
             "{stored:?} {uuid:?}"
         );
+    }
+}
+
+#[test]
+fn what_an_event_asking_for_a_full_rescan_says_the_most_serious_first() {
+    let rows = [
+        (Flags::MUST_SCAN_SUBDIRS, FullCause::RootWalk),
+        (
+            Flags::MUST_SCAN_SUBDIRS.with(Flags::USER_DROPPED),
+            FullCause::UserDropped,
+        ),
+        (
+            Flags::USER_DROPPED.with(Flags::KERNEL_DROPPED),
+            FullCause::KernelDropped,
+        ),
+        (
+            Flags::KERNEL_DROPPED.with(Flags::ROOT_CHANGED),
+            FullCause::RootChanged,
+        ),
+        (
+            Flags::ROOT_CHANGED.with(Flags::EVENT_IDS_WRAPPED),
+            FullCause::IdsWrapped,
+        ),
+        (Flags::NONE, FullCause::RootWalk),
+    ];
+    for (flags, cause) in rows {
+        assert_eq!(cause_of(flags), cause, "{flags:?}");
     }
 }

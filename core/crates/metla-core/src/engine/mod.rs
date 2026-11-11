@@ -36,21 +36,21 @@ use crate::index::{
 };
 use crate::rules::RuleSet;
 use crate::scan::{DirObserver, ScanRoot, ScanScope, mounted_below};
-use crate::watch::Coalescer;
+use crate::watch::{Coalescer, Event};
 
 pub use kept::{decode_report, encode_report};
 pub use listing::{LISTED_FILES, Largest, Rest};
 pub use profile::{OFF, PowerProfile, Profile, Profiles, ScanStart, scan_start};
 pub use refresh::{MAX_SUBTREE, RefreshError, Refreshed, refresh};
 pub use scheduler::{
-    EVENTS_NOTE, QUIET_AFTER, Watching, deferred_line, needs, news, news_of, quiet_after, redone,
-    started_line, stream_exclusions,
+    EVENTS_NOTE, MAX_REPLAYS, OnLoss, QUIET_AFTER, Watching, deferred_line, needs, news, news_of,
+    on_loss, quiet_after, redone, started_line, stream_exclusions, tally,
 };
 pub use settings::{HotkeyMode, Settings};
 pub use shared::Quiet;
 pub use view::{
     CandidatePage, Changed, Completeness, Counters, DirRef, EngineObserver, EngineState, Failure,
-    Folder, FolderEntry, Freshness, Listed, Overview, Removability, ScanReason, TopFolder,
+    Folder, FolderEntry, Freshness, Listed, Losses, Overview, Removability, ScanReason, TopFolder,
     VolumeSpace,
 };
 
@@ -300,6 +300,8 @@ fn start_scheduler(
         data_dir,
         excluded,
         pictured: false,
+        generation: 0,
+        replays: 0,
     };
     let thread = thread::Builder::new().name("metla-engine".into());
     setup(
@@ -703,6 +705,12 @@ impl Engine {
         }
         self.shared.notify(Changed::Settings);
         self.send(Command::Profile)
+    }
+
+    /// Hands the engine `events` as its stream would (tests, and tools
+    /// that know what happened).
+    pub fn events(&self, events: Vec<Event>) -> Result<(), EngineError> {
+        self.send(Command::Events(None, events))
     }
 
     /// Tells the engine that these directories changed, as an event

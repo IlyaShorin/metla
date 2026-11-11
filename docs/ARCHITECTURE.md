@@ -669,20 +669,39 @@ opens, not the menu bar only), so a scan due at opening already
 follows that. `Counters::scan_threads`
 adds up the threads each full scan was given.
 
-**Deferred full scans.** A full scan the engine needs on its own
-starts at once without a picture, for the user (Refresh) and for a
-history found lost at opening. Otherwise (events dropped or the root
-reported, too many changes, a rescan too large or failed, a stopped
-scan done again) it waits, `profile::scan_start`, a pure table: no
-earlier than the profile's `scan_gap` after the last full scan ended
-(or the engine opened) and its `scan_quiet` after the last event that
-asked for one, whichever is later; 10 min and 60 s while someone looks
-(`Interactive`'s row), 30 min and 60 s in the background. A new drop
-pushes it back; the scheduler sleeps until then. Meanwhile the state is
-`Idle`, the picture stays shown and usable, `needs_full_scan` says it
-is behind (the status line: "updated N min ago · out of date"), and
-stderr has one line with the reason and the wait. A scan the user asked
-for that gave way to a cleanup is done again at once, as theirs.
+**Lost events.** Events can be lost on their way to the stream: a
+stream that cannot keep up gets `UserDropped` (at the root, measured
+on this machine under heavy churn), whoever its client is. Two things
+keep that from becoming a full scan of the disk. The stream leaves out
+what the scan never reads (above), so foreign churn does not fill its
+queue. And a batch that says events were lost on their way is not
+applied: the stream is opened again from the last event applied, and
+fseventsd's history hands the lost events over as ordinary changes
+(`OnLoss::Replay`, `Losses::replays`; measured: a replay after a
+`UserDropped` named all 337 directories made meanwhile). Only when the
+replays themselves keep losing events before they catch up
+(`MAX_REPLAYS`, 3) is the loss taken for a full scan. Lost events the
+kernel reports (`KernelDropped`), a changed root and wrapped ids still
+are one. `Counters::losses` counts each kind and the replays, and the
+line a full scan writes to stderr names the kind (`ScanReason::
+{UserDropped, KernelDropped, RootWalk, RootChanged, IdsWrapped}`).
+
+**Deferred full scans, the last line of defence.** A full scan the
+engine still needs on its own starts at once without a picture, for the
+user (Refresh) and for a history found lost at opening. Otherwise it
+waits, `profile::scan_start`, a pure table: no earlier than the
+profile's `scan_gap` after the last full scan ended (or the engine
+opened) and its `scan_quiet` after the last event that asked for one,
+whichever is later; 10 min and 60 s while someone looks
+(`Interactive`'s row), 30 min and 60 s in the background. This only
+bounds how often a disk that keeps losing events is scanned again; it
+is not what keeps the scans away. Meanwhile the state is `Idle`, the
+picture stays shown and usable (once a root has had a picture there
+always is one: a scan replaces it only when it ends, and a read that
+fails never counts as no picture), `needs_full_scan` says it is behind
+("updated N min ago · out of date"), and stderr has one line with the
+reason and the wait. A scan the user asked for that gave way to a
+cleanup is done again at once, as theirs.
 
 The pause between batches sets how often Background and Saver change
 the picture: about once a minute and every three minutes. Their streams

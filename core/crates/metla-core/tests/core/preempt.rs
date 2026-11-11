@@ -16,9 +16,9 @@ use metla_core::domain::{
     Category, Confirmation, DirFacts, DirId, PreviewId, QuickCategory, RescanTask, Separate,
 };
 use metla_core::engine::{
-    Completeness, Engine, EngineConfig, EngineState, PowerProfile, Profile, QUIET_AFTER, Quiet,
-    ScanReason, ScanStart, deferred_line, needs, news, news_of, quiet_after, redone, scan_start,
-    started_line, stream_exclusions,
+    Completeness, Engine, EngineConfig, EngineState, Losses, MAX_REPLAYS, OnLoss, PowerProfile,
+    Profile, QUIET_AFTER, Quiet, ScanReason, ScanStart, deferred_line, needs, news, news_of,
+    on_loss, quiet_after, redone, scan_start, started_line, stream_exclusions, tally,
 };
 use metla_core::fs::Mount;
 use metla_core::scan::{DirObserver, other_volumes};
@@ -357,10 +357,30 @@ fn why_a_full_scan_is_needed_for_a_task_and_what_it_says() {
         ),
         (
             RescanTask::Full,
-            Some(FullCause::Dropped),
-            ScanReason::EventsDropped,
+            Some(FullCause::UserDropped),
+            ScanReason::UserDropped,
         ),
-        (RescanTask::Full, None, ScanReason::EventsDropped),
+        (
+            RescanTask::Full,
+            Some(FullCause::KernelDropped),
+            ScanReason::KernelDropped,
+        ),
+        (
+            RescanTask::Full,
+            Some(FullCause::RootChanged),
+            ScanReason::RootChanged,
+        ),
+        (
+            RescanTask::Full,
+            Some(FullCause::IdsWrapped),
+            ScanReason::IdsWrapped,
+        ),
+        (
+            RescanTask::Full,
+            Some(FullCause::RootWalk),
+            ScanReason::RootWalk,
+        ),
+        (RescanTask::Full, None, ScanReason::RootWalk),
         (
             RescanTask::Recursive(path()),
             None,
@@ -373,7 +393,7 @@ fn why_a_full_scan_is_needed_for_a_task_and_what_it_says() {
         ),
         (
             RescanTask::Shallow(path()),
-            Some(FullCause::Dropped),
+            Some(FullCause::UserDropped),
             ScanReason::RescanTooLarge,
         ),
     ];
@@ -387,9 +407,19 @@ fn why_a_full_scan_is_needed_for_a_task_and_what_it_says() {
             "the event history could not be resumed",
         ),
         (
-            ScanReason::EventsDropped,
-            "the event stream lost events or reported the root",
+            ScanReason::UserDropped,
+            "events lost on their way to the stream (user dropped)",
         ),
+        (
+            ScanReason::KernelDropped,
+            "events lost by the kernel (kernel dropped)",
+        ),
+        (
+            ScanReason::RootWalk,
+            "the root reported for a walk of its own (must scan)",
+        ),
+        (ScanReason::RootChanged, "the root changed"),
+        (ScanReason::IdsWrapped, "the event ids wrapped"),
         (
             ScanReason::TooManyChanges,
             "more changed directories than tracked",
@@ -481,7 +511,7 @@ fn a_full_scan_the_engine_needs_waits_for_its_gap_and_for_quiet() {
             ScanStart::Now,
         ),
         (
-            ScanReason::EventsDropped,
+            ScanReason::UserDropped,
             false,
             None,
             s(0),
@@ -489,7 +519,7 @@ fn a_full_scan_the_engine_needs_waits_for_its_gap_and_for_quiet() {
             ScanStart::Now,
         ),
         (
-            ScanReason::EventsDropped,
+            ScanReason::UserDropped,
             true,
             None,
             s(0),
@@ -555,14 +585,14 @@ fn a_full_scan_the_engine_needs_waits_for_its_gap_and_for_quiet() {
         );
     }
     assert_eq!(redone(ScanReason::UserAsked, true), ScanReason::UserAsked);
-    assert_eq!(redone(ScanReason::EventsDropped, true), ScanReason::Redone);
+    assert_eq!(redone(ScanReason::UserDropped, true), ScanReason::Redone);
     assert_eq!(
-        redone(ScanReason::EventsDropped, false),
-        ScanReason::EventsDropped
+        redone(ScanReason::UserDropped, false),
+        ScanReason::UserDropped
     );
     assert_eq!(
-        deferred_line(ScanReason::EventsDropped, s(90)),
-        "metla: full scan deferred (the event stream lost events or reported the root), may start in 90 s"
+        deferred_line(ScanReason::UserDropped, s(90)),
+        "metla: full scan deferred (events lost on their way to the stream (user dropped)), may start in 90 s"
     );
 }
 
@@ -745,4 +775,51 @@ fn a_drop_during_a_full_scan_waits_for_the_gap_after_it() {
         Some(ScanReason::TooManyChanges),
         "the last scan's reason"
     );
+}
+
+/// A batch holding events lost on its way is replayed from the history,
+/// unless it comes from a stream already replaced (its other events are
+/// applied) or the replays have not caught up MAX_REPLAYS times.
+#[test]
+fn a_loss_is_replayed_until_replays_keep_losing() {
+    let rows = [
+        (false, true, 0, OnLoss::Feed),
+        (false, false, 5, OnLoss::Feed),
+        (true, false, 0, OnLoss::FeedOthers),
+        (true, true, 0, OnLoss::Replay),
+        (true, true, MAX_REPLAYS - 1, OnLoss::Replay),
+        (true, true, MAX_REPLAYS, OnLoss::Feed),
+    ];
+    for (dropped, current, replays, action) in rows {
+        assert_eq!(
+            on_loss(dropped, current, replays),
+            action,
+            "{dropped} {current} {replays}"
+        );
+    }
+    let event = |flags: Flags| Event {
+        path: PathBuf::from("/"),
+        flags,
+        id: 1,
+    };
+    let mut losses = Losses::default();
+    tally(
+        &mut losses,
+        &[
+            event(Flags::MUST_SCAN_SUBDIRS.with(Flags::USER_DROPPED)),
+            event(Flags::MUST_SCAN_SUBDIRS.with(Flags::KERNEL_DROPPED)),
+            event(Flags::ROOT_CHANGED),
+            event(Flags::EVENT_IDS_WRAPPED),
+            event(Flags::NONE),
+        ],
+    );
+    let expected = Losses {
+        user_dropped: 1,
+        kernel_dropped: 1,
+        must_scan: 2,
+        root_changed: 1,
+        ids_wrapped: 1,
+        replays: 0,
+    };
+    assert_eq!(losses, expected);
 }

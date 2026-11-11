@@ -126,11 +126,33 @@ impl Cooling {
 /// Why the coalescer asks for a full rescan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FullCause {
-    /// Lost events, wrapped ids, a changed root, or the root reported
-    /// for a walk of its own.
-    Dropped,
+    /// Events were lost on their way to the stream (`UserDropped`) at
+    /// the root or above it, and could not be replayed.
+    UserDropped,
+    /// The kernel lost events (`KernelDropped`) at the root or above it.
+    KernelDropped,
+    /// The root or a directory above it reported for a walk of its own
+    /// (`MustScanSubDirs` alone).
+    RootWalk,
+    /// The root itself changed (`RootChanged`).
+    RootChanged,
+    /// The event ids wrapped (`EventIdsWrapped`).
+    IdsWrapped,
     /// More changed directories than tracked, up to the root's children.
     Overflow,
+}
+
+/// What an event that asks for a full rescan (`flags`) says, the most
+/// serious first.
+pub fn cause_of(flags: Flags) -> FullCause {
+    let causes = [
+        (Flags::EVENT_IDS_WRAPPED, FullCause::IdsWrapped),
+        (Flags::ROOT_CHANGED, FullCause::RootChanged),
+        (Flags::KERNEL_DROPPED, FullCause::KernelDropped),
+        (Flags::USER_DROPPED, FullCause::UserDropped),
+    ];
+    let found = causes.iter().find(|(flag, _)| flags.contains(*flag));
+    found.map_or(FullCause::RootWalk, |(_, cause)| *cause)
 }
 
 pub struct Coalescer {
@@ -179,7 +201,7 @@ impl Coalescer {
         };
         let at_root = event.flags.must_scan() && self.root.starts_with(&event.path);
         if event.flags.lost_history() || at_root {
-            return self.mark_full(FullCause::Dropped, event.id, now, &timing);
+            return self.mark_full(cause_of(event.flags), event.id, now, &timing);
         }
         let Some(path) = self.inside(&event.path) else {
             return;
@@ -312,7 +334,7 @@ impl Coalescer {
             return full.grow(now, id, timing);
         }
         if recursive && path == self.root {
-            return self.mark_full(FullCause::Dropped, id, now, timing);
+            return self.mark_full(FullCause::RootWalk, id, now, timing);
         }
         let covering = path
             .ancestors()

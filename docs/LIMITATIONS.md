@@ -155,8 +155,12 @@ the gates in [QUALITY.md](QUALITY.md).
     real disk, and the full scan the user saw after one, were not
     reproduced on the real disk; which reason started that scan is not
     known (the engine now writes it to stderr when a full scan starts).
-30. **A full scan the engine needs waits up to 30 minutes** (10 while
-    the window is open) after the last one when a picture exists, so
-    changes behind lost events stay unread that long unless the user
-    presses Refresh; the gap and the quiet were chosen, not measured.
-
+30. **Lost events are replayed from fseventsd's history, measured once**
+    (a replay after a provoked `UserDropped` named every change made
+    meanwhile); the replay through the engine was tested with an
+    injected loss, not with a real one. When replays keep losing events
+    before they catch up, or the kernel loses them, a full scan follows,
+    no sooner than 30 minutes (10 while the window is open) after the
+    last one; the gap and the quiet were chosen, not measured. A stream
+    leaves out at most eight directories; other volumes beyond those are
+    filtered after delivery.

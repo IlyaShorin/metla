@@ -12,6 +12,7 @@ use std::fs;
 use std::time::{Duration, Instant};
 
 use metla_core::engine::{Engine, EngineConfig, EngineState, PowerProfile, Profiles, Watching};
+use metla_core::watch::{Event, Flags};
 
 use crate::engine::{HOME, Place, offered, profiles, settled, until, within};
 use crate::support::write_file;
@@ -378,4 +379,31 @@ fn a_stored_event_from_another_history_or_none_at_all_means_a_full_scan() {
     let other = Engine::open(quick()).unwrap();
     settled(&other);
     assert_eq!(other.counters().full_scans, 1, "another volume's history");
+}
+
+/// Events lost on their way to the stream are replayed from the history:
+/// the stream opens again from the last event applied, and no full scan
+/// starts. Losses while replays have not caught up MAX_REPLAYS times are
+/// the pure table's (`on_loss`).
+#[test]
+fn events_lost_on_their_way_are_replayed_and_not_scanned_again() {
+    let place = Place::new(HOME);
+    let engine = Engine::open(real(&place, Duration::from_millis(20), profiles())).unwrap();
+    settled(&engine);
+    let root = engine.snapshot().unwrap().root;
+    let lost = || {
+        vec![Event {
+            path: root.clone(),
+            flags: Flags::MUST_SCAN_SUBDIRS.with(Flags::USER_DROPPED),
+            id: 1,
+        }]
+    };
+    let before = engine.counters();
+    engine.events(lost()).unwrap();
+    until(&engine, |e| e.counters().since(&before).losses.replays == 1);
+    std::thread::sleep(Duration::from_millis(100));
+    let after = engine.counters().since(&before);
+    assert_eq!(after.full_scans, 0, "replayed, not scanned again");
+    assert_eq!(after.streams, 1, "the stream opened again");
+    assert_eq!(after.losses.user_dropped, 1);
 }

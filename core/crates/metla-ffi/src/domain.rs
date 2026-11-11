@@ -224,7 +224,11 @@ pub struct Freshness {
 pub enum ScanReason {
     NoPicture,
     HistoryLost,
-    EventsDropped,
+    UserDropped,
+    KernelDropped,
+    RootWalk,
+    RootChanged,
+    IdsWrapped,
     TooManyChanges,
     RescanTooLarge,
     RescanFailed,

@@ -15,7 +15,7 @@ use super::kept::encode_report;
 use super::profile::{Profile, ScanStart, scan_start};
 use super::refresh::{RefreshError, Refreshed, refresh};
 use super::shared::{Quiet, RunningScan, Shared, lock};
-use super::view::{Changed, Failure, ScanReason};
+use super::view::{Changed, Failure, Losses, ScanReason};
 use crate::clean::{CleanControl, CleanError, Context};
 use crate::domain::{
     Candidate, Category, CleanupReport, Confirmation, DirId, PreviewId, QuickCategory, Recency,
@@ -63,7 +63,9 @@ pub struct Following {
 
 /// What API calls ask the scheduler to do.
 pub enum Command {
-    Events(Vec<Event>),
+    /// A batch from the stream of that generation (`None`: handed over
+    /// by `Engine::events`, as the running stream's).
+    Events(Option<u64>, Vec<Event>),
     Changed(Vec<PathBuf>),
     Scan,
     Profile,
@@ -106,6 +108,11 @@ pub struct Scheduler {
     /// serve and to fall back on (a scan replaces it only when it ends),
     /// so a read that fails never counts as "no picture".
     pub pictured: bool,
+    /// The stream running now: a batch of an older one comes from before
+    /// a replay.
+    pub generation: u64,
+    /// Replays of lost events that have not caught up yet.
+    pub replays: u32,
 }
 
 impl Scheduler {
@@ -153,7 +160,7 @@ impl Scheduler {
 
     fn handle(&mut self, command: Command) {
         match command {
-            Command::Events(events) => self.feed(&events),
+            Command::Events(generation, events) => self.receive(generation, &events),
             Command::Changed(paths) => {
                 let events: Vec<Event> = paths.into_iter().map(reported).collect();
                 self.feed(&events);
@@ -167,6 +174,48 @@ impl Scheduler {
             Command::Quick(categories) => self.quick(&categories),
             Command::Stop => {}
         }
+    }
+
+    /// A batch from a stream: events lost on their way to it are replayed
+    /// from the history (`on_loss`) rather than taken for a full scan.
+    fn receive(&mut self, generation: Option<u64>, events: &[Event]) {
+        self.shared.count(|c| tally(&mut c.losses, events));
+        let current = generation.is_none_or(|g| g == self.generation);
+        let dropped = events.iter().any(|e| e.flags.contains(Flags::USER_DROPPED));
+        if current && !dropped && events.iter().any(|e| e.flags.contains(Flags::HISTORY_DONE)) {
+            self.replays = 0;
+        }
+        match on_loss(dropped, current, self.replays) {
+            OnLoss::Feed => self.feed(events),
+            OnLoss::FeedOthers => {
+                let others: Vec<Event> = events
+                    .iter()
+                    .filter(|e| !e.flags.contains(Flags::USER_DROPPED))
+                    .cloned()
+                    .collect();
+                self.feed(&others);
+            }
+            OnLoss::Replay => {
+                if !self.replay() {
+                    self.feed(events);
+                }
+            }
+        }
+    }
+
+    /// Opens the stream again from the last event applied: fseventsd's
+    /// history still holds what the stream lost on its way. False without
+    /// a stream to open again.
+    fn replay(&mut self) -> bool {
+        let Some(latency) = self.stream.as_ref().map(|following| following.latency) else {
+            return false;
+        };
+        self.replays += 1;
+        self.shared.count(|c| c.losses.replays += 1);
+        let since = self.coalescer.settled().or(self.origin);
+        self.stream = None;
+        self.open_stream(latency, since);
+        true
     }
 
     /// Hands the events to the coalescer, but those below what a cleanup
@@ -253,9 +302,11 @@ impl Scheduler {
     fn open_stream(&mut self, latency: Duration, since: Option<u64>) -> bool {
         let sender = self.sender.clone();
         let shared = Arc::clone(&self.shared);
+        self.generation += 1;
+        let generation = Some(self.generation);
         let sink = move |events: Vec<Event>| {
             if let Some(events) = news_of(events, &shared.quiet_paths(Instant::now())) {
-                let _ = sender.send(Command::Events(events));
+                let _ = sender.send(Command::Events(generation, events));
             }
         };
         self.origin = Some(since.unwrap_or_else(current_event_id));
@@ -760,6 +811,45 @@ pub fn stream_exclusions(
     (wanted, left)
 }
 
+/// Replays of lost events that may follow one another before the loss is
+/// taken for what it says (a full scan, rate-limited).
+pub const MAX_REPLAYS: u32 = 3;
+
+/// What a batch holding events lost on their way (`dropped`) leads to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnLoss {
+    /// Applied as it is.
+    Feed,
+    /// Applied but its loss markers: it comes from a stream that was
+    /// replaced, and the new one replays what was lost.
+    FeedOthers,
+    /// Not applied: the stream is opened again from the last event
+    /// applied, and the history hands the lost events over.
+    Replay,
+}
+
+/// What a batch from the `current` stream or an older one, `dropped` or
+/// not, leads to after `replays` replays that have not caught up. A pure
+/// table.
+pub fn on_loss(dropped: bool, current: bool, replays: u32) -> OnLoss {
+    match (dropped, current) {
+        (false, _) => OnLoss::Feed,
+        (true, false) => OnLoss::FeedOthers,
+        (true, true) if replays < MAX_REPLAYS => OnLoss::Replay,
+        (true, true) => OnLoss::Feed,
+    }
+}
+
+/// Counts the marks of `events` into `losses`.
+pub fn tally(losses: &mut Losses, events: &[Event]) {
+    let count = |flag: Flags| events.iter().filter(|e| e.flags.contains(flag)).count() as u64;
+    losses.user_dropped += count(Flags::USER_DROPPED);
+    losses.kernel_dropped += count(Flags::KERNEL_DROPPED);
+    losses.must_scan += count(Flags::MUST_SCAN_SUBDIRS);
+    losses.root_changed += count(Flags::ROOT_CHANGED);
+    losses.ids_wrapped += count(Flags::EVENT_IDS_WRAPPED);
+}
+
 /// The events of a batch that may be news (`news`), or none.
 pub fn news_of(mut events: Vec<Event>, quiet: &[PathBuf]) -> Option<Vec<Event>> {
     events.retain(|event| news(event, quiet));
@@ -771,7 +861,11 @@ pub fn news_of(mut events: Vec<Event>, quiet: &[PathBuf]) -> Option<Vec<Event>> 
 pub fn needs(task: &RescanTask, cause: Option<FullCause>) -> ScanReason {
     match (task, cause) {
         (RescanTask::Full, Some(FullCause::Overflow)) => ScanReason::TooManyChanges,
-        (RescanTask::Full, _) => ScanReason::EventsDropped,
+        (RescanTask::Full, Some(FullCause::UserDropped)) => ScanReason::UserDropped,
+        (RescanTask::Full, Some(FullCause::KernelDropped)) => ScanReason::KernelDropped,
+        (RescanTask::Full, Some(FullCause::RootChanged)) => ScanReason::RootChanged,
+        (RescanTask::Full, Some(FullCause::IdsWrapped)) => ScanReason::IdsWrapped,
+        (RescanTask::Full, _) => ScanReason::RootWalk,
         _ => ScanReason::RescanTooLarge,
     }
 }

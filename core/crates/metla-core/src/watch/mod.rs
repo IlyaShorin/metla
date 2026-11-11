@@ -7,7 +7,7 @@ mod flags;
 mod resume;
 mod sys;
 
-pub use coalescer::{Coalescer, Event, FullCause, Timing};
+pub use coalescer::{Coalescer, Event, FullCause, Timing, cause_of};
 pub use flags::Flags;
 pub use resume::resume_after;
 pub use sys::{MAX_EXCLUDED, Stream, current_event_id, events_of, volume_uuid};
