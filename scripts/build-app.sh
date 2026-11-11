@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds Metla.app: the core (scripts/build-core.sh), the Swift package, and
-# the bundle layout with its Info.plist, ad-hoc signed (no hardened runtime,
+# the bundle layout with its Info.plist, ad-hoc signed unless
+# METLA_SIGN_IDENTITY names an identity (no hardened runtime,
 # not notarised). Prints the bundle's path.
 #
 #   scripts/build-app.sh [--release]    release Swift linked with the core's
@@ -27,6 +28,14 @@
 #                         (default target/app in the repository: keep it off
 #                         a full disk)
 #   METLA_CONFIGURATION   release or debug, as --release / --debug
+#   METLA_SIGN_IDENTITY   a signing identity of your keychain, passed to
+#                         codesign as given, for your own installs: macOS
+#                         keeps a Full Disk Access grant across updates only
+#                         for a stable signature (an ad-hoc one changes with
+#                         every build). Without it the bundle is ad-hoc
+#                         signed, as every published build must be; with
+#                         it no Metla.zip is made (the signature carries
+#                         the certificate owner's name)
 
 set -euo pipefail
 
@@ -108,9 +117,14 @@ if [[ "$configuration" == release ]]; then
     strip -x "$app/Contents/MacOS/Metla"
     "$repo/scripts/no-local-paths.sh" "$app" "$build" >&2
 fi
-codesign --force --sign - "$app" >&2
+identity="${METLA_SIGN_IDENTITY:-}"
+codesign --force --sign "${identity:--}" "$app" >&2
 if [[ "$configuration" == release ]]; then
     rm -f -- "$build/$name/Metla.zip"
-    (cd "$build/$name" && ditto -c -k --keepParent Metla.app Metla.zip)
+    if [[ -n "$identity" ]]; then
+        echo "signed with METLA_SIGN_IDENTITY: no Metla.zip made (a personal signature is not for sharing)" >&2
+    else
+        (cd "$build/$name" && ditto -c -k --keepParent Metla.app Metla.zip)
+    fi
 fi
 echo "$app"

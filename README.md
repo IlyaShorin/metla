@@ -135,6 +135,13 @@ checks by listing a few protected folders), opens the right System
 Settings pane, and checks again. Metla may need a restart after access is
 granted.
 
+macOS ties the grant to the app's signature. A build ad-hoc signed (the
+default) is a new app to macOS after every rebuild, and the grant is
+lost; for your own installs, sign with a certificate of your keychain
+(`METLA_SIGN_IDENTITY=<identity> scripts/build-app.sh --release`) and
+the grant survives updates. Such a build makes no Metla.zip: keep it to
+yourself.
+
 ## Hotkeys
 
 * **Clean** (⌃⌥⌘⌫ by default): shows what was found and asks to confirm.
