@@ -203,4 +203,7 @@ critical thermal state, or battery with "Reduce activity on battery" →
 Saver; otherwise Background. It learns of changes from IOKit's power
 source notifications, Low Power Mode and thermal state notifications; it
 never polls. App Nap is left alone; only a scan the user asked for and a
-cleanup hold an activity.
+cleanup hold an activity. The first scan of a disk the engine has no
+picture of (the first run, a lost index) is the one the user waits for:
+the app takes it over as the user's scan, so it runs as Interactive and
+App Nap cannot slow it while the window is behind others.

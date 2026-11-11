@@ -121,6 +121,9 @@ public final class AppModel {
             await readLastReport(client)
             volume = await Self.volume(of: settings.root)
             await refresh(Self.everything)
+            if let freshness, Self.takesOver(freshness) {
+                await holdUserScan(from: nil)
+            }
             listen(to: client)
         } catch {
             failure = String(describing: error)
@@ -292,16 +295,36 @@ public final class AppModel {
 
     /// Refresh (⌘R): a full scan the user asked for, run as Interactive.
     public func rescan() async {
+        await holdUserScan(from: freshness?.fullScan)
+        try? await client?.startScan()
+        await refresh([.activity])
+    }
+
+    /// Whether the scan running at the start is the one the user waits
+    /// for: the engine's own first scan of a disk it has no picture of
+    /// (the first run, a lost index). The app takes it over as the
+    /// user's scan, so that it runs Interactive and holds an activity:
+    /// without one, App Nap slows an app behind other windows to
+    /// background priority (measured: a first scan of the full disk had
+    /// not ended after 27 minutes).
+    static func takesOver(_ freshness: Freshness) -> Bool {
+        guard case .scanning(_, interactive: false) = freshness.state else {
+            return false
+        }
+        return freshness.picture == .missing
+    }
+
+    /// From now until the scan ends, the scan is the user's: Interactive,
+    /// with an activity held.
+    private func holdUserScan(from fullScan: Int64?) async {
         userScan = true
         userScanSeen = false
-        userScanFrom = freshness?.fullScan
+        userScanFrom = fullScan
         if scanActivity == nil {
             scanActivity = ProcessInfo.processInfo.beginActivity(
                 options: .userInitiated, reason: "A scan the user asked for")
         }
         await applyPower()
-        try? await client?.startScan()
-        await refresh([.activity])
     }
 
     /// The user's scan is over once none runs and it was seen running, a

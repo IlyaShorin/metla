@@ -131,6 +131,26 @@ import Testing
         #expect(!model.userScan, "a stopped scan is over")
     }
 
+    /// The first scan of a disk without a picture is the one the user
+    /// waits for (the first run, a lost index): it runs as the user's
+    /// scan, Interactive and holding an activity so that App Nap does not
+    /// slow it while the app is behind other windows. A scan of a disk
+    /// with a picture, and a scan the user's own Refresh started, are not
+    /// taken over.
+    @Test func theFirstScanOfADiskWithoutAPictureIsTheUsers() {
+        func freshness(_ state: EngineState, _ picture: Completeness) -> Freshness {
+            Freshness(fullScan: nil, updated: nil, pending: 0, state: state, picture: picture, watching: true,
+                      needsFullScan: true)
+        }
+        let progress = ProgressSnapshot(dirs: 1, files: 1, bytes: 1, denied: 0)
+        #expect(AppModel.takesOver(freshness(.scanning(progress: progress, interactive: false), .missing)))
+        #expect(!AppModel.takesOver(freshness(.scanning(progress: progress, interactive: true), .missing)))
+        #expect(!AppModel.takesOver(freshness(.scanning(progress: progress, interactive: false), .partial)))
+        #expect(!AppModel.takesOver(freshness(.scanning(progress: progress, interactive: false), .complete)))
+        #expect(!AppModel.takesOver(freshness(.idle, .missing)), "no scan runs: nothing to hold")
+        #expect(!AppModel.takesOver(freshness(.off, .missing)))
+    }
+
     @Test func aLoginItemTheSystemRefusesSaysWhy() async throws {
         let login = FakeLogin()
         login.refuses = true

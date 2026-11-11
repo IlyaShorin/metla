@@ -895,7 +895,11 @@ another user owns it stays `InspectionFailed` (a worktree) or
   Power Mode, thermal state; no timers) feeds `PowerState.profile`, a
   pure table, whose answer the app hands to `set_power_profile`; a scan
   the user asked for runs as Interactive and holds an activity, as a
-  cleanup does.
+  cleanup does. The engine's own first scan of a disk without a picture
+  is taken over as the user's (`AppModel.takesOver`): without the
+  activity, App Nap put an app behind other windows at background
+  priority and its first scan of the full disk had not ended after
+  27 minutes.
 * **Scenarios.** `--scenario <name>` drives the real view models end
   to end on a fixture and exits non-zero when the disk is not as the
   flow confirmed (`scripts/run-scenarios.sh` runs all four on fresh
