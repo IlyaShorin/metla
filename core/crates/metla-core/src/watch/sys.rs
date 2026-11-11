@@ -179,11 +179,9 @@ impl Stream {
             drop(unsafe { Box::from_raw(sink) });
             return Err(format!("no event stream for {}", root.display()));
         }
-        if !excluded_text.is_empty() {
-            // SAFETY: the stream is valid and not started yet; the strings
-            // outlive the call, which copies them.
-            unsafe { exclude(stream, &excluded_text) };
-        }
+        // SAFETY: the stream is valid and not started yet; the strings
+        // outlive the call, which copies them (none: nothing is left out).
+        unsafe { exclude(stream, &excluded_text) };
         // SAFETY: a valid NUL-terminated label; serial queue (no attributes).
         let queue = unsafe { dispatch_queue_create(c"metla-events".as_ptr(), std::ptr::null()) };
         // SAFETY: the stream and the queue are valid; started once.

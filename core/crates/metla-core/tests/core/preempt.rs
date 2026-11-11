@@ -913,6 +913,7 @@ fn the_replays_follow_the_stream_running_and_its_history() {
     assert_eq!(replays.batch(Some(2), &done), OnLoss::Feed);
     assert_eq!(replays.pending(), 0, "caught up");
     assert_eq!(exclusion_line(8, 0), None);
+    assert!(exclusion_line(8, 1).is_some(), "one left over is said too");
     assert_eq!(
         exclusion_line(8, 3).as_deref(),
         Some("metla: the event stream leaves out 8 directories, 3 more are dropped after delivery")
