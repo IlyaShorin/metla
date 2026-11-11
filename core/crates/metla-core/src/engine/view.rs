@@ -101,24 +101,48 @@ pub enum ScanReason {
     UserAsked,
 }
 
+/// Each reason in a few words (`ScanReason::says`).
+const SAYS: [(ScanReason, &str); 12] = [
+    (ScanReason::NoPicture, "no picture of the root yet"),
+    (
+        ScanReason::HistoryLost,
+        "the event history could not be resumed",
+    ),
+    (
+        ScanReason::UserDropped,
+        "events lost on their way to the stream (user dropped)",
+    ),
+    (
+        ScanReason::KernelDropped,
+        "events lost by the kernel (kernel dropped)",
+    ),
+    (
+        ScanReason::RootWalk,
+        "the root reported for a walk of its own (must scan)",
+    ),
+    (ScanReason::RootChanged, "the root changed"),
+    (ScanReason::IdsWrapped, "the event ids wrapped"),
+    (
+        ScanReason::TooManyChanges,
+        "more changed directories than tracked",
+    ),
+    (
+        ScanReason::RescanTooLarge,
+        "a change too large to rescan in place",
+    ),
+    (ScanReason::RescanFailed, "a rescan failed"),
+    (ScanReason::Redone, "a stopped scan is done again"),
+    (ScanReason::UserAsked, "the user asked"),
+];
+
 impl ScanReason {
     /// The reason in a few words, without a path: the line the engine
     /// writes to stderr when a full scan starts.
     pub fn says(self) -> &'static str {
-        match self {
-            ScanReason::NoPicture => "no picture of the root yet",
-            ScanReason::HistoryLost => "the event history could not be resumed",
-            ScanReason::UserDropped => "events lost on their way to the stream (user dropped)",
-            ScanReason::KernelDropped => "events lost by the kernel (kernel dropped)",
-            ScanReason::RootWalk => "the root reported for a walk of its own (must scan)",
-            ScanReason::RootChanged => "the root changed",
-            ScanReason::IdsWrapped => "the event ids wrapped",
-            ScanReason::TooManyChanges => "more changed directories than tracked",
-            ScanReason::RescanTooLarge => "a change too large to rescan in place",
-            ScanReason::RescanFailed => "a rescan failed",
-            ScanReason::Redone => "a stopped scan is done again",
-            ScanReason::UserAsked => "the user asked",
-        }
+        SAYS.iter()
+            .find(|(reason, _)| *reason == self)
+            .map(|(_, words)| *words)
+            .unwrap_or_default()
     }
 }
 
