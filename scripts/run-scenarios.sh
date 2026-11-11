@@ -8,7 +8,7 @@
 #   scripts/run-scenarios.sh [name ...]   default: all four
 #
 # Environment: METLA_BUILD as for build-app.sh (the debug bundle must be
-# built: METLA_CONFIGURATION=debug scripts/build-app.sh);
+# built: scripts/build-app.sh --debug);
 # METLA_SCENARIO_DIR where the fixtures go (default <build>/scenarios).
 
 set -uo pipefail
@@ -17,7 +17,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 build="${METLA_BUILD:-$repo/target/app}"
 app="$build/debug/Metla.app/Contents/MacOS/Metla"
 work="${METLA_SCENARIO_DIR:-$build/scenarios}"
-[[ -x "$app" ]] || { echo "no $app: run METLA_CONFIGURATION=debug scripts/build-app.sh" >&2; exit 2; }
+[[ -x "$app" ]] || { echo "no $app: run scripts/build-app.sh --debug" >&2; exit 2; }
 (cd "$repo/core" && cargo build -q -p metla-cli) || exit 2
 cli="$repo/core/target/debug/metla-cli"
 

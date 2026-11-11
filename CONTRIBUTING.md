@@ -68,8 +68,11 @@ does not.
 ```
 scripts/build-core.sh      # metla-ffi's static library (fixtures only) and the Swift bindings
 scripts/build-core.sh production    # the release app's library: can clean real data
-scripts/build-app.sh       # Metla.app (release, ad-hoc signed) under target/app/release
-METLA_CONFIGURATION=debug scripts/build-app.sh   # the debug app: cleans fixtures only
+scripts/build-app.sh --release   # Metla.app and Metla.zip (release, ad-hoc signed, can clean
+                                 # real data) under target/app/release
+scripts/build-app.sh --release --plain   # the same, linked with the plain library: cleans
+                                 # fixtures only; for measuring on the real disk
+scripts/build-app.sh --debug     # the debug app: cleans fixtures only
 scripts/run-app.sh         # starts the debug app on a fixture metla-cli makes
 scripts/run-app.sh --capture <dir>   # PNGs of the screens, light and dark
 scripts/run-scenarios.sh   # the cleanup flows end to end on fresh fixtures

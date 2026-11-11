@@ -846,8 +846,16 @@ another user owns it stays `InspectionFailed` (a worktree) or
   macOS 14: `MetlaCoreFFI` (generated bindings and the C module),
   `MetlaKit` (engine client, view models, formatting, strings, launch
   settings; tested), `MetlaApp` (SwiftUI views, AppKit glue, `@main`).
-  `scripts/build-app.sh` lays out an ad-hoc signed `Metla.app`;
-  `scripts/run-app.sh` starts it on a fixture.
+  `scripts/build-app.sh` lays out an ad-hoc signed `Metla.app` (no
+  hardened runtime, not notarised): `--release` with the production
+  library, symbols stripped, Rust and Swift file paths mapped to neutral
+  prefixes and no debug information, checked by
+  `scripts/no-local-paths.sh` (no user name, home directory or
+  repository path in any Mach-O file of the bundle), and `Metla.zip`;
+  `--release --plain`, the same release app linked with the plain
+  library, which cleans fixtures only and so may run on the real disk
+  for measurements; `--debug`, the debug app (plain library).
+  `scripts/run-app.sh` starts a bundle on a fixture.
 * `NavigationSplitView` main window (M5): Overview, the six categories'
   tables, Folders; standard controls, light and dark, English and
   Russian (rule titles localised by rule id, the catalogue's English

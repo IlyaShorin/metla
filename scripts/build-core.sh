@@ -18,6 +18,11 @@
 #
 # Build output goes to core/target (on the development machine a link to
 # a RAM disk: keep big output off a full disk).
+#
+# No local path goes into the library: the home directory, Cargo's and
+# rustup's homes and the repository are mapped to /home, /cargo, /rustup
+# and /metla in every crate's file names (panic locations); rustc applies
+# the last prefix that matches. scripts/no-local-paths.sh checks the app.
 
 set -euo pipefail
 
@@ -39,10 +44,18 @@ if rustup target list --installed 2>/dev/null | grep -qx x86_64-apple-darwin; th
     triples+=(x86_64-apple-darwin)
 fi
 
+# Encoded (one flag per field) because the paths may hold spaces.
+separator=$'\x1f'
+remap=""
+for map in "$HOME=/home" "${CARGO_HOME:-$HOME/.cargo}=/cargo" "${RUSTUP_HOME:-$HOME/.rustup}=/rustup" \
+    "$repo=/metla" "$(cd "$repo" && pwd -P)=/metla"; do
+    remap="${remap:+$remap$separator}--remap-path-prefix=$map"
+done
+
 libraries=()
 for triple in "${triples[@]}"; do
-    (cd "$core" && cargo rustc -q -p metla-ffi --lib --release --target "$triple" \
-        ${features[@]+"${features[@]}"} --crate-type staticlib) >&2
+    (cd "$core" && CARGO_ENCODED_RUSTFLAGS="$remap" cargo rustc -q -p metla-ffi --lib --release \
+        --target "$triple" ${features[@]+"${features[@]}"} --crate-type staticlib) >&2
     libraries+=("$core/target/$triple/release/libmetla_ffi.a")
 done
 

@@ -6,8 +6,9 @@
 # anything real; a METLA_ROOT that is not a fixture is refused.
 #
 # Environment: METLA_BUILD as for build-app.sh; METLA_CONFIGURATION debug
-# (default) or release; METLA_ROOT, METLA_HOME and METLA_DATA_DIR to choose
-# another fixture or data directory.
+# (default), release or release-plain (the bundle build-app.sh made with
+# --debug, --release or --release --plain); METLA_ROOT, METLA_HOME and
+# METLA_DATA_DIR to choose another fixture or data directory.
 
 set -euo pipefail
 
@@ -15,7 +16,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 build="${METLA_BUILD:-$repo/target/app}"
 configuration="${METLA_CONFIGURATION:-debug}"
 app="$build/$configuration/Metla.app"
-[[ -x "$app/Contents/MacOS/Metla" ]] || { echo "no $app: run scripts/build-app.sh" >&2; exit 1; }
+[[ -x "$app/Contents/MacOS/Metla" ]] || { echo "no $app: build it with scripts/build-app.sh" >&2; exit 1; }
 
 if [[ -z "${METLA_ROOT:-}" ]]; then
     export METLA_ROOT="$build/fixture"
