@@ -117,7 +117,7 @@ The bundles land under `target/app/`, built for the machine's own
 architecture. Every build links the core it has just built: the core
 carries a stamp (a hash of its sources), `build-app.sh` refuses to bundle
 an executable without it, and the app prints it in its first line on
-stderr (`metla 0.7.2, core <stamp>`). A build is signed ad-hoc unless
+stderr (`metla 0.7.3, core <stamp>`). A build is signed ad-hoc unless
 `METLA_SIGN_IDENTITY` names a certificate (see Full Disk Access below).
 Published releases up to 0.7.2 are ad-hoc signed; later ones are signed
 with the maintainer's Apple Development certificate. Neither kind is a
