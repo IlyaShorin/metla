@@ -342,6 +342,46 @@ lines. And at d90cce9, after the capture, launch and script changes
 14 suites, every gated file at or above 85 %, MetlaKit 93.10 % of 2,319
 lines.
 
+**0.7.2** (with Full Disk Access granted, the folders still denied are
+closed to every app: no banner and no access button for them; the probe
+at start, on activation and after a full scan). No Rust source changed:
+the Rust gate and the mutator were not run, and the verdicts above
+carry over. At 17afe39 on 2026-11-12, `TMPDIR` on the RAM disk, the
+screen locked from 12:30:
+
+* `scripts/quality-swift.sh` (12:37:17 to 12:38:22, 65 s): green. 0
+  diagnostics; 94 tests in 14 suites passed; every gated file at or
+  above 85 % (OverviewData 98.57 %, StatusLine 100 %, AppModel 93.24 %,
+  Strings 87.88 %, the lowest FoldersModel 87.50 %); MetlaKit 93.37 % of
+  2,353 lines. One run.
+* `scripts/run-scenarios.sh` (17 s): the four scenarios pass (30, 9, 19
+  and 12 checks).
+* `scripts/run-app.sh --capture` on a fresh fixture (124 s, in Russian,
+  the system's language): 30 images, 0 failures, painted in-process at
+  1x (the window server gives no image with the screen locked; the light
+  Overview's title bar band came out dark, which the capture reports
+  without counting it as a failure). The fixture has no denied folder
+  and the development build has no Full Disk Access: the Overview has no
+  banner and no closed-folder line, the status a green dot; the
+  first-run sheet and Settings → Access show the not-granted text.
+* `scripts/build-app.sh --release` (26 s): built, version 0.7.2 (9), 0
+  strings with a local path. Not installed.
+* Swift has no mutator: the new decisions were mutated by hand, one
+  change at a time, against the suites that test them. On the final
+  tree 10 mutants (the start probe and the probe after a scan removed,
+  `>` made `>=`, the count of ended scans never kept, "cannot tell" read
+  as granted, closed folders with other gaps, the unread count changed,
+  the status ignoring `closedOnly`, the model never passing it, the
+  Overview ignoring the access): all killed by a failing test. On the
+  first commit's tree the removed start probe survived (the probe after
+  the first scan's end hid it); `fullDiskAccessIsProbedBeforeTheFirstPicture`
+  was added and kills it, and the three after-scan mutants were killed
+  there too.
+* The branches with access granted are exercised by the tests only
+  (OverviewDataTests, StatusLineTests, and EngineTests on a fixture with
+  a folder of mode 000 and a probe that answers granted); the new views
+  were drawn once by a capture changed for the purpose and not kept.
+
 ## What no tool checks
 
 * **The SwiftUI views and their layout.** `MetlaApp` has no unit tests
