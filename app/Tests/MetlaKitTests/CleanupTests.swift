@@ -156,7 +156,7 @@ import Testing
         try await until { await model.refresh([.cleanup]); return model.lastReport == report }
         let settings = model.settings
         model.stop()
-        let again = AppModel(settings: settings, strings: Strings(language: "en", region: "US"))
+        let again = AppModel(settings: settings, strings: Strings(language: "en", region: "US"), probe: FixedProbe([]))
         await again.start(trash: FixtureTrash(root: settings.root))
         defer { again.stop() }
         #expect(again.lastReport == report, "kept by the engine")

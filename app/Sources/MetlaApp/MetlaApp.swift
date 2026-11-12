@@ -58,13 +58,18 @@ struct MetlaApp: App {
 
 /// Starts the app once AppKit has finished launching, not when a scene's
 /// view appears: the window state macOS restores can bring up no window
-/// at all. Keeps the app in the menu bar when its last window closes,
-/// unless "Show in menu bar" is off.
+/// at all. Probes Full Disk Access again whenever the app becomes active.
+/// Keeps the app in the menu bar when its last window closes, unless
+/// "Show in menu bar" is off.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var bridge: Bridge?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { await bridge?.launch() }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task { await bridge?.becameActive() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -38,7 +38,7 @@ import Testing
         let first = try await started(settings)
         let scanned = first.overview?.freshness.fullScan
         first.stop()
-        let again = AppModel(settings: settings, strings: Strings(language: "en", region: "US"))
+        let again = AppModel(settings: settings, strings: Strings(language: "en", region: "US"), probe: FixedProbe([]))
         await again.start()
         defer { again.stop() }
         #expect(again.overview?.freshness.fullScan == scanned, "from the saved picture, no new scan")
@@ -269,17 +269,53 @@ import Testing
         try Data().write(to: root.appendingPathComponent(LaunchSettings.fixtureMarker))
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: closed.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: closed.path) }
-        let model = try await started(Fixture.settings(root: root.path))
+        let model = try await started(Fixture.settings(root: root.path), probe: FixedProbe([.denied]))
         defer { model.stop() }
+        #expect(model.access.state == .notGranted, "probed when the model starts")
         #expect(model.overviewData?.banner == .partial(denied: 1, missing: 0))
         #expect(model.status?.text.hasSuffix("· partial") == true)
         #expect(model.status?.tone == .stale)
     }
 
+    /// Full Disk Access is probed when the model starts, before the first
+    /// picture is shown: it tells that picture's gaps.
+    @Test func fullDiskAccessIsProbedBeforeTheFirstPicture() async throws {
+        let model = AppModel(
+            settings: Fixture.settings(), strings: Strings(language: "en", region: "US"),
+            preferences: MemoryPreferences(), probe: FixedProbe([.listed]))
+        await model.start(
+            mainThread: MainThreadGuard { call in Issue.record("main thread: \(call)") }, trash: RefusingTrash(),
+            login: FakeLogin())
+        defer { model.stop() }
+        #expect(model.overview != nil, "the first picture is shown")
+        #expect(model.access.state == .granted)
+    }
+
+    /// Full Disk Access is probed again when a full scan ends, and not at
+    /// every refresh.
+    @Test func fullDiskAccessIsProbedAgainWhenAFullScanEnds() async throws {
+        let probe = ChangingProbe([.denied])
+        let model = try await started(probe: probe)
+        defer { model.stop() }
+        #expect(model.access.state == .notGranted)
+        let asked = await probe.asked
+        for _ in 0..<3 {
+            await model.refresh([.activity, .picture])
+        }
+        #expect(await probe.asked == asked, "no scan ended: not probed")
+        await probe.answer([.listed])
+        await model.rescan()
+        try await until {
+            await model.refresh([.activity])
+            return model.access.state == .granted
+        }
+        #expect(await probe.asked == asked + 1)
+    }
+
     @Test func anEngineThatCannotOpenSaysWhy() async {
         var settings = Fixture.settings(root: "/nonexistent/metla/root")
         settings.isFixture = false
-        let model = AppModel(settings: settings, strings: Strings(language: "en", region: "US"))
+        let model = AppModel(settings: settings, strings: Strings(language: "en", region: "US"), probe: FixedProbe([]))
         await model.start()
         #expect(model.failure != nil && model.client == nil)
         await model.refresh([.picture])

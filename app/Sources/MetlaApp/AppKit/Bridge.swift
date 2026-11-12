@@ -89,6 +89,11 @@ final class Bridge {
             Task { await self?.model.powerChanged(state) }
         }
         power?.tell()
+    }
+
+    /// The app became active: Full Disk Access may have changed meanwhile
+    /// (the user comes back from System Settings), so it is probed again.
+    func becameActive() async {
         await model.access.check()
     }
 

@@ -104,6 +104,26 @@ struct FixedProbe: AccessProbe {
     }
 }
 
+/// A probe whose answers the test changes; it counts the times it was
+/// asked.
+actor ChangingProbe: AccessProbe {
+    private var given: [ProbeAnswer]
+    private(set) var asked = 0
+
+    init(_ given: [ProbeAnswer]) {
+        self.given = given
+    }
+
+    func answer(_ given: [ProbeAnswer]) {
+        self.given = given
+    }
+
+    func answers() async -> [ProbeAnswer] {
+        asked += 1
+        return given
+    }
+}
+
 /// A login item that remembers, or refuses.
 @MainActor
 final class FakeLogin: LoginItem {

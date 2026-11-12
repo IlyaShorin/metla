@@ -85,6 +85,9 @@ public final class AppModel {
     /// closed when the hotkey asked for it), not as a sheet.
     public var cleanupInWindow = false
 
+    /// The engine's count of ended full scans when the model last looked.
+    private var scansSeen: UInt64?
+
     private var pacer = RefreshPacer()
     private var listener: Task<Void, Never>?
     private var poller: Task<Void, Never>?
@@ -110,6 +113,8 @@ public final class AppModel {
         mainThread: MainThreadGuard = .standard, trash: any TrashHost = SystemTrash(),
         login: (any LoginItem)? = nil
     ) async {
+        // First: the first picture's gaps are told by it.
+        await access.check()
         do {
             let client = try await EngineClient.open(settings.options, trash: trash, mainThread: mainThread)
             self.client = client
@@ -194,6 +199,7 @@ public final class AppModel {
             if topics.contains(.settings) {
                 await hotkeys?.load()
             }
+            await probeAfterScan()
             if await endUserScanIfOver() {
                 // The profile was given back: read the engine again, so
                 // this refresh leaves the status and the snapshot saying so.
@@ -211,6 +217,20 @@ public final class AppModel {
         self.overview = overview
         freshness = overview.freshness
         largest = try await client.largestFolders(limit: Self.shownFolders)
+    }
+
+    /// Probes Full Disk Access again when a full scan has ended since the
+    /// model last looked: the picture's gaps are told by the access the
+    /// app has after it.
+    private func probeAfterScan() async {
+        guard let ended = freshness?.fullScansEnded else {
+            return
+        }
+        let seen = scansSeen
+        scansSeen = ended
+        if let seen, ended > seen {
+            await access.check()
+        }
     }
 
     private func refreshScreen(picture: Bool) async {
