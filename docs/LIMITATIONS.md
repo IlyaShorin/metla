@@ -6,10 +6,21 @@ the gates in [QUALITY.md](QUALITY.md).
 
 ## Distribution
 
-1. **Ad-hoc signed, not notarised, no hardened runtime.** There is no
-   Developer ID behind the app. A copy you build yourself opens normally;
-   a downloaded copy is quarantined and macOS asks you to allow it in
-   System Settings → Privacy & Security. There are no automatic updates.
+1. **No Developer ID, not notarised, no hardened runtime.** Releases up
+   to 0.7.2 are ad-hoc signed; later releases are signed with the
+   maintainer's Apple Development certificate and a secure timestamp. A
+   copy you build yourself is ad-hoc signed unless `METLA_SIGN_IDENTITY`
+   names a certificate of your keychain, and opens normally; a downloaded
+   copy is quarantined either way, and macOS asks you to allow it once in
+   System Settings → Privacy & Security. macOS ties Full Disk Access to
+   the signature: the grant survives an update from one certificate-signed
+   release to the next, and has to be given again after an update from
+   0.7.2 or earlier, after every ad-hoc build, and when switching between
+   a release and a copy built from source. The certificate is a
+   development one; it expires and is replaced about once a year. Not
+   checked: a certificate-signed build on a second Mac, and what becomes
+   of the grant when the certificate is replaced by a renewed one. There
+   are no automatic updates.
 2. **One architecture per build.** `build-app.sh` builds the Swift side
    for the machine it runs on, and the Rust library for the Rust targets
    installed (here only `aarch64-apple-darwin`). The release app made here

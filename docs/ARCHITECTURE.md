@@ -942,12 +942,16 @@ another user owns it stays `InspectionFailed` (a worktree) or
   macOS 14: `MetlaCoreFFI` (generated bindings and the C module),
   `MetlaKit` (engine client, view models, formatting, strings, launch
   settings; tested), `MetlaApp` (SwiftUI views, AppKit glue, `@main`).
-  `scripts/build-app.sh` lays out an ad-hoc signed `Metla.app` (no
+  `scripts/build-app.sh` lays out `Metla.app`, signed ad-hoc or with
+  `METLA_SIGN_IDENTITY`'s certificate and a secure timestamp (releases
+  after 0.7.2 with the maintainer's Apple Development certificate; the
+  script never prints the identity; either way no Developer ID, no
   hardened runtime, not notarised): `--release` with the production
   library, symbols stripped, Rust and Swift file paths mapped to neutral
   prefixes and no debug information, checked by
   `scripts/no-local-paths.sh` (no user name, home directory or
-  repository path in any Mach-O file of the bundle), and `Metla.zip`;
+  repository path in any Mach-O file of the bundle), and `Metla.zip`
+  with either signature;
   `--release --plain`, the same release app linked with the plain
   library, which cleans fixtures only and so may run on the real disk
   for measurements; `--debug`, the debug app (plain library).

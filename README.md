@@ -117,13 +117,16 @@ The bundles land under `target/app/`, built for the machine's own
 architecture. Every build links the core it has just built: the core
 carries a stamp (a hash of its sources), `build-app.sh` refuses to bundle
 an executable without it, and the app prints it in its first line on
-stderr (`metla 0.7.2, core <stamp>`). The release app is ad-hoc signed and not notarised: a copy
-you build yourself opens normally; a downloaded one is quarantined, and
-macOS lets you open it from System Settings → Privacy & Security → Open
-Anyway. Start a
-development build with `METLA_ROOT` pointing at a fixture (`run-app.sh`
-does); `scripts/run-scenarios.sh` drives the cleanup flows end to end.
-[CONTRIBUTING.md](CONTRIBUTING.md) has the gates and the development rules.
+stderr (`metla 0.7.2, core <stamp>`). A build is signed ad-hoc unless
+`METLA_SIGN_IDENTITY` names a certificate (see Full Disk Access below).
+Published releases up to 0.7.2 are ad-hoc signed; later ones are signed
+with the maintainer's Apple Development certificate. Neither kind is a
+Developer ID signature, and nothing is notarised: a copy you build
+yourself opens normally; a downloaded one is quarantined and has to be
+allowed once, in System Settings → Privacy & Security → Open Anyway.
+Start a development build with `METLA_ROOT` pointing at a fixture
+(`run-app.sh` does); `scripts/run-scenarios.sh` drives the cleanup flows
+end to end. [CONTRIBUTING.md](CONTRIBUTING.md) has the gates and the development rules.
 
 The icon is `app/Icon/AppIcon.icns`, committed; `scripts/make-icon.sh`
 draws it again from the shapes in `scripts/make-icon.swift`, every size
@@ -147,12 +150,22 @@ how many in a quiet line under the disk's legend instead of the partial
 banner, and nothing asks you to grant access for them. A picture made
 before you granted access is scanned again once, by itself.
 
-macOS ties the grant to the app's signature. A build ad-hoc signed (the
-default) is a new app to macOS after every rebuild, and the grant is
-lost; for your own installs, sign with a certificate of your keychain
-(`METLA_SIGN_IDENTITY=<identity> scripts/build-app.sh --release`) and
-the grant survives updates. Such a build makes no Metla.zip: keep it to
-yourself.
+macOS ties the grant to the app's signature. An ad-hoc signature changes
+with every build: each ad-hoc build is a new app to macOS, and the grant
+is lost. A certificate's signature does not change from one build to
+the next. Releases after 0.7.2 are signed with the maintainer's Apple
+Development certificate, with a secure timestamp: the grant survives an
+update from one of them to the next. Give it once more when you update
+from 0.7.2 or earlier, and when you switch between a release and a copy
+built from source. That certificate is a development one: it expires
+and is replaced about once a year, and what a renewed certificate does
+to the grant has not been checked.
+
+A build from source is ad-hoc signed. To keep the grant across your own
+rebuilds, sign with a certificate of your keychain
+(`METLA_SIGN_IDENTITY=<identity> scripts/build-app.sh --release`; the
+timestamp needs the network). The signature shows the certificate's
+name to anyone who inspects the app.
 
 ## Hotkeys
 
@@ -169,8 +182,9 @@ permission.
 ## Known limitations
 
 The full list, each with its consequence, is
-[docs/LIMITATIONS.md](docs/LIMITATIONS.md). In short: ad-hoc signed and
-not notarised; built for one architecture; freed space is measured, not promised
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md). In short: no Developer ID
+and not notarised (a downloaded copy has to be allowed once); built for
+one architecture; freed space is measured, not promised
 (APFS clones, snapshots and purgeable space); sizes are allocated-size
 estimates; the Swift half is not covered by the mutation and complexity
 tools; a real hotkey press, the login item and the Full Disk Access
