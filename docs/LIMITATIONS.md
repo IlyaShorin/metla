@@ -173,3 +173,14 @@ the gates in [QUALITY.md](QUALITY.md).
     volumes report one device, and the data volume's events come under
     their firmlinked paths, which a stream relative to a device would
     name otherwise.
+32. **A development build shares the installed app's bundle id**
+    (`org.metla.Metla`). Its own settings go to a suite of their own on
+    a fixture (`org.metla.Metla.dev`), and `run-app.sh` and
+    `run-scenarios.sh` start it with `-ApplePersistenceIgnoreState YES`,
+    so it neither reads nor writes the window state macOS restores for
+    that id. But what AppKit and SwiftUI keep in the id's own preferences
+    (window frames, the sidebar's width) is written there by every
+    development run, and a debug app started by hand without that
+    argument still reads and writes the installed app's window state: a
+    crash of such a run can leave the installed app's next launch at
+    macOS's "reopen windows?" question.

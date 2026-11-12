@@ -205,6 +205,46 @@ command. All on the RAM disk, the machine otherwise in ordinary use.
     survived, 0 uncovered, no timeout. The rest of the final gate's
     verdicts are carried over to 63b2f52 unchanged (no other source
     changed).
+  - The fresh-clone check (`scripts/fresh-clone-check.sh`) on b46d783
+    (01:20 to 01:50 on 2026-11-12; the clone on the SSD, `TMPDIR` on the
+    RAM disk, the screen locked) did not pass: build-core, build-debug
+    and relink passed, run-app (the capture) stopped at a Swift trap in
+    `Capture.composed`, the scenarios passed but quick-clean, which hung
+    until it was stopped after 28 minutes, and the last three steps were
+    not reached. It found three things. The capture took the first
+    visible window, which can be the status item's, whose number (2^32)
+    does not fit the window server's 32-bit id: 6224480 takes the main
+    window by its id and paints a window whose number is not a positive
+    32-bit id. The debug app has the installed app's bundle id, so its
+    runs read and wrote the window state macOS keeps for that id: after
+    the trap, launches of the id stopped at macOS's "quit unexpectedly
+    while reopening windows; reopen them?" alert, which comes before
+    AppKit finishes launching and before any of the app's code (its
+    window and text were read from inside the app); with the screen
+    locked nobody answered it, and a scenario hung with an empty log (by
+    02:42 the alert no longer came, though nobody had answered it; why
+    was not established). The scripts now start the app with
+    `-ApplePersistenceIgnoreState YES` (2ac670a) and stop a scenario
+    still running after 180 s, or a capture after 600 s, as a failure
+    (d90cce9). And the app started its engine from a view's `.task` and
+    opened no main window when the windows macOS restored did not include
+    it (after a run that ended abnormally with the main window closed, or
+    a quit with it closed and "Close windows when quitting" off): on a
+    copy of the debug app under a bundle id of its own, b46d783's build
+    then showed no window and 92aec8f's the main window. 92aec8f starts
+    the app from `applicationDidFinishLaunching` and ends a launch with
+    the main window open; it cannot get past the alert above.
+  - The fresh-clone check on d90cce9 (02:51 to 03:01, 600 s; the same
+    places, the screen locked): every step exit 0. build-core 53 s,
+    build-debug 18 s, relink 17 s, run-app 121 s (30 images, 0 failures,
+    painted in-process at 1x: the window server gives no image with the
+    screen locked), scenarios 18 s (30, 9, 19 and 12 checks),
+    build-release 31 s (0 strings with a local path), quality-swift 83 s
+    (0 diagnostics, 87 tests in 14 suites, MetlaKit 93.10 % of 2,319
+    lines), quality-tests 256 s (fmt, clippy, tests 74 + 439 + 23, the
+    slow group 1 + 12, stability 5 of 5 with 536 tests each). No Rust
+    source changed after 63b2f52: crapper, dryer and the mutator were not
+    run again, and the round's Rust verdicts carry over.
 * Verdicts not executed in either round are carried over from the
   runs above (the complete run at 88cd5b2 and the differential gates at
   0dc38a6 and 15027ac) for every function that did not change.
@@ -297,6 +337,9 @@ attention at opening): green, 0 diagnostics, 87 tests in 14 suites,
 every gated file at or above 85 %, MetlaKit 93.14 % of 2,319 lines. And at 63b2f52, the final commit
 (01:17 to 01:18 on 2026-11-12): green, 0 diagnostics, 87 tests in 14
 suites, every gated file at or above 85 %, MetlaKit 93.19 % of 2,319
+lines. And at d90cce9, after the capture, launch and script changes
+(02:49 to 02:51; MetlaKit unchanged): green, 0 diagnostics, 87 tests in
+14 suites, every gated file at or above 85 %, MetlaKit 93.10 % of 2,319
 lines.
 
 ## What no tool checks
