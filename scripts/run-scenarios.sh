@@ -11,7 +11,10 @@
 # window state macOS keeps for that id (a state left by a crash once held
 # every launch at the "reopen windows?" alert, which nobody answers here).
 #
-#   scripts/run-scenarios.sh [name ...]   default: all four
+#   scripts/run-scenarios.sh [name ...]   default: all five (update: the
+#                                         in-app update on fixture bundles
+#                                         in <fixture>-update; only the
+#                                         relaunch is observed as a request)
 #
 # Environment: METLA_BUILD as for build-app.sh (the debug bundle must be
 # built: scripts/build-app.sh --debug);
@@ -30,7 +33,7 @@ limit="${METLA_SCENARIO_LIMIT:-180}"
 cli="$repo/core/target/debug/metla-cli"
 
 names=("$@")
-[[ ${#names[@]} -gt 0 ]] || names=(default-clean selected-worktree cancel quick-clean)
+[[ ${#names[@]} -gt 0 ]] || names=(default-clean selected-worktree cancel quick-clean update)
 
 # Waits for the app (pid $2) and gives its exit status. macOS has no
 # timeout(1): after $1 seconds this stops the app (TERM, then KILL) and
@@ -54,7 +57,7 @@ stop_after() {
 failed=()
 for name in "${names[@]}"; do
     root="$work/$name"
-    rm -rf -- "$root" "$root-trash" "$root-data"
+    rm -rf -- "$root" "$root-trash" "$root-data" "$root-update"
     "$cli" fixture create "$root" >/dev/null || exit 2
     METLA_ROOT="$root" METLA_HOME="$root/home" METLA_DATA_DIR="$root-data" METLA_LANGUAGE=en \
         "$app" --scenario "$name" -ApplePersistenceIgnoreState YES >"$root.log" 2>&1 &

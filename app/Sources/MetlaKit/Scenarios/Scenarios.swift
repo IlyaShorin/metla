@@ -4,10 +4,11 @@ import MetlaCoreFFI
 /// End-to-end runs of the cleanup flows through the real view models on a
 /// fresh fixture (`--scenario <name>`): the UI-level proof that a flow
 /// removes exactly what was confirmed. Each run checks the fixture on
-/// disk afterwards and answers 0 when it is as expected.
+/// disk afterwards and answers 0 when it is as expected. `update` runs the
+/// in-app update on fixture bundles beside the root (`UpdateScenario`).
 @MainActor
 public enum Scenarios {
-    public nonisolated static let names = ["default-clean", "selected-worktree", "cancel", "quick-clean"]
+    public nonisolated static let names = ["default-clean", "selected-worktree", "cancel", "quick-clean", "update"]
 
     /// Runs `name` on the fixture `settings` names; 0 when the disk ends
     /// as expected, 1 when not, 2 when it cannot run.
@@ -30,6 +31,7 @@ public enum Scenarios {
         case "selected-worktree": await selectedWorktree(model, &check)
         case "cancel": await cancel(model, trash: trash, &check)
         case "quick-clean": await quickClean(model, &check)
+        case "update": await update(model, &check)
         default:
             print("scenario: no scenario \(name); there are \(names.joined(separator: ", "))")
             return 2
