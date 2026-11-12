@@ -1078,7 +1078,8 @@ item and the relaunch (`Updates`).
   into its place, the old one renamed back if that fails, and the
   workspace removed by the path the system gave. Nothing else on disk is
   touched. Then a shell waits for this process to end and opens the
-  bundle at the same path, and the app quits. Install starts only from
+  bundle at the same path, passing on the app's own `METLA_` variables
+  (`open --env`; a launch from the Dock has none), and the app quits. Install starts only from
   an offer of a copy that can replace itself and never while a cleanup
   runs (checked again before the swap); a check never disturbs an
   install under way, and Later hides the offer until a check finds it

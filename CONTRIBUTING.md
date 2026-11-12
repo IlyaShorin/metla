@@ -124,7 +124,9 @@ verifies against its own designated requirement, so only a copy signed
 with a certificate can install from it; an ad-hoc copy only links to the
 release page. A launch checks by itself only without `METLA_ROOT` (and
 never in a capture, a scenario or `--idle`); "Check Now" asks in any
-case. `scripts/run-scenarios.sh update` runs the whole install on fixture
+case. The relaunch after an install passes the app's own `METLA_`
+variables on (`open --env`), so a run on a fixture and a test feed goes
+on with them. `scripts/run-scenarios.sh update` runs the whole install on fixture
 bundles in `<fixture>-update`, with the relaunch recorded, not made.
 Never point a test feed at the copy in `/Applications`: use copies in a
 folder of your own.

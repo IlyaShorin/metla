@@ -189,27 +189,39 @@ public struct Installer: UpdateSteps {
 public enum Relaunch {
     /// Starts a shell, detached from this process's output, that waits
     /// until process `pid` has ended (at most `seconds`) and then runs
-    /// `opener` with `bundle`. The arguments are passed as arguments, never
-    /// put into the script.
+    /// `opener` with `--env NAME=value` for each of `environment` and then
+    /// `bundle`. The arguments are passed as arguments, never put into the
+    /// script.
     @discardableResult
-    public static func after(pid: Int32, open bundle: URL, opener: String = "/usr/bin/open", seconds: Int = 60) throws
-        -> Process
-    {
+    public static func after(
+        pid: Int32, open bundle: URL, environment: [String: String] = [:], opener: String = "/usr/bin/open",
+        seconds: Int = 60
+    ) throws -> Process {
         let script = """
-            tries=$(( $4 * 5 ))
-            while /bin/kill -0 "$1" 2>/dev/null && [ "$tries" -gt 0 ]; do
+            pid=$1 app=$2 opener=$3 tries=$(( $4 * 5 ))
+            shift 4
+            while /bin/kill -0 "$pid" 2>/dev/null && [ "$tries" -gt 0 ]; do
                 /bin/sleep 0.2
                 tries=$(( tries - 1 ))
             done
-            exec "$3" "$2"
+            exec "$opener" "$@" "$app"
             """
+        let carried = environment.sorted { $0.key < $1.key }.flatMap { ["--env", "\($0.key)=\($0.value)"] }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", script, "metla-relaunch", String(pid), bundle.path, opener, String(seconds)]
+        process.arguments = ["-c", script, "metla-relaunch", String(pid), bundle.path, opener, String(seconds)] + carried
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
         return process
+    }
+
+    /// What the new copy is started with: the app's own `METLA_`
+    /// variables, so that a run on a fixture or a test feed goes on with
+    /// them (`open` starts an app without the caller's environment). A
+    /// launch from the Dock or Finder has none.
+    public static func carried(_ environment: [String: String]) -> [String: String] {
+        environment.filter { $0.key.hasPrefix("METLA_") }
     }
 }

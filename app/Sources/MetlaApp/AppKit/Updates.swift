@@ -18,10 +18,12 @@ enum Updates {
     }
 
     /// Starts a helper that opens `bundle` once this process has ended,
-    /// then quits. When the helper cannot start, the app stays.
+    /// with this process's own `METLA_` variables, then quits. When the
+    /// helper cannot start, the app stays.
     static func relaunch(_ bundle: URL) {
         do {
-            try Relaunch.after(pid: getpid(), open: bundle)
+            let environment = Relaunch.carried(ProcessInfo.processInfo.environment)
+            try Relaunch.after(pid: getpid(), open: bundle, environment: environment)
         } catch {
             FileHandle.standardError.write(Data("update: installed, but the relaunch could not start: \(error)\n".utf8))
             return

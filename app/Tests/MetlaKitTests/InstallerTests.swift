@@ -267,6 +267,25 @@ import Testing
         gone.waitUntilExit()
         #expect(FileManager.default.fileExists(atPath: box("second").path), "at once for a process that has ended")
     }
+
+    /// The new copy gets the app's own `METLA_` variables as `open --env`
+    /// arguments before the bundle, and nothing else of the environment.
+    @Test func theRelaunchCarriesTheAppsOwnVariables() throws {
+        let box = Sandbox()
+        defer { box.remove() }
+        let opener = box("opener")
+        try Data("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(dirname \"$0\")/arguments\"\n".utf8).write(to: opener)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: opener.path)
+        let given = ["METLA_ROOT": "/fx", "HOME": "/h", "METLA_UPDATE_FEED": "file:///f/latest.json", "PATH": "/bin"]
+        let carried = Relaunch.carried(given)
+        #expect(carried == ["METLA_ROOT": "/fx", "METLA_UPDATE_FEED": "file:///f/latest.json"])
+        let helper = try Relaunch.after(pid: 999_999, open: box("Metla app"), environment: carried, opener: opener.path)
+        helper.waitUntilExit()
+        let arguments = try String(contentsOf: box("arguments"), encoding: .utf8).split(separator: "\n").map(String.init)
+        #expect(arguments == [
+            "--env", "METLA_ROOT=/fx", "--env", "METLA_UPDATE_FEED=file:///f/latest.json", box("Metla app").path,
+        ])
+    }
 }
 
 extension Release {

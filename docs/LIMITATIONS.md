@@ -254,7 +254,8 @@ the gates in [QUALITY.md](QUALITY.md).
       the app says on stderr where it is and keeps that folder.
     * After Install the app quits; a small shell started by it waits for
       the old process to end (at most 60 s) and opens the bundle at the
-      same path.
+      same path, with the app's own `METLA_` variables and nothing else
+      of its environment.
     * GitHub's API answers at most 60 unauthenticated requests an hour
       per address; past that a check fails with "GitHub answered with
       error 403" (silently, when it was automatic).

@@ -9,7 +9,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     enum Reply: Sendable {
         case answer(status: Int, body: Data)
         case redirect(to: String)
-        /// Declares `declared` bytes, sends `sent`, then loses the connection.
+        /// Declares `declared` bytes and ends after `sent`.
         case cut(sent: Data, declared: Int)
         case fail(URLError.Code)
     }
@@ -66,26 +66,13 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
                 headerFields: ["Content-Length": String(declared)])!
             client.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client.urlProtocol(self, didLoad: sent)
-            // The loss a moment later, on this loading thread's run loop: the
-            // bytes sent reach the delegate first.
-            let later = Later(protocol: self, client: client)
-            Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in later.fail() }
+            client.urlProtocolDidFinishLoading(self)
         case .fail(let code):
             client.urlProtocol(self, didFailWithError: URLError(code))
         }
     }
 
     override func stopLoading() {}
-
-    /// What the cut connection does once its bytes are out.
-    struct Later: @unchecked Sendable {
-        let `protocol`: URLProtocol
-        let client: any URLProtocolClient
-
-        func fail() {
-            client.urlProtocol(`protocol`, didFailWithError: URLError(.networkConnectionLost))
-        }
-    }
 }
 
 /// The transport and the feed client, against the stub or file URLs:
@@ -182,21 +169,43 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(request.allHTTPHeaderFields == ["User-Agent": "Metla/0.8.0", "Accept-Language": "en"])
     }
 
-    @Test func aDownloadCutShortOrTooLongFails() async {
-        StubProtocol.reply("https://cut.test/Metla.zip", .cut(sent: Data(count: 1000), declared: 5000))
+    @Test func aDownloadTooLongGoneOrOfflineFails() async {
         StubProtocol.reply("https://long.test/Metla.zip", .answer(status: 200, body: Data(count: 5001)))
         StubProtocol.reply("https://gone.test/Metla.zip", .answer(status: 404, body: Data()))
         StubProtocol.reply("https://down.test/Metla.zip", .fail(.networkConnectionLost))
         let box = Sandbox()
         defer { box.remove() }
         let cases: [(String, TransportFailure)] = [
-            ("https://cut.test/Metla.zip", .failed), ("https://long.test/Metla.zip", .tooLarge),
-            ("https://gone.test/Metla.zip", .status(404)), ("https://down.test/Metla.zip", .offline),
+            ("https://long.test/Metla.zip", .tooLarge), ("https://gone.test/Metla.zip", .status(404)),
+            ("https://down.test/Metla.zip", .offline),
         ]
         for (index, (url, failure)) in cases.enumerated() {
             await #expect(throws: failure, "\(url)") {
                 try await StubProtocol.transport().download(
                     URL(string: url)!, to: box("\(index).zip"), limit: 5000, headers: [:], progress: { _ in })
+            }
+        }
+    }
+
+    /// A download that ends before its declared size is refused as cut
+    /// short; one lost before any byte as no connection.
+    @Test func theInstallerRefusesADownloadCutShort() async throws {
+        StubProtocol.reply("https://short.test/Metla.zip", .cut(sent: Data(count: 1000), declared: 5000))
+        StubProtocol.reply("https://lost.test/Metla.zip", .fail(.networkConnectionLost))
+        let box = Sandbox()
+        defer { box.remove() }
+        let transport = StubProtocol.transport()
+        let received = try await transport.download(
+            URL(string: "https://short.test/Metla.zip")!, to: box("short.zip"), limit: 5000, headers: [:], progress: { _ in })
+        #expect(received == 1000)
+        let installer = Installer(requirement: "", transport: transport, version: "0.8.0", relaunch: { _ in })
+        for (url, failure) in [("https://short.test/Metla.zip", UpdateFailure.downloadFailed),
+                               ("https://lost.test/Metla.zip", .noConnection)] {
+            let release = Release(
+                version: Version("0.8.1")!, download: URL(string: url)!, size: 5000, digest: nil, notes: nil,
+                page: URL(string: "https://short.test/")!)
+            await #expect(throws: failure, "\(url)") {
+                try await installer.download(release, into: box.folder(UUID().uuidString), progress: { _ in })
             }
         }
     }
