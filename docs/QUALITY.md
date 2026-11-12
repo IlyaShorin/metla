@@ -468,6 +468,120 @@ check. On 2026-11-12, at 3c593f1, `TMPDIR` on the RAM disk:
 * Not done here: the release signed with the certificate (the
   maintainer signs it), and the release app started.
 
+**0.8.0** (the in-app update: the feed, the offer, the install and its
+trust rule; relink-check leaves the app on the real core). No Rust
+source changed (`git diff 6753090..HEAD -- core` is empty): the Rust
+mutation gate, crapper and dryer were not run again, and the Rust
+verdicts above carry over; those tools read Rust only and say nothing
+of the new Swift. On 2026-11-12, `TMPDIR` on the RAM disk, the build
+output on the SSD. The release build, the feed proof and the captures
+in English and Russian ran on the code before c0fdfe9 and f79081d,
+which change only the relaunch helper, its call and their tests; the
+fresh-clone check ran a capture, the scenarios and the release build
+again on 925199d.
+
+* `scripts/quality-swift.sh` on the code before c0fdfe9 and f79081d
+  (the two relaunch commits; 17:52:48 to 17:53:58, 70 s): green. 0
+  diagnostics; 165 tests in 24 suites; the floor now holds `Update/`
+  too: Transport 95.04 %, UpdateModel 98.73 %, Installer 98.60 %,
+  Signature 94.00 %, Release 97.89 %, Installation 98.46 %, with
+  Text/UpdateText 100 %, Scenarios/UpdateScenario 95.97 % and
+  Scenarios/BundleFixture 97.50 %; the lowest gated file FoldersModel
+  86.41 %; MetlaKit 94.49 % of 3,375 lines. On 925199d the gate ran
+  as a step of the fresh-clone check (below); the two relaunch commits'
+  update suites (69 tests) passed, the installer and transport suites
+  five times in a row, after the stub's cut-short case, flaky once
+  (a timer-sent loss overtook the bytes sent before it), was made to
+  end cleanly short of its declared size.
+* Each code commit from 0ef0139 to 57c71b7 was built in a scratch
+  worktree with 0 diagnostics and passed the update suites it had;
+  c0fdfe9 and f79081d were built and tested as they were made.
+* Real signatures, on tiny bundles made from a copy of `/usr/bin/true`
+  and signed with `codesign --sign -` in sandboxes the tests remove
+  (no keychain identity): a bundle passes its own designated
+  requirement; a changed Info.plist, executable or an added file
+  fails; another bundle fails the first one's requirement; identifier
+  requirements pass and fail; an Apple-signed tool is not ad-hoc. The
+  0.8.0 release's `Metla.zip`, unpacked with ditto, passes the
+  installer's flags against its own requirement.
+* The swap on sandboxes: the new bundle in place with the sandbox
+  otherwise unchanged and the workspace gone; the old one back when the
+  second rename fails; an old one that cannot go back kept in the
+  workspace; a folder of mode 555 refusing; the system's replacement
+  directory on the bundle's volume, and removed.
+* No test touches the network: a stub URLProtocol and file URLs. The
+  headers were seen once against a listener on 127.0.0.1 (a session
+  with the app's configuration adds Cache-Control, Accept-Encoding,
+  Connection and the user's Accept-Language, which the transport now
+  replaces with `en`); one read-only request of `releases/latest` gave
+  the fixture's shape. No run of the app here asked GitHub: captures
+  and scenarios never check, and every other launch had `METLA_ROOT`.
+* `--scenario update` (`scripts/run-scenarios.sh`, the debug app):
+  13 checks passed. For real: the ad-hoc copy's own eligibility (link
+  only), the feed and the download from file URLs through the app's
+  transport, size and SHA-256, ditto, the signature, the Info.plist,
+  the swap by rename in the system's replacement directory (under the
+  user's TemporaryItems), its removal, and a tampered 0.8.2 refused as
+  not signed. Observed only: the relaunch, recorded as a request (the
+  helper itself is tested apart: it waits for a process to end, opens
+  nothing when it does not, and passes the app's `METLA_` variables).
+  Stand-ins: the copy is treated as able to replace itself, and the
+  requirement is the new build's own.
+* The production flavour: the release app (`core
+  62f142ca7975e910-production`) started on a fixture with
+  `METLA_UPDATE_FEED` set says `update: feed
+  https://api.github.com/repos/IlyaShorin/metla/releases/latest (fixed
+  in this build; METLA_UPDATE_FEED ignored)`; the debug app (`-plain`)
+  says it reads the variable. SourceTests and UpdateWiringTests pin
+  both, and that the app's installer gets the app's own requirement.
+* Swift has no mutator: each trust check was mutated by hand, one at a
+  time, against the update suites, and restored. 17 sites: the
+  requirement left out of the validity check, the signature check
+  removed, the identifier, the version against the offer, the version
+  against the running one, the build number, a build with a sign read
+  as a number, other top-level entries, a link taken for a directory,
+  the download's scheme, redirects to any scheme, the SHA-256, a
+  malformed digest taken as none, more bytes than declared, the cleanup
+  check before the swap, an ad-hoc copy allowed to install, the test
+  feed read by a production build. All 17 killed; one (a build `+12`
+  read as 12) first survived, and a test case was added for it.
+* `scripts/build-app.sh --release`: 0.8.0 (11), signed ad-hoc,
+  `Metla.zip` beside it, no symbolic link in the bundle, 0 strings with
+  a local path.
+* The capture, in English and in Russian: 50 images each, 0 failures,
+  painted in-process (the window server gave blank images in this
+  session; the menu-bar panel with an offer was drawn from its view).
+  The update's strip in each state, the main window with an offer, the
+  panel's line and Settings → General were looked at; two fixes came
+  of it (Settings → General overflowed its 500-point window: 620
+  points and one row for the version and the last check; the Russian
+  strip stacked its three buttons: the button now stands above its two
+  links).
+* The fresh-clone check on 925199d, the final commit (18:24 to 18:34,
+  580 s; the clone and its build output on the SSD): every step exit 0.
+  build-core 48 s, build-debug 18 s, relink 23 s
+  ("62f142ca7975e910-plain -> b84a070533479ffd-plain, and is left
+  linked with the restored one (62f142ca7975e910-plain)"), run-app
+  109 s (50 images, 0 failures),
+  scenarios 22 s (30, 9, 19, 12 and 13 checks), stamps 0 s ("metla
+  0.8.0, core 62f142ca7975e910-plain (each of 6 runs: this clone's
+  core)": the capture and the scenarios now run the app linked with
+  the clone's own core, not relink-check's), build-release 32 s (0
+  strings with a local path, signed ad-hoc), quality-swift 84 s (0
+  diagnostics, 168 tests in 24 suites, the update's files as above with
+  Installer 98.68 %, MetlaKit 94.56 % of 3,384 lines), quality-tests
+  241 s (fmt, clippy, tests 74 + 439 + 23, the slow group 1 + 12,
+  stability 5 of 5 with 536 tests each). The same steps had passed on
+  the code before the two relaunch commits.
+* Not checked: an update between two certificate-signed builds (the
+  maintainer's test, with a test feed: CONTRIBUTING), a real download
+  from GitHub (possible once a release after 0.8.0 exists), the
+  relaunch itself and that exactly one instance then runs with its
+  window, the Full Disk Access grant kept after an update, a
+  translocated copy and a read-only volume (their order is tested, not
+  a real case), the automatic check at a real launch, the "Check for
+  Updates…" menu item and the pages opened in the browser.
+
 ## What no tool checks
 
 * **The SwiftUI views and their layout.** `MetlaApp` has no unit tests
@@ -493,6 +607,13 @@ check. On 2026-11-12, at 3c593f1, `TMPDIR` on the RAM disk:
   power table is tested), the `SMAppService` login item (its error is
   shown; starting at login was not observed), the system Trash host
   (tested only refusing a missing path), the Full Disk Access deep link.
+* **The update's AppKit side.** `Updates.make` (which hands the
+  bundle, the core's stamp and the running app's signature to the
+  tested `UpdateModel.app`), the relaunch's `NSApp.terminate`, the
+  "Check for Updates…" menu item, the pages opened with `NSWorkspace`,
+  and the daily schedule started at a real launch have no test. The
+  views are seen in the captures; every decision and step under them
+  is in MetlaKit, gated.
 * **Swift duplication, complexity and mutation.** crapper, dryer and
   mutator read Rust only; there is no such measure for Swift.
 * **The architecture of the Swift side.** `scripts/architecture.sh`
