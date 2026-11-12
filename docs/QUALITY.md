@@ -398,6 +398,43 @@ the RAM disk, the screen locked from 12:30:
   listed that folder or not); the new views were drawn once by a capture
   changed for the purpose and not kept.
 
+**Signing after 0.7.2** (releases are signed with the maintainer's
+Apple Development certificate and a secure timestamp; a build without
+`METLA_SIGN_IDENTITY` stays ad-hoc; a release build makes `Metla.zip`
+either way). Only `scripts/build-app.sh` and the documents changed: no
+Rust or Swift source, so neither gate nor the mutator was run for it,
+and the verdicts above carry over. On 2026-11-12, `TMPDIR` on the RAM
+disk, the script as committed in 37fd593:
+
+* `bash -n scripts/build-app.sh`: exit 0. shellcheck is not installed
+  here, and no script of the repository runs it.
+* `scripts/build-app.sh --release` without the variable (27 s, the
+  Swift build in an empty build directory): exit 0, "signed ad-hoc".
+  `Metla.zip` beside the bundle, unpacked with `ditto -x -k`: `codesign
+  -dv` says `Signature=adhoc`, `codesign --verify --strict --deep`
+  passes, version 0.7.2.
+* The same with `METLA_SIGN_IDENTITY` naming an identity that does not
+  exist (6 s): exit 1, "codesign failed with METLA_SIGN_IDENTITY (...):
+  not signed, no Metla.zip". The zip of the build before is gone; the
+  bundle stays, without a seal (`codesign --verify` refuses it). The
+  name is in none of the output's lines: codesign's own line, which
+  holds it ("no identity found"), was dropped.
+* The fresh-clone check on 1dc86dc, the documents' commit (15:27 to
+  15:36, 530 s; the clone on the SSD, `TMPDIR` on the RAM disk): every
+  step exit 0. build-core 54 s, build-debug 17 s, relink 16 s, run-app
+  72 s (30 images, 0 failures), scenarios 16 s (30, 9, 19 and 12
+  checks), build-release 32 s ("signed ad-hoc", 0 strings with a local
+  path; its `Metla.zip` unpacked: `Signature=adhoc`), quality-swift
+  78 s (0 diagnostics, 100 tests in 14 suites, MetlaKit 93.51 % of
+  2,405 lines), quality-tests 242 s (fmt, clippy, tests 74 + 439 + 23,
+  the slow group 1 + 12, stability 5 of 5 with 536 tests each).
+* Not checked: signing with a real certificate (the timestamp, the zip
+  of such a bundle and its signature after unpacking, a downloaded
+  copy under Gatekeeper), that the Full Disk Access grant survives an
+  update between two certificate-signed builds, a certificate-signed
+  build on a second Mac, and the grant after the certificate is
+  replaced by a renewed one.
+
 ## What no tool checks
 
 * **The SwiftUI views and their layout.** `MetlaApp` has no unit tests
