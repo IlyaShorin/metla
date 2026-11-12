@@ -27,6 +27,10 @@ struct MetlaApp: App {
         }
         .defaultSize(width: 1120, height: 720)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button(model.strings.text("update.menu")) { bridge.checkForUpdates() }
+                    .disabled(model.update == nil)
+            }
             CommandGroup(after: .toolbar) {
                 Button(model.strings.text("toolbar.refresh")) {
                     Task { await model.rescan() }

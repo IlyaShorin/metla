@@ -45,6 +45,7 @@ final class Bridge {
         launched = true
         LaunchTiming.identify()
         let settings = model.settings
+        let update = Updates.make(model)
         if let scenario = settings.scenario {
             let code = await Scenarios.run(scenario, settings: settings, strings: model.strings)
             fflush(stdout)
@@ -63,6 +64,12 @@ final class Bridge {
             // Not NSApp.terminate: with the capture's report sheet up,
             // SwiftUI leaves the app running.
             exit(Capture.failures.isEmpty ? 0 : 1)
+        }
+        if let update {
+            model.attachUpdates(update)
+            if settings.checksForUpdates {
+                Task { await update.follow() }
+            }
         }
         if settings.menuBarOnly {
             NSApp.windows.first { $0.identifier?.rawValue == "main" }?.close()
@@ -89,6 +96,14 @@ final class Bridge {
             Task { await self?.model.powerChanged(state) }
         }
         power?.tell()
+    }
+
+    /// "Check for Updates…": checks now and shows Settings → General,
+    /// where the answer appears.
+    func checkForUpdates() {
+        NSApp.activate()
+        Task { await showSettings(.general) }
+        Task { await model.update?.check(manual: true) }
     }
 
     /// The app became active: Full Disk Access may have changed meanwhile

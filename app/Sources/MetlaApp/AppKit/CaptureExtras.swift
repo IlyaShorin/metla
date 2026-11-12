@@ -106,7 +106,7 @@ enum CaptureExtras {
     /// paints the window that opens. 0 when there is no status item or no
     /// panel opened; the capture then draws the panel's view in a window
     /// of its own.
-    static func drawMenuBar(into directory: String) async -> Int {
+    static func drawMenuBar(into directory: String, name: String = "menubar") async -> Int {
         let bar = NSApp.windows.first { NSStringFromClass(type(of: $0)).contains("StatusBarWindow") }
         guard let button = bar.flatMap({ statusButton(in: $0.contentView) }) else {
             FileHandle.standardError.write(Data("capture: no status item button\n".utf8))
@@ -140,7 +140,7 @@ enum CaptureExtras {
                 NSApp.appearance = nil
                 return 0
             }
-            let file = (directory as NSString).appendingPathComponent("menubar-\(suffix).png")
+            let file = (directory as NSString).appendingPathComponent("\(name)-\(suffix).png")
             if let png = await Capture.png(of: panel, appearance), (try? png.write(to: URL(fileURLWithPath: file))) != nil {
                 written += 1
             }
@@ -164,12 +164,13 @@ enum CaptureExtras {
     /// toolbar included (a copy of its view in a window of its own drew
     /// the first row under the window's top edge).
     static func drawSettings(
-        _ open: @MainActor (SettingsTab) async -> NSWindow?, into directory: String
+        _ open: @MainActor (SettingsTab) async -> NSWindow?, into directory: String,
+        tabs: [(String, SettingsTab)] = [("general", .general), ("hotkeys", .hotkeys), ("exclusions", .exclusions),
+                                         ("access", .access)]
     ) async -> Int {
         var written = 0
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
-            for (name, tab) in [("general", SettingsTab.general), ("hotkeys", .hotkeys),
-                                ("exclusions", .exclusions), ("access", .access)] {
+            for (name, tab) in tabs {
                 guard let window = await open(tab) else {
                     continue
                 }

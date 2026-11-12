@@ -8,7 +8,8 @@ import SwiftUI
 
 /// `--capture <dir>`: renders each main screen of the real window, light
 /// and dark, to PNG files, from a fixture engine, then every M6 screen
-/// (`CaptureExtras`), then the app quits.
+/// (`CaptureExtras`), the long report (`CaptureReport`) and the update's
+/// states (`CaptureUpdate`), then the app quits.
 ///
 /// The debug build takes each picture from the window server: the
 /// image of one of the app's own windows, which needs no screen-recording
@@ -101,7 +102,8 @@ enum Capture {
         }
         NSApp.appearance = nil
         written += await CaptureExtras.run(model, into: directory, settings: settings)
-        return written + (await CaptureReport.run(model, window: window, into: directory))
+        written += await CaptureReport.run(model, window: window, into: directory)
+        return written + (await CaptureUpdate.run(model, window: window, into: directory, settings: settings))
     }
 
     /// Switches the app to `name` and waits until the window has it.

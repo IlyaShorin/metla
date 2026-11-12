@@ -3,7 +3,8 @@ import MetlaKit
 import SwiftUI
 
 /// Disk (Overview, Folders) and the categories with their sizes, dimmed
-/// when there is nothing to clean.
+/// when there is nothing to clean; at the bottom, on every screen, the
+/// update's strip while there is an offer.
 struct SidebarView: View {
     @Bindable var model: AppModel
 
@@ -37,6 +38,13 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom) {
+            if let update = model.update, update.offer != nil {
+                UpdateStrip(update: update, strings: model.strings)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+            }
+        }
     }
 
     private var selection: Binding<Screen?> {

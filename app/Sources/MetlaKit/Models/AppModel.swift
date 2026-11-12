@@ -65,6 +65,8 @@ public final class AppModel {
     public private(set) var exclusions: ExclusionsModel?
     public let access: AccessModel
     public private(set) var hotkeys: HotkeysModel?
+    /// The in-app update, once the app has attached it (`attachUpdates`).
+    public private(set) var update: UpdateModel?
     /// Candidates added from Folders (⌘⌫) to the cleanup selection.
     public private(set) var added: Set<DirId> = []
     /// The last cleanup's report, kept by the engine across launches:
@@ -193,6 +195,11 @@ public final class AppModel {
         hotkeys = model
         await model.load()
         model.registerAll()
+    }
+
+    /// The in-app update the app made for its own copy.
+    public func attachUpdates(_ update: UpdateModel) {
+        self.update = update
     }
 
     /// Stops following the engine; the client goes with the model.

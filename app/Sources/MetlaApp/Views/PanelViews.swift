@@ -110,6 +110,9 @@ struct MenuBarPanel: View {
                 Button(strings.text("menubar.refresh"), action: actions.refresh)
             }
             Divider()
+            if let update = model.update, update.offer != nil {
+                UpdateLine(update: update, strings: strings)
+            }
             Text(summary?.status ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(2)
             Toggle(strings.text("menubar.background"), isOn: Binding(
                 get: { model.overview?.profile != .off },
@@ -156,7 +159,7 @@ struct SettingsView: View {
         TabView(selection: $chosen) {
             Group {
                 if let general = model.general {
-                    GeneralPane(general: general, strings: model.strings)
+                    GeneralPane(general: general, update: model.update, strings: model.strings)
                 }
             }
             .tabItem { Label(model.strings.text("settings.general"), systemImage: "gearshape") }
@@ -179,9 +182,10 @@ struct SettingsView: View {
                 .tabItem { Label(model.strings.text("settings.access"), systemImage: "lock.shield") }
                 .tag(SettingsTab.access)
         }
-        // Tall enough for the longest tab (Hotkeys, in Russian) without
-        // scrolling; the window keeps one size across the tabs.
-        .frame(width: 560, height: 500)
+        // Tall enough for the longest tab (General with an update offered,
+        // in Russian) without scrolling; the window keeps one size across
+        // the tabs.
+        .frame(width: 560, height: 620)
         .task {
             await model.general?.load()
             await model.exclusions?.load()
@@ -196,34 +200,46 @@ enum SettingsTab: Hashable, CaseIterable {
 
 struct GeneralPane: View {
     let general: GeneralModel
+    let update: UpdateModel?
     let strings: Strings
 
     var body: some View {
         Form {
-            Toggle(isOn: Binding(get: { general.settings?.background ?? true },
-                                 set: { on in Task { await general.setBackground(on) } })) {
-                Titled(strings.text("general.background"), note: strings.text("general.backgroundNote"))
+            Section {
+                rows
             }
-            Toggle(strings.text("general.battery"), isOn: Binding(
-                get: { general.settings?.reduceOnBattery ?? true },
-                set: { on in Task { await general.setReduceOnBattery(on) } }))
-            Toggle(strings.text("general.login"), isOn: Binding(
-                get: { general.launchAtLogin }, set: { general.setLaunchAtLogin($0) }))
-            if let failure = general.loginFailure {
-                Text(failure).font(.caption).foregroundStyle(.red)
-            }
-            DaysField(title: strings.text("general.stale"), value: strings.format("general.days", general.staleDays)) { step in
-                Task { await general.setStaleDays(general.staleDays + step) }
-            }
-            DaysField(title: strings.text("general.recent"), value: strings.format("general.days", general.recentDays)) { step in
-                Task { await general.setRecentDays(general.recentDays + step) }
-            }
-            Toggle(isOn: Binding(get: { general.showInMenuBar }, set: { general.setShowInMenuBar($0) })) {
-                Titled(strings.text("general.menuBar"), note: strings.text("general.menuBarNote"))
+            if let update {
+                UpdatesSection(update: update, strings: strings)
             }
         }
         .formStyle(.grouped)
         .toggleStyle(.symbolCheckbox)
+    }
+
+    /// What the app and the engine keep: analysis, battery, login, the two
+    /// ages, the menu bar.
+    @ViewBuilder private var rows: some View {
+        Toggle(isOn: Binding(get: { general.settings?.background ?? true },
+                             set: { on in Task { await general.setBackground(on) } })) {
+            Titled(strings.text("general.background"), note: strings.text("general.backgroundNote"))
+        }
+        Toggle(strings.text("general.battery"), isOn: Binding(
+            get: { general.settings?.reduceOnBattery ?? true },
+            set: { on in Task { await general.setReduceOnBattery(on) } }))
+        Toggle(strings.text("general.login"), isOn: Binding(
+            get: { general.launchAtLogin }, set: { general.setLaunchAtLogin($0) }))
+        if let failure = general.loginFailure {
+            Text(failure).font(.caption).foregroundStyle(.red)
+        }
+        DaysField(title: strings.text("general.stale"), value: strings.format("general.days", general.staleDays)) { step in
+            Task { await general.setStaleDays(general.staleDays + step) }
+        }
+        DaysField(title: strings.text("general.recent"), value: strings.format("general.days", general.recentDays)) { step in
+            Task { await general.setRecentDays(general.recentDays + step) }
+        }
+        Toggle(isOn: Binding(get: { general.showInMenuBar }, set: { general.setShowInMenuBar($0) })) {
+            Titled(strings.text("general.menuBar"), note: strings.text("general.menuBarNote"))
+        }
     }
 }
 
