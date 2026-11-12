@@ -82,6 +82,26 @@
 			<string>Удалено частично: осталось %d элемента</string>
 		</dict>
 	</dict>
+	<key>overview.closed</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@folders@</string>
+		<key>folders</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>%d системные папки закрыты для всех приложений и не учтены.</string>
+			<key>many</key>
+			<string>%d системных папок закрыты для всех приложений и не учтены.</string>
+			<key>one</key>
+			<string>%d системная папка закрыта для всех приложений и не учтена.</string>
+			<key>other</key>
+			<string>%d системной папки закрыты для всех приложений и не учтены.</string>
+		</dict>
+	</dict>
 	<key>overview.partialDenied</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -120,6 +140,26 @@
 			<string>Ещё %d папку не удалось прочитать.</string>
 			<key>other</key>
 			<string>Ещё %d папки не удалось прочитать.</string>
+		</dict>
+	</dict>
+	<key>overview.unread</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@folders@</string>
+		<key>folders</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>few</key>
+			<string>%d папки не удалось прочитать.</string>
+			<key>many</key>
+			<string>%d папок не удалось прочитать.</string>
+			<key>one</key>
+			<string>%d папку не удалось прочитать.</string>
+			<key>other</key>
+			<string>%d папки не удалось прочитать.</string>
 		</dict>
 	</dict>
 	<key>preview.action</key>

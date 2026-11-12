@@ -982,7 +982,10 @@ another user owns it stays `InspectionFailed` (a worktree) or
   The Settings scene: General, Hotkeys, Exclusions (with what each
   hides, `hidden_by`), Access. Full Disk Access is probed by listing a
   few protected directories (granted, not granted, unknown), never
-  assumed and never worked around; the first-run sheet shows once.
+  assumed and never worked around: when the model starts, whenever the
+  app becomes active and after a full scan ends. With access granted,
+  denied gaps are *closed folders* (closed to every app): the Overview
+  and the status do not warn of them; the first-run sheet shows once.
 * **Power.** `PowerMonitor` (IOKit power-source notifications, Low
   Power Mode, thermal state; no timers) feeds `PowerState.profile`, a
   pure table, whose answer the app hands to `set_power_profile`; a scan

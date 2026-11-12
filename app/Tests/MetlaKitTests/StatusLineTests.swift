@@ -67,6 +67,16 @@ import Testing
         #expect(line(never).text == "Never scanned")
     }
 
+    /// With Full Disk Access, a picture whose only gaps are folders closed
+    /// to every app is not marked partial: nothing the user does changes it.
+    @Test func aPictureMissingOnlyFoldersClosedToEveryAppIsNotMarkedPartial() {
+        let closed = StatusLine.of(freshness(.idle, picture: .partial), expected: nil, now: now, english, closedOnly: true)
+        #expect(closed == StatusLine(text: "Updated 2 min. ago", tone: .current, canStop: false))
+        let outdated = StatusLine.of(
+            freshness(.idle, picture: .partial, needsFullScan: true), expected: nil, now: now, english, closedOnly: true)
+        #expect(outdated == StatusLine(text: "Updated 2 min. ago · needs a full scan", tone: .stale, canStop: false))
+    }
+
     @Test func russianReadsAsWell() {
         let russian = Strings(language: "ru", region: "RU")
         let progress = ProgressSnapshot(dirs: 10, files: 1_900_000, bytes: 610, denied: 0)

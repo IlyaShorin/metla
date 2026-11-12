@@ -246,12 +246,15 @@
 "access.why" = "Without it, macOS keeps Mail, Safari, Messages and other apps' data from Metla: those folders are skipped and the analysis is marked partial.";
 "access.open" = "Open System Settings";
 "access.recheck" = "Check Again";
+"access.closed" = "Metla sees everything an app may see. Some system folders stay closed to every app, even with Full Disk Access: they are skipped and not counted.";
 "access.restart" = "After granting access, Metla may need to be quit and opened again.";
 "access.never" = "Metla never asks for root and does not work around the system's privacy rules.";
 "firstrun.title" = "Welcome to Metla";
 "firstrun.what" = "Metla finds what can be cleaned safely: caches, build output, logs, the Trash and old Git worktrees. Nothing is removed without your say.";
 "firstrun.metadata" = "It reads only names and sizes, never what your files contain.";
-"firstrun.fda" = "With Full Disk Access it sees the whole disk; without it, protected folders are skipped and the picture is partial.";
+"firstrun.fda" = "With Full Disk Access it sees everything an app may see; without it, protected folders are skipped and the picture is partial.";
+"firstrun.granted" = "Full Disk Access is granted: Metla sees everything an app may see. Some system folders stay closed to every app and are not counted.";
+"firstrun.continue" = "Continue";
 "firstrun.open" = "Open System Settings";
 "firstrun.skip" = "Scan Without It";
 "menu.addToCleanup" = "Add to Cleanup";

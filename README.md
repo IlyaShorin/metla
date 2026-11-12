@@ -134,9 +134,17 @@ at its own pixels, after a change to the drawing.
 Without it macOS keeps Mail, Messages, Safari and other apps' data from
 any app, Metla included: those folders are skipped and counted, and the
 picture is marked partial. Settings → Access shows what Metla sees (it
-checks by listing a few protected folders), opens the right System
+checks by listing a few protected folders: at launch, whenever the app
+becomes active, and after each full scan), opens the right System
 Settings pane, and checks again. Metla may need a restart after access is
 granted.
+
+Some system folders stay closed even with Full Disk Access: those only
+root may read (mode 700) and those the system itself protects (such as
+Spotlight's index and data vaults). No app can read them whatever the
+setting, so they are not counted. With access granted, the Overview says
+how many in a quiet line under the disk's legend instead of the partial
+banner, and nothing asks you to grant access for them.
 
 macOS ties the grant to the app's signature. A build ad-hoc signed (the
 default) is a new app to macOS after every rebuild, and the grant is

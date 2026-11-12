@@ -12,7 +12,10 @@ import Testing
     /// Every category found, and what cleaning the preselected ones does:
     /// some build output is not preselected, the Trash's contents are
     /// deleted, logs go to the Trash, worktrees are never preselected.
-    func overview(state: EngineState = .idle, picture: Completeness = .complete, volume: VolumeSpace? = VolumeSpace(total: 1000, available: 50)) -> Overview {
+    func overview(
+        state: EngineState = .idle, picture: Completeness = .complete, volume: VolumeSpace? = VolumeSpace(total: 1000, available: 50),
+        gaps: [GapCount] = [GapCount(kind: .denied, count: 2), GapCount(kind: .failed, count: 1)]
+    ) -> Overview {
         let found: [(MetlaKit.Category, Disposal, UInt64)] = [
             (.appCache, .deletePermanently, 100), (.devCache, .deletePermanently, 200),
             (.buildArtifact, .deletePermanently, 400), (.log, .moveToTrash, 10),
@@ -34,9 +37,7 @@ import Testing
                 owned: $0.0 == .buildArtifact ? $0.2 - 100 : $0.2)
         }
         let kinds = [KindBytes(kind: .media, bytes: 300), KindBytes(kind: .other, bytes: 100)]
-        let coverage = CoverageSummary(
-            gaps: [GapCount(kind: .denied, count: 2), GapCount(kind: .failed, count: 1)],
-            skips: [], shallowest: [])
+        let coverage = CoverageSummary(gaps: gaps, skips: [], shallowest: [])
         let freshness = Freshness(fullScan: 1, updated: 2, pending: 0, state: state, picture: picture, watching: true, needsFullScan: false, fullScansEnded: 1, scanReason: nil)
         return Overview(
             root: "/", volume: volume, totals: nil, categories: tallies,
@@ -44,8 +45,11 @@ import Testing
             kinds: kinds, coverage: coverage, freshness: freshness, profile: .background)
     }
 
-    func make(_ overview: Overview, volume: VolumeInfo? = nil, largest: [TopFolder] = [], home: String = "/") -> OverviewData {
-        OverviewData.make(overview, largest: largest, volume: volume ?? volumeRoot, home: home, names)
+    func make(
+        _ overview: Overview, volume: VolumeInfo? = nil, largest: [TopFolder] = [], home: String = "/",
+        access: FullDiskAccess = .notGranted
+    ) -> OverviewData {
+        OverviewData.make(overview, largest: largest, volume: volume ?? volumeRoot, home: home, access: access, names)
     }
 
     @Test func aVolumeRootStacksCategoriesOtherDataAndFree() throws {
@@ -74,7 +78,7 @@ import Testing
                                       "Other data in this folder", "Outside this folder", "Free"])
         #expect(segments.map(\.1) == [100, 200, 300, 140, 160, 50, 50], "outside: used 950 minus the folder's 900")
         #expect(segments.prefix(5).map(\.1).reduce(0, +) == 900, "the folder's segments add up to its size")
-        let russian = OverviewData.make(analysed, largest: [], volume: folder, home: "/Users/u", Names(Strings(language: "ru", region: "RU"), titles: []))
+        let russian = OverviewData.make(analysed, largest: [], volume: folder, home: "/Users/u", access: .unknown, Names(Strings(language: "ru", region: "RU"), titles: []))
         #expect(russian.disk?.segments[5].name == "Вне этой папки")
         let unscanned = try #require(make(overview(), volume: folder).disk)
         #expect(unscanned.analysed == 0 && unscanned.segments[5].bytes == 950, "nothing analysed yet: all used space is outside")
@@ -103,19 +107,57 @@ import Testing
         #expect(data.largest.map(\.share) == [1, 0.5])
     }
 
-    @Test func aPartialPictureHasABannerAndARunningScanSaysScanning() {
-        let partial = make(overview(picture: .partial))
-        #expect(partial.banner == .partial(denied: 2, missing: 1))
-        #expect(!partial.growing)
+    static let everyAccess: [FullDiskAccess] = [.granted, .notGranted, .unknown]
+
+    @Test func aRunningScanSaysScanningWhateverTheAccess() {
         let progress = ProgressSnapshot(dirs: 1, files: 1, bytes: 1, denied: 0)
-        let first = make(overview(state: .scanning(progress: progress, interactive: false), picture: .missing))
-        #expect(first.banner == .scanning)
-        #expect(first.growing, "totals still growing")
-        for picture in [Completeness.partial, .complete] {
-            let again = make(overview(state: .scanning(progress: progress, interactive: false), picture: picture))
-            #expect(again.banner == .refreshing, "a scan that runs is not shown as partial")
-            #expect(!again.growing, "the last picture's totals stay as they are")
+        for access in Self.everyAccess {
+            let first = make(overview(state: .scanning(progress: progress, interactive: false), picture: .missing), access: access)
+            #expect(first.notice == .banner(.scanning))
+            #expect(first.growing, "totals still growing")
+            for picture in [Completeness.partial, .complete] {
+                let again = make(overview(state: .scanning(progress: progress, interactive: false), picture: picture), access: access)
+                #expect(again.notice == .banner(.refreshing), "a scan that runs is not shown as partial")
+                #expect(!again.growing, "the last picture's totals stay as they are")
+            }
+            #expect(make(overview(), access: access).notice == nil, "a complete picture has nothing to say")
         }
-        #expect(make(overview()).banner == nil)
+    }
+
+    /// Without Full Disk Access, or when it cannot be told, the banner
+    /// warns and offers the access settings.
+    @Test func withoutFullDiskAccessAPartialPictureHasTheBannerThatAsksForIt() {
+        for access in [FullDiskAccess.notGranted, .unknown] {
+            let partial = make(overview(picture: .partial), access: access)
+            #expect(partial.notice == .banner(.partial(denied: 2, missing: 1)))
+            #expect(partial.banner == .partial(denied: 2, missing: 1) && partial.closed == nil)
+            #expect(!partial.growing)
+            let deniedOnly = make(overview(picture: .partial, gaps: [GapCount(kind: .denied, count: 279)]), access: access)
+            #expect(deniedOnly.banner == .partial(denied: 279, missing: 0))
+        }
+    }
+
+    /// With Full Disk Access the folders still denied are closed to every
+    /// app: a quiet line of the disk card says how many, no banner.
+    @Test func withFullDiskAccessFoldersStillDeniedAreClosedToEveryAppAndRaiseNoBanner() {
+        let gaps = [GapCount(kind: .denied, count: 279), GapCount(kind: .failed, count: 0),
+                    GapCount(kind: .vanished, count: 0), GapCount(kind: .cancelled, count: 0)]
+        let data = make(overview(picture: .partial, gaps: gaps), access: .granted)
+        #expect(data.notice == .closed(279))
+        #expect(data.banner == nil, "nothing to warn of: access cannot open them")
+        #expect(data.closed == 279)
+    }
+
+    /// With Full Disk Access, folders not read for another reason keep a
+    /// banner, which counts the closed ones apart and does not ask for
+    /// access.
+    @Test func withFullDiskAccessOtherGapsKeepABannerThatDoesNotAskForAccess() {
+        let data = make(overview(picture: .partial), access: .granted)
+        #expect(data.notice == .banner(.unread(missing: 1, closed: 2)))
+        #expect(data.closed == nil, "the closed ones are said once, in the banner")
+        for kind in [GapKind.failed, .vanished, .cancelled] {
+            let gaps = [GapCount(kind: .denied, count: 0), GapCount(kind: kind, count: 3)]
+            #expect(make(overview(picture: .partial, gaps: gaps), access: .granted).banner == .unread(missing: 3, closed: 0))
+        }
     }
 }

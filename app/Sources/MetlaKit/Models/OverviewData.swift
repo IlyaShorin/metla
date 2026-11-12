@@ -39,16 +39,40 @@ public struct OverviewData: Equatable, Sendable {
         public let segments: [Part]
     }
 
-    /// The partial-analysis banner; "Scanning…" while the first scan
+    /// The banner above the disk card: "Scanning…" while the first scan
     /// runs, "Refreshing…" while a scan runs and the last picture stays
-    /// shown and usable.
+    /// shown and usable, else what the picture could not read.
     public enum Banner: Equatable, Sendable {
         case scanning
         case refreshing
+        /// Without Full Disk Access, or when it cannot be told: `denied`
+        /// folders macOS kept from the app (access may open them),
+        /// `missing` ones not read for another reason.
         case partial(denied: UInt64, missing: UInt64)
+        /// With Full Disk Access: `missing` folders not read; the
+        /// `closed` ones are closed to every app, access cannot open them.
+        case unread(missing: UInt64, closed: UInt64)
     }
 
-    public let banner: Banner?
+    /// What the Overview says about the picture: a banner, or, with Full
+    /// Disk Access and nothing else missing, a quiet line of the disk card
+    /// that counts the folders closed to every app.
+    public enum Notice: Equatable, Sendable {
+        case banner(Banner)
+        case closed(UInt64)
+    }
+
+    public let notice: Notice?
+
+    public var banner: Banner? {
+        if case .banner(let banner) = notice { banner } else { nil }
+    }
+
+    /// The folders closed to every app, when the disk card says so.
+    public var closed: UInt64? {
+        if case .closed(let count) = notice { count } else { nil }
+    }
+
     public let disk: Disk?
     /// "Can be freed ≈": deleted for good; what would only move to the
     /// Trash is apart.
@@ -61,16 +85,17 @@ public struct OverviewData: Equatable, Sendable {
     /// last picture's totals as they are until it ends).
     public let growing: Bool
 
-    /// Worked out from one snapshot, the largest folders and the volume;
-    /// `home` shortens paths to `~/…`.
+    /// Worked out from one snapshot, the largest folders, the volume and
+    /// Full Disk Access as probed; `home` shortens paths to `~/…`.
     public static func make(
-        _ overview: Overview, largest: [TopFolder], volume: VolumeInfo, home: String, _ names: Names
+        _ overview: Overview, largest: [TopFolder], volume: VolumeInfo, home: String, access: FullDiskAccess,
+        _ names: Names
     ) -> OverviewData {
         let scanning = if case .scanning = overview.freshness.state { true } else { false }
         let categories = categoryParts(overview, names)
         let owned = overview.categories.map(\.owned)
         return OverviewData(
-            banner: banner(overview, scanning: scanning),
+            notice: notice(overview, scanning: scanning, access: access),
             disk: disk(overview, volume: volume, home: home, owned: owned, names.strings),
             freed: overview.reclaimable.freed.bytes,
             trashed: overview.reclaimable.trashed.bytes,
@@ -80,16 +105,27 @@ public struct OverviewData: Equatable, Sendable {
             growing: scanning && overview.freshness.picture == .missing)
     }
 
-    static func banner(_ overview: Overview, scanning: Bool) -> Banner? {
+    static func notice(_ overview: Overview, scanning: Bool, access: FullDiskAccess) -> Notice? {
         if scanning {
-            return overview.freshness.picture == .missing ? .scanning : .refreshing
+            return .banner(overview.freshness.picture == .missing ? .scanning : .refreshing)
         }
+        return gaps(overview, access: access)
+    }
+
+    /// What the picture's gaps tell the user, nil when it has none. With
+    /// Full Disk Access the folders still denied are closed to every app
+    /// (root's own, or kept by the system): no reason to warn, and none to
+    /// ask for access.
+    static func gaps(_ overview: Overview, access: FullDiskAccess) -> Notice? {
         guard overview.freshness.picture == .partial, let coverage = overview.coverage else {
             return nil
         }
         let denied = coverage.gaps.first { $0.kind == .denied }?.count ?? 0
-        let all = coverage.gaps.reduce(0) { $0 + $1.count }
-        return .partial(denied: denied, missing: all - denied)
+        let missing = coverage.gaps.reduce(0) { $0 + $1.count } - denied
+        guard access == .granted else {
+            return .banner(.partial(denied: denied, missing: missing))
+        }
+        return missing == 0 ? .closed(denied) : .banner(.unread(missing: missing, closed: denied))
     }
 
     /// One row per category: what cleaning its preselected candidates

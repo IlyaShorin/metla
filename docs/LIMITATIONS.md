@@ -40,8 +40,20 @@ the gates in [QUALITY.md](QUALITY.md).
    Messages, Safari and other apps' data from every app; those folders are
    skipped, counted and named in the partial banner. Metla cannot grant the
    access itself and never works around it. Whether access is granted is
-   probed by listing a few protected folders; when that is inconclusive the
-   app says it cannot tell.
+   probed by listing a few protected folders (at launch, when the app
+   becomes active, after a full scan ends); when that is inconclusive the
+   app says it cannot tell, and treats it as not granted.
+   **Even with Full Disk Access some system folders are never read:**
+   root's own with mode 700 (`EACCES`) and those the system protects
+   (`EPERM`: Spotlight's index, data vaults). They are not counted, so
+   every size is a lower bound by them. With access granted the Overview
+   counts them in a quiet line of the disk card, not in a banner, and the
+   status does not mark the picture partial for them. The engine counts
+   every denied folder alike (`EACCES` and `EPERM`, a system folder and
+   one that access would open): with access granted, *every* denied folder
+   is called closed to every app, also another user's home folder, and
+   also, until a full scan or a change there reads them again, the folders
+   of a picture taken before access was granted.
 8. **One root, one volume.** The engine analyses `/` (the system and data
    volumes of the boot container). Other volumes, disk images, network
    shares and cloud placeholders are skipped, not analysed; iCloud Drive
@@ -81,7 +93,14 @@ the gates in [QUALITY.md](QUALITY.md).
     error shown; starting at login after a restart was not observed.
 16. **The Full Disk Access deep link.** The button opens the System Settings
     URL; that the right pane comes up was not checked, and granting access
-    was never done on the development machine.
+    was never done on the development machine. What the Overview and the
+    status say with access granted is checked by tests with a probe that
+    answers "granted", not by the capture: the development build is not
+    granted access, and the capture's fixture has no denied folder. The
+    new banner, the disk card's line, the first-run sheet and Settings →
+    Access with access granted were drawn once (0.7.2, English and
+    Russian, light and dark) by a capture changed for the purpose and not
+    kept.
 17. **A person's click on the menu bar.** The capture opens the real
     menu-bar panel by clicking the app's own status item in-process and
     takes the window server's image of it; a click from outside the app

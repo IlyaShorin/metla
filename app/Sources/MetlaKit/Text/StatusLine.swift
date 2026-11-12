@@ -25,9 +25,11 @@ public struct StatusLine: Equatable, Sendable {
     public let canStop: Bool
 
     /// The line for `freshness`; `expected` is the size the scan is
-    /// heading for (the last picture's), if known.
+    /// heading for (the last picture's), if known. `closedOnly`: the
+    /// picture's only gaps are folders closed to every app (with Full Disk
+    /// Access), which do not make it read as partial.
     public static func of(
-        _ freshness: Freshness, expected: UInt64?, now: Date, _ strings: Strings
+        _ freshness: Freshness, expected: UInt64?, now: Date, _ strings: Strings, closedOnly: Bool = false
     ) -> StatusLine {
         switch freshness.state {
         case .scanning(let progress, _):
@@ -45,7 +47,7 @@ public struct StatusLine: Equatable, Sendable {
         case .off:
             return StatusLine(text: strings.text("status.off"), tone: .off, canStop: false)
         case .idle:
-            return idle(freshness, now: now, strings)
+            return idle(freshness, closedOnly: closedOnly, now: now, strings)
         }
     }
 
@@ -72,21 +74,23 @@ public struct StatusLine: Equatable, Sendable {
         }
     }
 
-    /// "Updated 2 min ago", marked when the picture is partial or needs a
-    /// full scan; "Never scanned" without a picture.
-    static func idle(_ freshness: Freshness, now: Date, _ strings: Strings) -> StatusLine {
+    /// "Updated 2 min ago", marked when the picture is partial (for more
+    /// than folders closed to every app) or needs a full scan; "Never
+    /// scanned" without a picture.
+    static func idle(_ freshness: Freshness, closedOnly: Bool, now: Date, _ strings: Strings) -> StatusLine {
         guard let updated = freshness.updated, freshness.picture != .missing else {
             return StatusLine(text: strings.text("status.never"), tone: .stale, canStop: false)
         }
         let when = Format.relative(Format.date(updated), now: now, strings)
         var text = strings.format("status.updated", when)
-        if freshness.picture == .partial {
+        let partial = freshness.picture == .partial && !closedOnly
+        if partial {
             text += strings.text("status.partialSuffix")
         }
         if freshness.needsFullScan {
             text += strings.text("status.outdatedSuffix")
         }
-        let current = freshness.picture == .complete && !freshness.needsFullScan && freshness.watching
+        let current = !partial && !freshness.needsFullScan && freshness.watching
         return StatusLine(text: text, tone: current ? .current : .stale, canStop: false)
     }
 }

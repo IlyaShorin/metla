@@ -26,7 +26,9 @@ is shipped as a localisation.
   (the last picture stays shown and usable, Clean included: a cleanup
   starts at once and the scan is done again after it),
   `Updated 2 min ago`, `Updated 2 min ago · partial`,
-  `Never scanned`, `Background analysis off`.
+  `Never scanned`, `Background analysis off`. A picture whose only gaps
+  are folders closed to every app (Full Disk Access granted) is not
+  marked partial.
 * **Refresh** (⌘R, a full scan run as `Interactive`) and **Clean…** (⌘⌫,
   opens the preview of the default selection: every preselected
   candidate). **Clean selected…** previews the cleanup selection: what the
@@ -36,9 +38,21 @@ is shipped as a localisation.
 
 **Overview**
 
-1. Partial-analysis banner when `Coverage` has gaps: what is missing, why,
-   buttons "Show folders" (opens the list of inaccessible areas) and
-   "Open access settings". Never shown as an error when the scan is merely
+1. Partial-analysis banner when `Coverage` has gaps, by Full Disk Access
+   as probed (one pure decision, `OverviewData.notice`):
+   * not granted or cannot tell: what is missing, why, buttons "Show
+     folders" (opens the list of inaccessible areas) and "Open access
+     settings";
+   * granted, and the only gaps are denied folders: no banner. They are
+     *closed folders*, closed to every app whatever the setting; a quiet
+     line under the disk card's legend counts them ("279 system folders
+     are closed to every app and are not counted.") with a "Show folders"
+     link;
+   * granted, with other gaps (failed, vanished, cancelled): a banner that
+     counts those and the closed folders apart, with "Show folders" and
+     no access button.
+
+   Never shown as an error when the scan is merely
    in progress — that state says "Scanning…" (the numbers grow) for a
    first scan and "Refreshing in the background…" when the last picture
    stays shown.
@@ -192,14 +206,18 @@ Tabs: **General**, **Hotkeys**, **Exclusions**, **Access**.
 * Access: Full Disk Access as probed (granted, not granted, cannot
   tell), what is skipped without it, a button that opens the right
   System Settings pane, Check Again, and a note that Metla may need a
-  restart after access is granted.
+  restart after access is granted. With access granted it says instead
+  that some system folders stay closed to every app, and drops the
+  restart note. The probe runs at launch, whenever the app becomes
+  active and after each full scan.
 * Toggles are checkboxes (`SymbolCheckbox`) rather than switches.
 
 ## First run
 
 A single sheet, once: what Metla does, that it only reads metadata, why
 Full Disk Access matters, buttons "Open System Settings" and "Scan without
-it". The first scan starts immediately either way and the Overview fills
+it"; when access is granted already, that it is, and one button,
+"Continue". The first scan starts immediately either way and the Overview fills
 in progressively; without Full Disk Access its partial banner says what
 could not be read.
 

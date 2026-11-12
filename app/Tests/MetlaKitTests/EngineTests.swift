@@ -262,19 +262,43 @@ import Testing
         #expect(model.screen == .overview)
     }
 
-    @Test func aPartialPictureIsShownAsPartial() async throws {
+    /// A root with a folder nobody may list: the picture is partial.
+    func closedRoot() throws -> URL {
         let root = Fixture.scratch().appendingPathComponent("root")
         let closed = root.appendingPathComponent("closed")
         try FileManager.default.createDirectory(at: closed.appendingPathComponent("inside"), withIntermediateDirectories: true)
         try Data().write(to: root.appendingPathComponent(LaunchSettings.fixtureMarker))
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: closed.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: closed.path) }
+        return root
+    }
+
+    func reopen(_ root: URL) {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.appendingPathComponent("closed").path)
+    }
+
+    @Test func aPartialPictureIsShownAsPartial() async throws {
+        let root = try closedRoot()
+        defer { reopen(root) }
         let model = try await started(Fixture.settings(root: root.path), probe: FixedProbe([.denied]))
         defer { model.stop() }
         #expect(model.access.state == .notGranted, "probed when the model starts")
         #expect(model.overviewData?.banner == .partial(denied: 1, missing: 0))
         #expect(model.status?.text.hasSuffix("· partial") == true)
         #expect(model.status?.tone == .stale)
+    }
+
+    /// With Full Disk Access a folder still denied is closed to every app:
+    /// no banner, no "partial" in the status, a quiet count instead.
+    @Test func withFullDiskAccessAFolderStillDeniedIsOnlyCounted() async throws {
+        let root = try closedRoot()
+        defer { reopen(root) }
+        let model = try await started(Fixture.settings(root: root.path), probe: FixedProbe([.listed]))
+        defer { model.stop() }
+        #expect(model.access.state == .granted)
+        let data = try #require(model.overviewData)
+        #expect(data.banner == nil && data.closed == 1)
+        #expect(model.status?.text.hasPrefix("Updated") == true && model.status?.text.contains("partial") == false)
+        #expect(model.status?.tone == .current)
     }
 
     /// Full Disk Access is probed when the model starts, before the first

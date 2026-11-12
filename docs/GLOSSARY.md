@@ -37,6 +37,7 @@
 | **Found / removed / freed** | *Found*: estimated size when scanned. *Removed*: allocated size of what was actually unlinked. *Freed*: measured change in volume free space. |
 | **Coverage** | What the analysis could not see: denied or failed directories, skipped mounts, missing Full Disk Access. A scan with gaps is *partial*. |
 | **Gap** | A directory the scan wanted to read but could not: *denied* (`EACCES`/`EPERM`), *failed* (any other error, with its errno), *vanished* (gone between being listed and being read) or *cancelled* (not reached before the scan was stopped). A gap has no own totals. Any gap makes the scan partial. |
+| **Closed folder** | A *denied* gap while Full Disk Access is granted: no app can read it whatever the setting (root's own, or kept by the system). Not counted; the app says how many, quietly, and never asks for access because of it. |
 | **Skip** | A directory the scan deliberately does not descend: on *another volume*, a second *mount point* of a volume already walked, a *dataless* cloud placeholder, or an *excluded* system path. Skips are counted in coverage but do not make a scan partial. |
 | **Scan scope** | The policy, as data, that decides skips: the devices a scan stays on and the paths it does not descend. |
 | **Dataless** | A cloud placeholder whose contents are not on this disk (`SF_DATALESS`). Reading it would trigger a download, so it is never descended. |

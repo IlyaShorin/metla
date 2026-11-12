@@ -265,15 +265,20 @@ public final class AppModel {
         }
     }
 
-    /// The toolbar's status.
+    /// The toolbar's status: as on the Overview, folders closed to every
+    /// app do not make the picture read as partial.
     public var status: StatusLine? {
-        freshness.map { StatusLine.of($0, expected: overview?.totals?.bytes, now: now, strings) }
+        let gaps = overview.flatMap { OverviewData.gaps($0, access: access.state) }
+        let closedOnly = if case .closed? = gaps { true } else { false }
+        return freshness.map {
+            StatusLine.of($0, expected: overview?.totals?.bytes, now: now, strings, closedOnly: closedOnly)
+        }
     }
 
     /// The Overview's values, once there is a snapshot.
     public var overviewData: OverviewData? {
         overview.map {
-            OverviewData.make($0, largest: largest, volume: volume, home: settings.home, names)
+            OverviewData.make($0, largest: largest, volume: volume, home: settings.home, access: access.state, names)
         }
     }
 

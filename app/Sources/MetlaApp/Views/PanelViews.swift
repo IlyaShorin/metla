@@ -4,27 +4,34 @@ import MetlaKit
 import SwiftUI
 
 /// The first-run sheet: what Metla does, that it reads only metadata, why
-/// Full Disk Access matters. The first scan runs either way.
+/// Full Disk Access matters, or that it is granted already (then nothing
+/// asks for it). The first scan runs either way.
 struct FirstRunSheet: View {
     let access: AccessModel
     let strings: Strings
     var done: () -> Void = {}
 
     var body: some View {
+        let granted = access.state == .granted
         VStack(alignment: .leading, spacing: 12) {
             Text(strings.text("firstrun.title")).font(.title2.weight(.semibold))
             Text(strings.text("firstrun.what"))
             Text(strings.text("firstrun.metadata")).foregroundStyle(.secondary)
-            Text(strings.text("firstrun.fda"))
+            Text(granted ? strings.text("firstrun.granted") : strings.text("firstrun.fda"))
             HStack {
                 Spacer()
-                Button(strings.text("firstrun.skip")) { finish() }
-                    .keyboardShortcut(.cancelAction)
-                Button(strings.text("firstrun.open")) {
-                    SystemSettings.openFullDiskAccess()
-                    finish()
+                if granted {
+                    Button(strings.text("firstrun.continue")) { finish() }
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button(strings.text("firstrun.skip")) { finish() }
+                        .keyboardShortcut(.cancelAction)
+                    Button(strings.text("firstrun.open")) {
+                        SystemSettings.openFullDiskAccess()
+                        finish()
+                    }
+                    .keyboardShortcut(.defaultAction)
                 }
-                .keyboardShortcut(.defaultAction)
             }
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -390,12 +397,17 @@ struct AccessPane: View {
                     Text(state).foregroundStyle(tint)
                 }
             }
-            Text(strings.text("access.why")).fixedSize(horizontal: false, vertical: true)
+            // Granted: what stays closed whatever the setting, and no hint
+            // to grant it.
+            Text(access.state == .granted ? strings.text("access.closed") : strings.text("access.why"))
+                .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button(strings.text("access.open")) { SystemSettings.openFullDiskAccess() }
                 Button(strings.text("access.recheck")) { Task { await access.check() } }
             }
-            Text(strings.text("access.restart")).font(.caption).foregroundStyle(.secondary)
+            if access.state != .granted {
+                Text(strings.text("access.restart")).font(.caption).foregroundStyle(.secondary)
+            }
             Text(strings.text("access.never")).font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)

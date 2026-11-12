@@ -12,12 +12,10 @@ struct OverviewView: View {
             if let data = model.overviewData {
                 VStack(alignment: .leading, spacing: 14) {
                     if let banner = data.banner {
-                        BannerView(banner: banner, strings: model.strings) {
-                            Task { await model.show(.folders) }
-                        }
+                        BannerView(banner: banner, strings: model.strings, showFolders: showFolders)
                     }
                     if let disk = data.disk {
-                        DiskCard(disk: disk, strings: model.strings)
+                        DiskCard(disk: disk, closed: data.closed, strings: model.strings, showFolders: showFolders)
                     }
                     HStack(alignment: .top, spacing: 14) {
                         FreedCard(data: data, model: model)
@@ -31,6 +29,10 @@ struct OverviewView: View {
                 ProgressView().padding(40)
             }
         }
+    }
+
+    private func showFolders() {
+        Task { await model.show(.folders) }
     }
 }
 
@@ -92,6 +94,17 @@ struct BannerView: View {
                 Spacer()
                 Button(strings.text("overview.showFolders"), action: showFolders)
                 Button(strings.text("overview.openAccess")) { SystemSettings.openFullDiskAccess() }
+            case .unread(let missing, let closed):
+                // Full Disk Access is granted: asking for it cannot help.
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+                (Text(strings.text("overview.partialTitle")).bold() + Text(" ")
+                    + Text(strings.format("overview.unread", Int(missing)))
+                    + Text(closed > 0 ? " " + strings.format("overview.closed", Int(closed)) : "")
+                    + Text(" ") + Text(strings.text("overview.partialLowerBound")))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button(strings.text("overview.showFolders"), action: showFolders)
             }
         }
         .padding(.horizontal, 14)
@@ -102,11 +115,14 @@ struct BannerView: View {
     }
 }
 
-/// The disk: name, used of total, free (red when under a tenth), and a
-/// stacked bar with its legend.
+/// The disk: name, used of total, free (red when under a tenth), a
+/// stacked bar with its legend, and, with Full Disk Access, how many
+/// folders are closed to every app and not counted.
 struct DiskCard: View {
     let disk: OverviewData.Disk
+    var closed: UInt64?
     let strings: Strings
+    var showFolders: () -> Void = {}
 
     var body: some View {
         Card {
@@ -154,6 +170,16 @@ struct DiskCard: View {
                 }
             }
             .font(.callout)
+            if let closed {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(strings.format("overview.closed", Int(closed)))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(strings.text("overview.showFolders"), action: showFolders)
+                        .buttonStyle(.link)
+                }
+                .font(.callout)
+            }
         }
     }
 }

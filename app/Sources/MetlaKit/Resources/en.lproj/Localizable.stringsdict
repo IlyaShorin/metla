@@ -66,6 +66,22 @@
 			<string>Partly removed: %d entries stayed</string>
 		</dict>
 	</dict>
+	<key>overview.closed</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@folders@</string>
+		<key>folders</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d system folder is closed to every app and is not counted.</string>
+			<key>other</key>
+			<string>%d system folders are closed to every app and are not counted.</string>
+		</dict>
+	</dict>
 	<key>overview.partialDenied</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -96,6 +112,22 @@
 			<string>%d more folder could not be read.</string>
 			<key>other</key>
 			<string>%d more folders could not be read.</string>
+		</dict>
+	</dict>
+	<key>overview.unread</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@folders@</string>
+		<key>folders</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d folder could not be read.</string>
+			<key>other</key>
+			<string>%d folders could not be read.</string>
 		</dict>
 	</dict>
 	<key>preview.action</key>
