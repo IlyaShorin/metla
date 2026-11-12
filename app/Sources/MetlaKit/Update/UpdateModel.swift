@@ -251,3 +251,36 @@ public final class UpdateModel {
         }
     }
 }
+
+extension UpdateModel {
+    /// The app's update and the line that says which feed it reads: the
+    /// copy at `bundle` as it is, its own signature's designated
+    /// requirement (`signature`, from `Signature.running()`) as the one
+    /// trust check, the source the build allows (`UpdateSource.chosen`),
+    /// the ephemeral transport. Nil when the copy has no version to
+    /// compare (a `swift run` without a bundle).
+    public static func app(
+        bundle: URL, stamp: String, environment: [String: String], signature: Signature.Own,
+        preferences: any Preferences, cleanupRunning: @escaping @MainActor () -> Bool,
+        relaunch: @escaping @MainActor @Sendable (URL) -> Void
+    ) -> (model: UpdateModel?, said: String) {
+        let chosen = UpdateSource.chosen(stamp: stamp, environment: environment)
+        let adHoc = signature.adHoc || signature.requirement == nil
+        guard let installation = Installation.read(bundle, adHoc: adHoc) else {
+            return (nil, chosen.said + "; no version to compare: no updates")
+        }
+        let transport = SessionTransport()
+        let version = installation.version.description
+        let steps = Installer(
+            requirement: signature.requirement ?? "", transport: transport, version: version, relaunch: relaunch)
+        let model = UpdateModel(
+            installation: installation, feed: FeedClient(source: chosen.source, transport: transport, version: version),
+            steps: steps, preferences: preferences, cleanupRunning: cleanupRunning)
+        return (model, chosen.said)
+    }
+
+    /// What the model reads and runs, for tests.
+    var parts: (feed: any UpdateFeed, steps: any UpdateSteps) {
+        (feed, steps)
+    }
+}

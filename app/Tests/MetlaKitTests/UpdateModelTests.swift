@@ -382,3 +382,50 @@ actor Slept {
         }
     }
 }
+
+/// What the app makes for its own copy.
+@MainActor
+@Suite struct UpdateWiringTests {
+    /// A production build reads GitHub whatever the environment says, and
+    /// its one trust check is the requirement of the running app's own
+    /// signature.
+    @Test func theAppChecksGitHubAndVerifiesAgainstItsOwnRequirement() throws {
+        let box = Sandbox()
+        defer { box.remove() }
+        let app = try BundleFixture.make(in: box.folder("apps"), version: "0.8.0", build: "11")
+        let own = Signature.Own(requirement: "identifier \"org.metla.Metla\" and anchor apple generic", adHoc: false)
+        let made = UpdateModel.app(
+            bundle: app, stamp: "62f142ca7975e910-production",
+            environment: [UpdateSource.variable: "file:///tmp/feed/latest.json"], signature: own,
+            preferences: MemoryPreferences(), cleanupRunning: { false }, relaunch: { _ in })
+        let model = try #require(made.model)
+        #expect(model.parts.feed.source == .github)
+        #expect(made.said.hasSuffix("(fixed in this build; METLA_UPDATE_FEED ignored)"))
+        #expect((model.parts.steps as? Installer)?.requirement == own.requirement)
+        #expect(model.installation.block == nil && model.installation.version == Version("0.8.0"))
+
+        let plain = UpdateModel.app(
+            bundle: app, stamp: "62f142ca7975e910-plain",
+            environment: [UpdateSource.variable: "file:///tmp/feed/latest.json"], signature: own,
+            preferences: MemoryPreferences(), cleanupRunning: { false }, relaunch: { _ in })
+        #expect(plain.model?.parts.feed.source.feed.absoluteString == "file:///tmp/feed/latest.json")
+        #expect((plain.model?.parts.steps as? Installer)?.requirement == own.requirement, "the same requirement")
+    }
+
+    @Test func anAdHocOrUnsignedCopyOnlyLinksAndACopyWithoutAVersionHasNoUpdate() throws {
+        let box = Sandbox()
+        defer { box.remove() }
+        let app = try BundleFixture.make(in: box.folder("apps"), version: "0.8.0", build: "11")
+        for own in [Signature.Own(requirement: "cdhash H\"00\"", adHoc: true), Signature.Own(requirement: nil, adHoc: false)] {
+            let made = UpdateModel.app(
+                bundle: app, stamp: "x-production", environment: [:], signature: own, preferences: MemoryPreferences(),
+                cleanupRunning: { false }, relaunch: { _ in })
+            #expect(made.model?.installation.block == .adHoc)
+        }
+        let bare = UpdateModel.app(
+            bundle: box("none.app"), stamp: "x-production", environment: [:],
+            signature: Signature.Own(requirement: nil, adHoc: true), preferences: MemoryPreferences(),
+            cleanupRunning: { false }, relaunch: { _ in })
+        #expect(bare.model == nil && bare.said.hasSuffix("no version to compare: no updates"))
+    }
+}
