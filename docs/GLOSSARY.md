@@ -67,4 +67,9 @@
 | **Managed worktree** | A worktree owned by another tool: Codex Desktop (`~/.codex/worktrees/…`) or Claude Code (`…/.claude/worktrees/…`). Shown, never removed; its build output is never preselected and is cleaned only when confirmed by itself. |
 | **Cleaned directory** | A directory a cleanup acted on since the last scan; the index offers nothing at or below it until the next scan. |
 | **Fixture** | A synthetic directory tree marked with a `.metla-fixture` file, the only place development builds and the CLI may delete. `metla-cli fixture create` makes one. |
+| **Update feed** | Where the app learns of releases: GitHub's latest release of the repository (`UpdateSource.github`), or, in a build that is not production, a test feed named by `METLA_UPDATE_FEED`. |
+| **Offer** | A release the feed names that is newer than the running copy, final, and has a `Metla.zip` within the repository's downloads; shown in the sidebar's strip, the menu-bar panel and Settings until Later or a check that no longer finds it. |
+| **Designated requirement** | The code-signing requirement a signature names as "the same app": for a certificate, its identifier and certificate; for an ad-hoc signature, its own hash. An update is installed only when the new bundle satisfies the running copy's. |
+| **Install block** | Why a copy cannot replace itself (ad-hoc, translocated, read-only volume, not writable): its offer links to the release page instead of installing. |
+| **Workspace** | The folder an install works in: the system's item replacement directory for the bundle, on its volume; removed afterwards by its exact path. |
 | **Production capability** | The value that lets a cleaner act on a root that is not a fixture. Only a release build with the `production` feature can make it; the CLI never does. |

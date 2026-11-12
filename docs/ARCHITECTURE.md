@@ -941,7 +941,8 @@ another user owns it stays `InspectionFailed` (a worktree) or
 * SwiftPM package `app/` (no Xcode project, no third-party packages),
   macOS 14: `MetlaCoreFFI` (generated bindings and the C module),
   `MetlaKit` (engine client, view models, formatting, strings, launch
-  settings; tested), `MetlaApp` (SwiftUI views, AppKit glue, `@main`).
+  settings, the update; tested), `MetlaApp` (SwiftUI views, AppKit
+  glue, `@main`).
   `scripts/build-app.sh` lays out `Metla.app`, signed ad-hoc or with
   `METLA_SIGN_IDENTITY`'s certificate and a secure timestamp (releases
   after 0.7.2 with the maintainer's Apple Development certificate; the
@@ -1009,8 +1010,10 @@ another user owns it stays `InspectionFailed` (a worktree) or
   once, and Stop ends it.
 * **Scenarios.** `--scenario <name>` drives the real view models end
   to end on a fixture and exits non-zero when the disk is not as the
-  flow confirmed (`scripts/run-scenarios.sh` runs all four on fresh
-  fixtures; the Swift tests run them too).
+  flow confirmed (`scripts/run-scenarios.sh` runs all five on fresh
+  fixtures; the Swift tests run them too). `update` runs the in-app
+  update on fixture bundles beside the root, every step for real but
+  the relaunch, which it records as a request (Updates, below).
 * **Measuring.** With `METLA_PRINT_LAUNCH_TIMING=1` the app prints, from
   the process's start, when its first window and the saved picture show,
   when a scan's first numbers show and when a full scan ends, the
@@ -1022,8 +1025,10 @@ another user owns it stays `InspectionFailed` (a worktree) or
 * `--capture <dir>` renders each main screen, light and dark, to PNG files,
   then the cleanup preview, progress, a real report, the real menu-bar
   panel (the app clicks its own status item), the real Settings window
-  at each tab, the first-run sheet and the
-  hotkey's panel, and quits. The debug build takes each picture from the
+  at each tab, the first-run sheet, the
+  hotkey's panel and the update's states (its strip in each, the main
+  window, the menu-bar panel and Settings → General with an offer; a
+  canned feed and steps that install nothing), and quits. The debug build takes each picture from the
   window server (`CGWindowListCreateImage` of the app's own window, which
   needs no screen-recording permission; looked up by name, since the
   macOS 26 SDK marks it obsoleted), on the screen with the most pixels
@@ -1033,6 +1038,73 @@ another user owns it stays `InspectionFailed` (a worktree) or
   until the window has taken each appearance, and checks that every
   picture's title bar is light in the light appearance and dark in the
   dark one. Checkboxes are drawn by the app (`SymbolCheckbox`).
+
+### Updates
+
+The app's only network traffic (README, "Updates"). All of it is in
+`MetlaKit/Update` and tested there; `MetlaApp` adds the views, the menu
+item and the relaunch (`Updates`).
+
+* **Feed.** `UpdateSource.github`: one `GET` of the repository's
+  `releases/latest` (the owner and repository are one constant,
+  `UpdateSource.repository`). `UpdateSource.read` parses the answer once:
+  a release is offered when its tag is `v<a>.<b>.<c>` and greater than the
+  running version, it is not a draft or prerelease, and its asset named
+  exactly `Metla.zip` lies within `https://github.com/<repo>/releases/download/`
+  (same scheme, host and port, no user, no `.`/`..` segment, plain or
+  encoded) with a declared size of at most 100 MB and, when GitHub lists
+  one, a `sha256:` digest. Anything else is no update; an answer that is
+  not a release record is unreadable. "What's New" is the release's
+  `html_url` only when it lies within `https://github.com/<repo>/releases/`.
+  The body is never read.
+* **Transport.** `SessionTransport`: a session per request from one
+  ephemeral configuration (no cookies, cache or credentials), redirects
+  followed only to https, the body capped at the declared size,
+  `Accept-Language: en` instead of the user's languages. `FeedClient`
+  adds `User-Agent: Metla/<version>` and GitHub's media type.
+* **When.** `UpdateModel.follow`: at launch and every 24 hours, each
+  check skipped while the setting is off; only when
+  `LaunchSettings.checksForUpdates` (never in a capture, a scenario,
+  `--idle`, or with `METLA_ROOT`). A failed automatic check is silent; a
+  manual one (Settings → General, or "Check for Updates…") says why.
+* **Install.** `UpdateModel.install` drives the steps (`UpdateSteps`;
+  the real ones are `Installer`) and shows a phase for each: download
+  into a workspace, the system's item replacement directory for the
+  bundle (on its volume, so the swap is a rename); the size received
+  equal to the declared one and the SHA-256 equal to GitHub's;
+  `/usr/bin/ditto -x -k` into a new folder that must hold exactly one
+  entry, `Metla.app`, a real directory; then the verification below;
+  then the swap: the old bundle renamed into the workspace, the new one
+  into its place, the old one renamed back if that fails, and the
+  workspace removed by the path the system gave. Nothing else on disk is
+  touched. Then a shell waits for this process to end and opens the
+  bundle at the same path, and the app quits. Install starts only from
+  an offer of a copy that can replace itself and never while a cleanup
+  runs (checked again before the swap); a check never disturbs an
+  install under way, and Later hides the offer until a check finds it
+  again.
+* **Trust rule.** The new bundle must satisfy the running app's own
+  designated requirement (`Signature.running()`: `SecCodeCopySelf`, its
+  static code, `SecCodeCopyDesignatedRequirement`), checked with
+  `SecStaticCodeCheckValidityWithErrors`: strict validation, every
+  architecture, nested code, no symbolic link out of the bundle, no
+  revocation check. Only a build signed by the same certificate passes;
+  it is the rule macOS ties the Full Disk Access grant to, so an accepted
+  update keeps the grant. Then its Info.plist: the running app's
+  identifier, exactly the version offered and greater than the running
+  one, an integer build greater than the running one. The verifier takes
+  the requirement as an input (tests pass `identifier "…"` and fixture
+  hashes); the app always passes its own.
+* **When it cannot.** A copy signed ad-hoc (its requirement is its own
+  hash), one macOS runs translocated, one on a read-only volume, or one
+  whose bundle or folder is not writable gets "Open the Release Page"
+  with the reason (`InstallBlock`), never an elevation.
+* **Test seam.** A build whose core is not the production one reads
+  `METLA_UPDATE_FEED` (a file or http(s) URL of a feed in GitHub's shape;
+  its downloads and pages are files beside it). A production build
+  (stamp ending `-production`) ignores it and says so on stderr
+  (`update: feed …`); no variable, default or argument changes its feed or
+  its requirement.
 
 ## 12. Development safety
 

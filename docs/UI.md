@@ -17,6 +17,33 @@ is shipped as a localisation.
   Temporary data. Rows with nothing to clean are dimmed, not hidden.
 * Bottom: **Last report** (only after a cleanup has run; the engine keeps
   it across launches).
+* Foot of the sidebar, on every screen, below Last report, while there is
+  an update to offer: a compact strip.
+  * "Metla 0.8.1 is available" with **Install** (prominent), **What's
+    New** (a link, only when the release has a page of the repository's
+    releases) and **Later** (a link: hidden until a check finds the
+    release again; no "skip this version"). While a cleanup runs, Install
+    is disabled with a note ("install once it has ended"); it does not
+    queue.
+  * A copy that cannot replace itself: the reason in one line (built from
+    source, run from a temporary place, a read-only volume, a folder it
+    cannot write) and **Open the Release Page** instead of Install, with
+    Later.
+  * Under way: "Downloading 1.2 MB of 2.7 MB" with a bar, "Checking the
+    signature", "Installing" (an indeterminate bar); no buttons.
+  * Failed: one sentence with the reason, from a closed list (no
+    connection; the download failed or was cut short; it does not match
+    what GitHub lists; "the download is not signed by this app's signer —
+    nothing was installed"; Metla cannot write to its folder; a cleanup is
+    running) with Open the Release Page and Later.
+  * The buttons stand in one row; where they do not fit (Russian), Install
+    or the release page above the links.
+
+**App menu**
+
+"Check for Updates…" under "About Metla": checks at once and opens
+Settings → General, where the answer shows. No system notification, no
+badge, no sound, anywhere.
 
 **Toolbar** (all screens)
 
@@ -184,6 +211,10 @@ template image; shows activity while scanning.
   the rest ("only with confirmation").
 * **Clean…** or **Clean now** by the hotkey mode (primary, shows the
   hotkey), **Open Metla**, **Refresh now**.
+* While there is an update to offer, one line above the status line: the
+  offer and Install (the release page for a copy that cannot replace
+  itself), or the progress, or the failure, as the sidebar's strip says
+  it.
 * Status line: freshness, partial flag, current power profile.
 * Background analysis checkbox, Settings…, Quit.
 * It reads the cached snapshot only. While it is open the engine has
@@ -197,7 +228,13 @@ Tabs: **General**, **Hotkeys**, **Exclusions**, **Access**.
 * General: background analysis on/off (default on); "Reduce activity on
   battery" (default on); launch at login (`SMAppService.mainApp`, its
   error shown when the system refuses); worktree staleness age and
-  recent build-output age in days (− / +); show in menu bar.
+  recent build-output age in days (− / +); show in menu bar. Then
+  "Updates": "Check for updates automatically" (default on) with what it
+  sends; one row with the running version and build, when it last checked
+  (and, when it found nothing, "Metla is up to date." or why the check
+  failed) and **Check Now**; while there is an offer, the sidebar's strip
+  under it, with the same buttons. The Settings window is 620 points tall,
+  for this tab with an offer in Russian.
 * Hotkeys: recorders for "Clean" and "Show Metla" (a combination without
   ⌘, ⌥ or ⌃ is refused; one another app holds is shown next to the
   recorder); a radio pair "Show what was found and ask to confirm"

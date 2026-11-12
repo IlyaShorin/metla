@@ -109,8 +109,25 @@ scripts/build-app.sh --debug     # the debug app: cleans fixtures only
 scripts/run-app.sh         # starts the debug app on a fixture metla-cli makes
 scripts/run-app.sh --capture <dir>   # PNGs of the screens, light and dark (started with
                                      # `open`, so the app is active while it draws)
-scripts/run-scenarios.sh   # the cleanup flows end to end on fresh fixtures
+scripts/run-scenarios.sh   # the cleanup flows and the update end to end on fresh fixtures
 ```
+
+### The update's test feed
+
+A build whose core is not the production one (the debug app, `--release
+--plain`) reads `METLA_UPDATE_FEED`: a `file://` or `http(s)://` URL of a
+JSON file in the shape of GitHub's `releases/latest`. Its `Metla.zip` and
+release page must be files beside it (in the same folder of the URL); a
+production build ignores the variable and says so on stderr (`update:
+feed … (fixed in this build; METLA_UPDATE_FEED ignored)`). The app always
+verifies against its own designated requirement, so only a copy signed
+with a certificate can install from it; an ad-hoc copy only links to the
+release page. A launch checks by itself only without `METLA_ROOT` (and
+never in a capture, a scenario or `--idle`); "Check Now" asks in any
+case. `scripts/run-scenarios.sh update` runs the whole install on fixture
+bundles in `<fixture>-update`, with the relaunch recorded, not made.
+Never point a test feed at the copy in `/Applications`: use copies in a
+folder of your own.
 
 Only the release build of the app can clean a root that is not a
 fixture. Develop, test and capture with the debug build; never start a

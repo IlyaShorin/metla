@@ -73,7 +73,9 @@ listed but not preselected. Folders you exclude are never offered again.
 * Never follows a symbolic link, never crosses into another volume, never
   reads a file's contents (two tiny marker files excepted: a `.git`
   pointer and `CACHEDIR.TAG`), never triggers a cloud download.
-* Never talks to the network.
+* Never talks to the network, except to check for updates: one request
+  to GitHub at launch and once a day, which you can turn off
+  ([Updates](#updates)).
 
 ## Safety model
 
@@ -126,7 +128,7 @@ yourself opens normally; a downloaded one is quarantined and has to be
 allowed once, in System Settings → Privacy & Security → Open Anyway.
 Start a development build with `METLA_ROOT` pointing at a fixture
 (`run-app.sh` does); `scripts/run-scenarios.sh` drives the cleanup flows
-end to end. [CONTRIBUTING.md](CONTRIBUTING.md) has the gates and the development rules.
+and the update end to end. [CONTRIBUTING.md](CONTRIBUTING.md) has the gates and the development rules.
 
 The icon is `app/Icon/AppIcon.icns`, committed; `scripts/make-icon.sh`
 draws it again from the shapes in `scripts/make-icon.swift`, every size
@@ -167,6 +169,39 @@ rebuilds, sign with a certificate of your keychain
 timestamp needs the network). The signature shows the certificate's
 name to anyone who inspects the app.
 
+## Updates
+
+At every launch and once a day while it runs, Metla asks GitHub for the
+latest release of this repository: one `GET` of
+`https://api.github.com/repos/IlyaShorin/metla/releases/latest`. It
+sends `User-Agent: Metla/<version>`, `Accept:
+application/vnd.github+json` and `Accept-Language: en` (fixed, so your
+languages are not sent); the system adds `Accept-Encoding`, `Connection`
+and `Cache-Control: no-cache`. No identifier, no cookie, nothing else:
+the session keeps no cookies, cache or credentials. GitHub sees your IP
+address, that version and the time. Turn it off in Settings → General
+("Check for updates automatically"); "Check Now" there and "Check for
+Updates…" in the app menu still ask when you do. A failed automatic check
+says nothing.
+
+When a newer release (`v<a>.<b>.<c>`, not a draft or prerelease) has a
+`Metla.zip`, the sidebar's foot and the menu-bar panel say so. Install
+downloads it from GitHub (the same headers, without `Accept`; at most
+100 MB, checked against the size and SHA-256 GitHub lists), unpacks it,
+and installs it only if it is signed by the same certificate as the
+running copy: it must satisfy the running app's own designated
+requirement, the rule macOS ties Full Disk Access to, so an accepted
+update keeps the grant. Its identifier must be Metla's and its version
+and build higher than the running one's. Only then is the old copy
+replaced (renamed aside, the new one renamed into place, the old one
+put back if that fails, then removed), and Metla starts again. Nothing
+is installed during a cleanup. A copy built from source (signed ad-hoc),
+one macOS runs from a temporary place, one on a read-only volume or in a
+folder you cannot write to only links to the release page. No helper,
+no administrator password, no background install: you press Install each
+time. The release notes are not shown in the app; "What's New" opens
+the release's page on GitHub.
+
 ## Hotkeys
 
 * **Clean** (⌃⌥⌘⌫ by default): shows what was found and asks to confirm.
@@ -186,7 +221,9 @@ The full list, each with its consequence, is
 and not notarised (a downloaded copy has to be allowed once); built for
 one architecture; freed space is measured, not promised
 (APFS clones, snapshots and purgeable space); sizes are allocated-size
-estimates; the Swift half is not covered by the mutation and complexity
+estimates; an update installs itself only into a copy signed by the same
+certificate, and was not yet seen to do so between two published
+releases; the Swift half is not covered by the mutation and complexity
 tools; a real hotkey press, the login item and the Full Disk Access
 pane were not verified by an automated run.
 

@@ -19,8 +19,10 @@ the gates in [QUALITY.md](QUALITY.md).
    a release and a copy built from source. The certificate is a
    development one; it expires and is replaced about once a year. Not
    checked: a certificate-signed build on a second Mac, and what becomes
-   of the grant when the certificate is replaced by a renewed one. There
-   are no automatic updates.
+   of the grant when the certificate is replaced by a renewed one. Since
+   0.8.0 the app offers updates itself and installs one only into a copy
+   signed by the same certificate (item 33); an ad-hoc copy only links to
+   the release page.
 2. **One architecture per build.** `build-app.sh` builds the Swift side
    for the machine it runs on, and the Rust library for the Rust targets
    installed (here only `aarch64-apple-darwin`). The release app made here
@@ -223,3 +225,42 @@ the gates in [QUALITY.md](QUALITY.md).
     argument still reads and writes the installed app's window state: a
     crash of such a run can leave the installed app's next launch at
     macOS's "reopen windows?" question.
+
+## Updates
+
+33. **What the in-app update can and cannot do.**
+    * It installs only what satisfies the running copy's own designated
+      requirement. A copy signed ad-hoc (built from source) cannot be
+      updated in place: its requirement is its own hash. Nor can a copy
+      macOS runs translocated, one on a read-only volume, or one whose
+      bundle or folder this user cannot write; each only links to the
+      release page. Nothing asks for an administrator's password.
+    * The designated requirement codesign writes for an Apple
+      Development certificate names the app's identifier, the leaf
+      certificate's name and Apple's intermediate, not the certificate
+      itself: a renewed certificate with the same name is expected to
+      satisfy it, which was not checked. A build signed with another
+      certificate is refused as "not signed by this app's signer".
+    * The signature is checked strictly, every architecture and nested
+      code included, but without revocation: a revoked certificate's
+      build would still be accepted. The download is not quarantined
+      (the app sets no quarantine on what it downloads), so Gatekeeper
+      does not assess the new copy at its first launch; the requirement
+      check stands in for it.
+    * The swap is two renames: the old bundle aside into a folder the
+      system makes for replacements on the same volume, the new one into
+      its place. A crash between the two leaves no app at its place and
+      the old one in that folder; when putting the old one back fails,
+      the app says on stderr where it is and keeps that folder.
+    * After Install the app quits; a small shell started by it waits for
+      the old process to end (at most 60 s) and opens the bundle at the
+      same path.
+    * GitHub's API answers at most 60 unauthenticated requests an hour
+      per address; past that a check fails with "GitHub answered with
+      error 403" (silently, when it was automatic).
+    * Not checked by an automated run: an update between two
+      certificate-signed builds (the maintainer's test, by a test feed:
+      CONTRIBUTING), a real download from GitHub (possible only once a
+      release after 0.8.0 exists), the relaunch itself (the scenario
+      records it as a request), and the Full Disk Access grant seen to
+      survive an update.
