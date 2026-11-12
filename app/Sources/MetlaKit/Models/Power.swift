@@ -68,14 +68,20 @@ public enum ProbeAnswer: Equatable, Sendable {
 
 /// Tries to list directories only Full Disk Access lets the app read.
 public protocol AccessProbe: Sendable {
+    /// The directories it tries, in the order of its answers.
+    var places: [String] { get }
     func answers() async -> [ProbeAnswer]
+}
+
+extension AccessProbe {
+    public var places: [String] { [] }
 }
 
 /// The probe of the app: lists (and only lists) a few directories of the
 /// user's Library that macOS protects, and `/Library/Application
 /// Support/com.apple.TCC`.
 public struct LibraryProbe: AccessProbe {
-    let places: [String]
+    public let places: [String]
 
     public init(home: String = NSHomeDirectory()) {
         places = [

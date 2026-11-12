@@ -87,16 +87,16 @@ public struct OverviewData: Equatable, Sendable {
     public let growing: Bool
 
     /// Worked out from one snapshot, the largest folders, the volume and
-    /// Full Disk Access as probed; `home` shortens paths to `~/…`.
+    /// what its denied folders are; `home` shortens paths to `~/…`.
     public static func make(
-        _ overview: Overview, largest: [TopFolder], volume: VolumeInfo, home: String, access: FullDiskAccess,
+        _ overview: Overview, largest: [TopFolder], volume: VolumeInfo, home: String, denied: DeniedFolders,
         _ names: Names
     ) -> OverviewData {
         let scanning = if case .scanning = overview.freshness.state { true } else { false }
         let categories = categoryParts(overview, names)
         let owned = overview.categories.map(\.owned)
         return OverviewData(
-            notice: notice(overview, scanning: scanning, access: access),
+            notice: notice(overview, scanning: scanning, denied: denied),
             disk: disk(overview, volume: volume, home: home, owned: owned, names.strings),
             freed: overview.reclaimable.freed.bytes,
             trashed: overview.reclaimable.trashed.bytes,
@@ -106,29 +106,33 @@ public struct OverviewData: Equatable, Sendable {
             growing: scanning && overview.freshness.picture == .missing)
     }
 
-    static func notice(_ overview: Overview, scanning: Bool, access: FullDiskAccess) -> Notice? {
+    static func notice(_ overview: Overview, scanning: Bool, denied: DeniedFolders) -> Notice? {
         if scanning {
             return .banner(overview.freshness.picture == .missing ? .scanning : .refreshing)
         }
-        return gaps(overview, access: access)
+        return gaps(overview, denied: denied)
     }
 
-    /// What the picture's gaps tell the user, nil when it has none. With
-    /// Full Disk Access the folders still denied are closed to every app
-    /// (root's own, or kept by the system): no reason to warn, and none to
-    /// ask for access.
-    static func gaps(_ overview: Overview, access: FullDiskAccess) -> Notice? {
+    /// What the picture's gaps tell the user, nil when it has none. Access
+    /// is offered only for folders it may open; folders closed to every app
+    /// are counted quietly when nothing else is missing; those of a picture
+    /// made before access was granted are only unread.
+    static func gaps(_ overview: Overview, denied kind: DeniedFolders) -> Notice? {
         guard overview.freshness.picture == .partial, let coverage = overview.coverage else {
             return nil
         }
         let denied = coverage.gaps.first { $0.kind == .denied }?.count ?? 0
         let missing = coverage.gaps.reduce(0) { $0 + $1.count } - denied
-        guard access == .granted else {
-            // Access is offered only when a folder is denied.
-            return denied > 0 ? .banner(.partial(denied: denied, missing: missing))
-                : .banner(.unread(missing: missing, closed: 0))
+        switch kind {
+        case .kept where denied > 0:
+            return .banner(.partial(denied: denied, missing: missing))
+        case .kept:
+            return .banner(.unread(missing: missing, closed: 0))
+        case .closed:
+            return missing == 0 ? .closed(denied) : .banner(.unread(missing: missing, closed: denied))
+        case .outdated:
+            return .banner(.unread(missing: missing + denied, closed: 0))
         }
-        return missing == 0 ? .closed(denied) : .banner(.unread(missing: missing, closed: denied))
     }
 
     /// One row per category: what cleaning its preselected candidates
@@ -209,6 +213,29 @@ public struct OverviewData: Equatable, Sendable {
             Part(
                 id: names.kind(kind.kind), name: names.kind(kind.kind), bytes: kind.bytes,
                 share: Format.share(kind.bytes, of: total))
+        }
+    }
+}
+
+/// What the picture's denied folders are, as the app can tell.
+public enum DeniedFolders: Equatable, Sendable {
+    /// Without Full Disk Access, or when it cannot be told: access may open
+    /// them.
+    case kept
+    /// With it: closed to every app (root's own, or kept by the system).
+    case closed
+    /// With it, but the picture holds as denied a place the probe has just
+    /// listed: it was made before access was granted, and its denied
+    /// folders are only unread until a full scan reads them again.
+    case outdated
+
+    /// By the access probed, and whether the picture holds as denied a
+    /// place the probe listed.
+    public init(_ access: FullDiskAccess, missesOpened: Bool) {
+        switch (access, missesOpened) {
+        case (.granted, false): self = .closed
+        case (.granted, true): self = .outdated
+        default: self = .kept
         }
     }
 }

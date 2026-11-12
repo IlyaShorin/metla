@@ -175,7 +175,7 @@ struct SettingsView: View {
             }
             .tabItem { Label(model.strings.text("settings.exclusions"), systemImage: "nosign") }
             .tag(SettingsTab.exclusions)
-            AccessPane(access: model.access, strings: model.strings)
+            AccessPane(access: model.access, strings: model.strings) { await model.checkAccess() }
                 .tabItem { Label(model.strings.text("settings.access"), systemImage: "lock.shield") }
                 .tag(SettingsTab.access)
         }
@@ -185,7 +185,7 @@ struct SettingsView: View {
         .task {
             await model.general?.load()
             await model.exclusions?.load()
-            await model.access.check()
+            await model.checkAccess()
         }
     }
 }
@@ -388,6 +388,8 @@ struct ExclusionsPane: View {
 struct AccessPane: View {
     let access: AccessModel
     let strings: Strings
+    /// "Check Again": probes, and tells the picture by the answer.
+    var check: () async -> Void = {}
 
     var body: some View {
         Form {
@@ -403,7 +405,7 @@ struct AccessPane: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button(strings.text("access.open")) { SystemSettings.openFullDiskAccess() }
-                Button(strings.text("access.recheck")) { Task { await access.check() } }
+                Button(strings.text("access.recheck")) { Task { await check() } }
             }
             if access.state != .granted {
                 Text(strings.text("access.restart")).font(.caption).foregroundStyle(.secondary)

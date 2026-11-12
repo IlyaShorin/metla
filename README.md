@@ -144,7 +144,8 @@ root may read (mode 700) and those the system itself protects (such as
 Spotlight's index and data vaults). No app can read them whatever the
 setting, so they are not counted. With access granted, the Overview says
 how many in a quiet line under the disk's legend instead of the partial
-banner, and nothing asks you to grant access for them.
+banner, and nothing asks you to grant access for them. A picture made
+before you granted access is scanned again once, by itself.
 
 macOS ties the grant to the app's signature. A build ad-hoc signed (the
 default) is a new app to macOS after every rebuild, and the grant is

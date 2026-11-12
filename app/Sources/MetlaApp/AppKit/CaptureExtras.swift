@@ -28,7 +28,7 @@ enum CaptureExtras {
         _ = try? await client.addExclusion((root as NSString).appendingPathComponent("home/Documents"))
         await model.exclusions?.load()
         await model.general?.load()
-        await model.access.check()
+        await model.checkAccess()
 
         let selection = await previewSelection(model)
         await cleanup.open(selection)

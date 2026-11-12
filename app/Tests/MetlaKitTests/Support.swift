@@ -91,12 +91,14 @@ final class RefusingTrash: TrashHost, Sendable {
     }
 }
 
-/// A probe with fixed answers.
+/// A probe with fixed answers, for `places` in order.
 struct FixedProbe: AccessProbe {
     let given: [ProbeAnswer]
+    let places: [String]
 
-    init(_ given: [ProbeAnswer]) {
+    init(_ given: [ProbeAnswer], places: [String] = []) {
         self.given = given
+        self.places = places
     }
 
     func answers() async -> [ProbeAnswer] {

@@ -299,6 +299,34 @@ import Testing
         #expect(data.banner == nil && data.closed == 1)
         #expect(model.status?.text.hasPrefix("Updated") == true && model.status?.text.contains("partial") == false)
         #expect(model.status?.tone == .current)
+        #expect(model.freshness?.fullScansEnded == 1, "no place the probe listed is denied: no scan again")
+    }
+
+    /// With access granted, a picture that holds as denied a place the
+    /// probe has just listed was made before access: one full scan, as
+    /// Refresh starts it, reads it again, and only one per launch, even
+    /// when the folder stays denied. Its folders are unread, never
+    /// "closed to every app".
+    @Test func aPictureMadeBeforeAccessIsScannedAgainOnce() async throws {
+        let root = try closedRoot()
+        defer { reopen(root) }
+        let closed = root.appendingPathComponent("closed").path
+        let model = try await started(Fixture.settings(root: root.path), probe: FixedProbe([.listed], places: [closed]))
+        defer { model.stop() }
+        try await until {
+            await model.refresh([.activity, .picture])
+            guard case .idle? = model.freshness?.state else { return false }
+            return (model.freshness?.fullScansEnded ?? 0) >= 2
+        }
+        for _ in 0..<5 {
+            try await Task.sleep(for: .milliseconds(100))
+            await model.refresh([.activity, .picture])
+        }
+        #expect(model.freshness?.fullScansEnded == 2, "the first scan and one more, not a loop")
+        #expect(model.denied == .outdated)
+        let data = try #require(model.overviewData)
+        #expect(data.banner == .unread(missing: 1, closed: 0) && data.closed == nil)
+        #expect(model.status?.text.hasSuffix("· partial") == true)
     }
 
     /// Full Disk Access is probed when the model starts, before the first

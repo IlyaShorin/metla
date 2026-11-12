@@ -33,9 +33,43 @@ import Testing
         #expect(FullDiskAccess.from([]) == .unknown)
         let access = AccessModel(probe: FixedProbe([.missing, .denied]), preferences: MemoryPreferences())
         #expect(access.state == .unknown, "nothing assumed before a probe")
-        await access.check()
+        let reading = await access.read()
+        #expect(reading.state == .notGranted)
+        #expect(access.state == .unknown, "read, not shown yet")
+        access.show(reading.state)
         #expect(access.state == .notGranted)
         #expect(AccessModel.settingsURL.absoluteString.hasSuffix("Privacy_AllFiles"))
+    }
+
+    /// The places a probe listed are the ones access opens.
+    @Test func aReadingNamesThePlacesTheProbeListed() async {
+        let probe = FixedProbe([.missing, .listed, .denied], places: ["/a", "/b", "/c"])
+        let reading = await AccessModel(probe: probe, preferences: MemoryPreferences()).read()
+        #expect(reading == AccessModel.Reading(state: .granted, opened: ["/b"]))
+        #expect(LibraryProbe(home: "/h").places == [
+            "/h/Library/Mail", "/h/Library/Safari", "/Library/Application Support/com.apple.TCC"])
+    }
+
+    /// The picture's denied folders, by the access probed and whether the
+    /// picture holds as denied a place the probe listed.
+    @Test func deniedFoldersAreClosedOnlyWithAccessAndAPictureMadeWithIt() {
+        #expect(DeniedFolders(.granted, missesOpened: false) == .closed)
+        #expect(DeniedFolders(.granted, missesOpened: true) == .outdated)
+        for access in [FullDiskAccess.notGranted, .unknown] {
+            for misses in [false, true] {
+                #expect(DeniedFolders(access, missesOpened: misses) == .kept)
+            }
+        }
+    }
+
+    /// A picture made before access was granted is read again by one full
+    /// scan per launch.
+    @Test func anOutdatedPictureIsScannedAgainOncePerLaunch() {
+        #expect(AppModel.rescansForAccess(.outdated, rescanned: false))
+        #expect(!AppModel.rescansForAccess(.outdated, rescanned: true), "once per launch")
+        for denied in [DeniedFolders.kept, .closed] {
+            #expect(!AppModel.rescansForAccess(denied, rescanned: false))
+        }
     }
 
     @Test func theProbeListsOnlyAndTellsMissingFromDenied() async throws {

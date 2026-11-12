@@ -179,9 +179,23 @@ public final class AccessModel {
         firstRunDone = preferences.string(forKey: Self.firstRunKey) == "1"
     }
 
-    /// Probes again ("Re-check").
-    public func check() async {
-        state = FullDiskAccess.from(await probe.answers())
+    /// What a probe found: Full Disk Access, and the protected places it
+    /// listed (the ones access opens).
+    public struct Reading: Equatable, Sendable {
+        public let state: FullDiskAccess
+        public let opened: [String]
+    }
+
+    /// Probes, without showing the answer: the app shows it together with
+    /// what it makes of the picture by it (`AppModel.checkAccess`).
+    public func read() async -> Reading {
+        let answers = await probe.answers()
+        let opened = zip(probe.places, answers).filter { $0.1 == .listed }.map(\.0)
+        return Reading(state: FullDiskAccess.from(answers), opened: opened)
+    }
+
+    public func show(_ state: FullDiskAccess) {
+        self.state = state
     }
 
     /// The first-run sheet shows once.

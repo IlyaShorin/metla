@@ -985,7 +985,10 @@ another user owns it stays `InspectionFailed` (a worktree) or
   assumed and never worked around: when the model starts, whenever the
   app becomes active and after a full scan ends. With access granted,
   denied gaps are *closed folders* (closed to every app): the Overview
-  and the status do not warn of them; the first-run sheet shows once.
+  and the status do not warn of them; unless the picture holds as denied
+  a folder the probe has just listed (`children` of its path): it was
+  made before access, its denied folders are only unread, and one full
+  scan per launch reads it again. The first-run sheet shows once.
 * **Power.** `PowerMonitor` (IOKit power-source notifications, Low
   Power Mode, thermal state; no timers) feeds `PowerState.profile`, a
   pure table, whose answer the app hands to `set_power_profile`; a scan

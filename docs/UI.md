@@ -51,7 +51,12 @@ is shipped as a localisation.
      link;
    * granted, with other gaps (failed, vanished, cancelled): a banner that
      counts those and the closed folders apart, with "Show folders" and
-     no access button.
+     no access button;
+   * granted, but the picture holds as denied a folder the probe has just
+     listed (it was made before access was granted): the denied folders
+     count as unread in that banner, never as closed, and one full scan
+     per launch, started as Refresh starts it, reads the picture again
+     (the Overview says "Refreshing…" meanwhile).
 
    Never shown as an error when the scan is merely
    in progress — that state says "Scanning…" (the numbers grow) for a

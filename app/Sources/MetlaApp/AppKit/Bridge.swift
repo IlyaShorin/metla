@@ -94,7 +94,7 @@ final class Bridge {
     /// The app became active: Full Disk Access may have changed meanwhile
     /// (the user comes back from System Settings), so it is probed again.
     func becameActive() async {
-        await model.access.check()
+        await model.checkAccess()
     }
 
     /// A global hotkey was pressed.

@@ -48,12 +48,19 @@ the gates in [QUALITY.md](QUALITY.md).
    (`EPERM`: Spotlight's index, data vaults). They are not counted, so
    every size is a lower bound by them. With access granted the Overview
    counts them in a quiet line of the disk card, not in a banner, and the
-   status does not mark the picture partial for them. The engine counts
-   every denied folder alike (`EACCES` and `EPERM`, a system folder and
-   one that access would open): with access granted, *every* denied folder
-   is called closed to every app, also another user's home folder, and
-   also, until a full scan or a change there reads them again, the folders
-   of a picture taken before access was granted.
+   status does not mark the picture partial for them. A picture taken
+   before access was granted is told by the probe's own folders: when the
+   picture holds one of them as denied although the probe has just
+   listed it, its denied folders are counted only as unread, and one full
+   scan per launch (started as Refresh starts it) reads it again. Looking
+   a folder up lists its own entries once more through the engine. The
+   engine counts every denied folder alike (`EACCES` and `EPERM`, a system
+   folder and one only this user cannot read): with access granted and a
+   picture that holds none of the probe's folders as denied, *every*
+   denied folder is called closed to every app, also another user's home
+   folder. When the probe's folders are not in the picture (another root,
+   or a picture whose scan did not reach them), an outdated picture is not
+   recognised.
 8. **One root, one volume.** The engine analyses `/` (the system and data
    volumes of the boot container). Other volumes, disk images, network
    shares and cloud placeholders are skipped, not analysed; iCloud Drive
@@ -94,8 +101,10 @@ the gates in [QUALITY.md](QUALITY.md).
 16. **The Full Disk Access deep link.** The button opens the System Settings
     URL; that the right pane comes up was not checked, and granting access
     was never done on the development machine. What the Overview and the
-    status say with access granted is checked by tests with a probe that
-    answers "granted", not by the capture: the development build is not
+    status say with access granted, and the one full scan for a picture
+    taken before access, are checked by tests with a probe that answers
+    "granted" (on a fixture whose folder of mode 000 the probe claims to
+    have listed), not by the capture: the development build is not
     granted access, and the capture's fixture has no denied folder. The
     new banner, the disk card's line, the first-run sheet and Settings →
     Access with access granted were drawn once (0.7.2, English and

@@ -85,8 +85,16 @@ public final class AppModel {
     /// closed when the hotkey asked for it), not as a sheet.
     public var cleanupInWindow = false
 
-    /// The engine's count of ended full scans when the model last looked.
+    /// The engine's count of ended full scans when access was last
+    /// checked: a full scan that ends after it is looked at again.
     private var scansSeen: UInt64?
+    /// What the picture's denied folders are, by the last probe; shown
+    /// together with the probe's answer.
+    public private(set) var denied: DeniedFolders = .kept
+    /// A full scan was started in this launch because the picture was made
+    /// before Full Disk Access: at most one, so a folder that stays denied
+    /// cannot make a loop.
+    private var accessRescanned = false
 
     private var pacer = RefreshPacer()
     private var listener: Task<Void, Never>?
@@ -113,8 +121,6 @@ public final class AppModel {
         mainThread: MainThreadGuard = .standard, trash: any TrashHost = SystemTrash(),
         login: (any LoginItem)? = nil
     ) async {
-        // First: the first picture's gaps are told by it.
-        await access.check()
         do {
             let client = try await EngineClient.open(settings.options, trash: trash, mainThread: mainThread)
             self.client = client
@@ -126,6 +132,8 @@ public final class AppModel {
             }
             await readLastReport(client)
             volume = await Self.volume(of: settings.root)
+            // Before the first picture is read: its gaps are told by it.
+            await checkAccess()
             await refresh(Self.everything)
             if let freshness, Self.takesOver(freshness) {
                 await holdUserScan(endsAt: freshness.fullScansEnded + 1)
@@ -133,7 +141,50 @@ public final class AppModel {
             listen(to: client)
         } catch {
             failure = String(describing: error)
+            await checkAccess()
         }
+    }
+
+    /// Probes Full Disk Access, looks whether the picture holds as denied
+    /// a place the probe has just listed (then it was made before access
+    /// was granted), and shows both at once; such a picture is read again
+    /// by one full scan per launch, started as Refresh starts it. At the
+    /// start, when the app becomes active and after a full scan ends.
+    public func checkAccess() async {
+        let reading = await access.read()
+        // The count before the picture is looked at: a scan that ends
+        // after this is looked at again.
+        if let ended = (try? await client?.freshness())?.fullScansEnded {
+            scansSeen = max(scansSeen ?? 0, ended)
+        }
+        let misses = reading.state == .granted ? await holdsDenied(reading.opened) : false
+        access.show(reading.state)
+        denied = DeniedFolders(reading.state, missesOpened: misses)
+        if Self.rescansForAccess(denied, rescanned: accessRescanned) {
+            accessRescanned = true
+            await rescan()
+        }
+    }
+
+    /// Whether the picture holds one of `places` as a denied gap.
+    private func holdsDenied(_ places: [String]) async -> Bool {
+        guard let client else {
+            return false
+        }
+        for place in places {
+            if let page = try? await client.children(.path(place), offset: 0, limit: 0), page.dir.gap == .denied {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Whether to read the picture again for Full Disk Access: it was made
+    /// before access was granted, and no full scan was started for that in
+    /// this launch. A full scan that runs meanwhile does not matter: the
+    /// one asked for runs after it, as after Refresh.
+    static func rescansForAccess(_ denied: DeniedFolders, rescanned: Bool) -> Bool {
+        denied == .outdated && !rescanned
     }
 
     /// Binds the global hotkeys through `registrar` and registers them.
@@ -219,18 +270,15 @@ public final class AppModel {
         largest = try await client.largestFolders(limit: Self.shownFolders)
     }
 
-    /// Probes Full Disk Access again when a full scan has ended since the
-    /// model last looked: the picture's gaps are told by the access the
-    /// app has after it.
+    /// Checks Full Disk Access again when a full scan has ended since it
+    /// was last checked: the picture's gaps are told by the access the app
+    /// has after it.
     private func probeAfterScan() async {
-        guard let ended = freshness?.fullScansEnded else {
+        guard let ended = freshness?.fullScansEnded, let seen = scansSeen, ended > seen else {
             return
         }
-        let seen = scansSeen
         scansSeen = ended
-        if let seen, ended > seen {
-            await access.check()
-        }
+        await checkAccess()
     }
 
     private func refreshScreen(picture: Bool) async {
@@ -268,7 +316,7 @@ public final class AppModel {
     /// The toolbar's status: as on the Overview, folders closed to every
     /// app do not make the picture read as partial.
     public var status: StatusLine? {
-        let gaps = overview.flatMap { OverviewData.gaps($0, access: access.state) }
+        let gaps = overview.flatMap { OverviewData.gaps($0, denied: denied) }
         let closedOnly = if case .closed? = gaps { true } else { false }
         return freshness.map {
             StatusLine.of($0, expected: overview?.totals?.bytes, now: now, strings, closedOnly: closedOnly)
@@ -278,7 +326,7 @@ public final class AppModel {
     /// The Overview's values, once there is a snapshot.
     public var overviewData: OverviewData? {
         overview.map {
-            OverviewData.make($0, largest: largest, volume: volume, home: settings.home, access: access.state, names)
+            OverviewData.make($0, largest: largest, volume: volume, home: settings.home, denied: denied, names)
         }
     }
 
