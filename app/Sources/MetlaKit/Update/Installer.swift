@@ -187,29 +187,35 @@ public struct Installer: UpdateSteps {
 
 /// Starting the app again once this process has ended.
 public enum Relaunch {
+    /// A new instance of the bundle at the path given: not another copy
+    /// with the same identifier that may be running, and not the process
+    /// that has just ended while the system still lists it.
+    public static let opener = ["/usr/bin/open", "-n"]
+
     /// Starts a shell, detached from this process's output, that waits
-    /// until process `pid` has ended (at most `seconds`) and then runs
-    /// `opener` with `--env NAME=value` for each of `environment` and then
-    /// `bundle`. The arguments are passed as arguments, never put into the
-    /// script.
+    /// until process `pid` has ended and then runs `opener` with `--env
+    /// NAME=value` for each of `environment` and then `bundle`; when the
+    /// process has not ended after `seconds`, it opens nothing. The
+    /// arguments are passed as arguments, never put into the script.
     @discardableResult
     public static func after(
-        pid: Int32, open bundle: URL, environment: [String: String] = [:], opener: String = "/usr/bin/open",
+        pid: Int32, open bundle: URL, environment: [String: String] = [:], opener: [String] = Relaunch.opener,
         seconds: Int = 60
     ) throws -> Process {
         let script = """
-            pid=$1 app=$2 opener=$3 tries=$(( $4 * 5 ))
-            shift 4
-            while /bin/kill -0 "$pid" 2>/dev/null && [ "$tries" -gt 0 ]; do
+            pid=$1 app=$2 tries=$(( $3 * 5 ))
+            shift 3
+            while /bin/kill -0 "$pid" 2>/dev/null; do
+                [ "$tries" -gt 0 ] || exit 1
                 /bin/sleep 0.2
                 tries=$(( tries - 1 ))
             done
-            exec "$opener" "$@" "$app"
+            exec "$@" "$app"
             """
         let carried = environment.sorted { $0.key < $1.key }.flatMap { ["--env", "\($0.key)=\($0.value)"] }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", script, "metla-relaunch", String(pid), bundle.path, opener, String(seconds)] + carried
+        process.arguments = ["-c", script, "metla-relaunch", String(pid), bundle.path, String(seconds)] + opener + carried
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice

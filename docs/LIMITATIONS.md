@@ -253,9 +253,10 @@ the gates in [QUALITY.md](QUALITY.md).
       the old one in that folder; when putting the old one back fails,
       the app says on stderr where it is and keeps that folder.
     * After Install the app quits; a small shell started by it waits for
-      the old process to end (at most 60 s) and opens the bundle at the
-      same path, with the app's own `METLA_` variables and nothing else
-      of its environment.
+      the old process to end and starts a new instance of the bundle at
+      the same path (`open -n`), with the app's own `METLA_` variables and
+      nothing else of its environment. When the old process has not ended
+      after 60 s, it opens nothing, and Metla is opened again by hand.
     * GitHub's API answers at most 60 unauthenticated requests an hour
       per address; past that a check fails with "GitHub answered with
       error 403" (silently, when it was automatic).

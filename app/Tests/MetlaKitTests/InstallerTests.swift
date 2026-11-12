@@ -257,15 +257,33 @@ import Testing
         sleeper.arguments = ["1"]
         try sleeper.run()
         let marker = box("opened with spaces")
-        let helper = try Relaunch.after(pid: sleeper.processIdentifier, open: marker, opener: "/usr/bin/touch")
+        let helper = try Relaunch.after(pid: sleeper.processIdentifier, open: marker, opener: ["/usr/bin/touch"])
         try await Task.sleep(for: .milliseconds(400))
         #expect(!FileManager.default.fileExists(atPath: marker.path), "not while the process runs")
         sleeper.waitUntilExit()
         helper.waitUntilExit()
         #expect(FileManager.default.fileExists(atPath: marker.path) && helper.terminationStatus == 0)
-        let gone = try Relaunch.after(pid: sleeper.processIdentifier, open: box("second"), opener: "/usr/bin/touch")
+        let gone = try Relaunch.after(pid: sleeper.processIdentifier, open: box("second"), opener: ["/usr/bin/touch"])
         gone.waitUntilExit()
         #expect(FileManager.default.fileExists(atPath: box("second").path), "at once for a process that has ended")
+        #expect(Relaunch.opener == ["/usr/bin/open", "-n"], "a new instance of the bundle at that path")
+    }
+
+    /// A process that outlives the wait: nothing is opened, so no second
+    /// instance of the same copy starts.
+    @Test func aProcessThatDoesNotEndIsNotJoinedByASecond() throws {
+        let box = Sandbox()
+        defer { box.remove() }
+        let sleeper = Process()
+        sleeper.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        sleeper.arguments = ["5"]
+        try sleeper.run()
+        defer { sleeper.terminate() }
+        let helper = try Relaunch.after(
+            pid: sleeper.processIdentifier, open: box("never"), opener: ["/usr/bin/touch"], seconds: 1)
+        helper.waitUntilExit()
+        #expect(helper.terminationStatus == 1 && sleeper.isRunning)
+        #expect(!FileManager.default.fileExists(atPath: box("never").path))
     }
 
     /// The new copy gets the app's own `METLA_` variables as `open --env`
@@ -279,11 +297,12 @@ import Testing
         let given = ["METLA_ROOT": "/fx", "HOME": "/h", "METLA_UPDATE_FEED": "file:///f/latest.json", "PATH": "/bin"]
         let carried = Relaunch.carried(given)
         #expect(carried == ["METLA_ROOT": "/fx", "METLA_UPDATE_FEED": "file:///f/latest.json"])
-        let helper = try Relaunch.after(pid: 999_999, open: box("Metla app"), environment: carried, opener: opener.path)
+        let helper = try Relaunch.after(
+            pid: 999_999, open: box("Metla app"), environment: carried, opener: [opener.path, "-n"])
         helper.waitUntilExit()
         let arguments = try String(contentsOf: box("arguments"), encoding: .utf8).split(separator: "\n").map(String.init)
         #expect(arguments == [
-            "--env", "METLA_ROOT=/fx", "--env", "METLA_UPDATE_FEED=file:///f/latest.json", box("Metla app").path,
+            "-n", "--env", "METLA_ROOT=/fx", "--env", "METLA_UPDATE_FEED=file:///f/latest.json", box("Metla app").path,
         ])
     }
 }
