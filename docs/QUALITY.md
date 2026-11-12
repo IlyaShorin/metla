@@ -428,12 +428,16 @@ disk, the script as committed in 37fd593:
   78 s (0 diagnostics, 100 tests in 14 suites, MetlaKit 93.51 % of
   2,405 lines), quality-tests 242 s (fmt, clippy, tests 74 + 439 + 23,
   the slow group 1 + 12, stability 5 of 5 with 536 tests each).
-* Not checked: signing with a real certificate (the timestamp, the zip
-  of such a bundle and its signature after unpacking, a downloaded
-  copy under Gatekeeper), that the Full Disk Access grant survives an
-  update between two certificate-signed builds, a certificate-signed
-  build on a second Mac, and the grant after the certificate is
-  replaced by a renewed one.
+* Checked by the maintainer on their own Mac on 2026-11-12, at a83a08a,
+  with their certificate: the release build with `METLA_SIGN_IDENTITY`
+  exit 0, the identity in none of the output's lines, `Metla.zip` made;
+  the copy unpacked from it passes `codesign --verify --deep --strict`
+  and carries a Timestamp, and its designated requirement equals that
+  of the certificate-signed 0.7.2 copy installed on the same Mac.
+* Not checked: a downloaded copy under Gatekeeper, the Full Disk
+  Access grant seen to survive an update between two certificate-signed
+  builds, a certificate-signed build on a second Mac, and the grant
+  after the certificate is replaced by a renewed one.
 
 ## What no tool checks
 
