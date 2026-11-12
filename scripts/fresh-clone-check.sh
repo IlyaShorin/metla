@@ -7,8 +7,11 @@
 #   scripts/fresh-clone-check.sh <dir>
 #
 # Steps: build-core.sh; build-app.sh --debug; relink-check.sh (a change
-# to the core alone reaches the app); run-app.sh --capture (a
-# fixture made by metla-cli, the pictures in <dir>/shots); run-scenarios.sh;
+# to the core alone reaches the app, and the app is left linked with the
+# real core); run-app.sh --capture (a fixture made by metla-cli, the
+# pictures in <dir>/shots); run-scenarios.sh; stamps (the capture and
+# every scenario ran an app whose first line names the stamp of this
+# clone's core, not the one relink-check made);
 # build-app.sh --release (with its local-path check); quality-swift.sh;
 # quality.sh with QUALITY_STEPS=tests (fmt, clippy, tests, slow tests,
 # stability: the whole gate takes hours). Put <dir> on a volume with a few
@@ -37,11 +40,26 @@ step() {
     [[ $code -eq 0 ]] || failed+=("$name")
 }
 
+# The app's first line on stderr in the capture's and the scenarios'
+# logs names the core it links; each must be this clone's plain core.
+stamps() {
+    local expected found
+    expected="$(cat core/target/app-core/plain/lib/stamp)"
+    found="$(grep -h "^metla .*, core " "$logs/run-app.txt" "$logs/scenarios.txt")"
+    printf '%s\n' "$found"
+    if [[ -z "$found" ]] || grep -v -q -F ", core $expected" <<<"$found"; then
+        echo "an app ran with another core than this clone's ($expected)"
+        return 1
+    fi
+    echo "$(sort -u <<<"$found") (each of $(wc -l <<<"$found" | tr -d ' ') runs: this clone's core)"
+}
+
 step build-core scripts/build-core.sh
 step build-debug scripts/build-app.sh --debug
 step relink scripts/relink-check.sh
 step run-app scripts/run-app.sh --capture "$clone/target/shots"
 step scenarios scripts/run-scenarios.sh
+step stamps stamps
 step build-release scripts/build-app.sh --release
 step quality-swift scripts/quality-swift.sh
 step quality-tests env QUALITY_STEPS=tests scripts/quality.sh

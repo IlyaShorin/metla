@@ -2,9 +2,10 @@
 # Runs the debug app's cleanup scenarios (`--scenario <name>`), each on a
 # fixture of its own made by metla-cli: the real view models drive the
 # flow end to end, and the app exits non-zero when the fixture's state on
-# disk afterwards is not what the flow confirmed. Prints one line per
-# scenario and exits non-zero when any failed; a scenario still running
-# after its limit is stopped and fails.
+# disk afterwards is not what the flow confirmed. Prints, per scenario, the
+# app's first line (its version and the stamp of the core it links) and
+# what the scenario says, and exits non-zero when any failed; a scenario
+# still running after its limit is stopped and fails.
 #
 # The debug app has the installed app's bundle id: it is started with
 # -ApplePersistenceIgnoreState YES, so it neither reads nor writes the
@@ -63,7 +64,7 @@ for name in "${names[@]}"; do
         "$app" --scenario "$name" -ApplePersistenceIgnoreState YES >"$root.log" 2>&1 &
     stop_after "$limit" $! "$root.log"
     code=$?
-    grep -E "^scenario |FAILED" "$root.log"
+    grep -E "^metla |^scenario |FAILED" "$root.log"
     echo "exit $code"
     [[ $code -eq 0 ]] || failed+=("$name")
 done
