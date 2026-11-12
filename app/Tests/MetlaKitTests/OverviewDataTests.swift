@@ -137,6 +137,17 @@ import Testing
         }
     }
 
+    /// Without access, but with no folder denied: access would not help,
+    /// so the banner neither says "no access to 0 folders" nor offers it.
+    @Test func withoutFullDiskAccessButNothingDeniedTheBannerDoesNotAskForIt() {
+        for access in [FullDiskAccess.notGranted, .unknown] {
+            for kind in [GapKind.failed, .vanished, .cancelled] {
+                let gaps = [GapCount(kind: .denied, count: 0), GapCount(kind: kind, count: 3)]
+                #expect(make(overview(picture: .partial, gaps: gaps), access: access).notice == .banner(.unread(missing: 3, closed: 0)))
+            }
+        }
+    }
+
     /// With Full Disk Access the folders still denied are closed to every
     /// app: a quiet line of the disk card says how many, no banner.
     @Test func withFullDiskAccessFoldersStillDeniedAreClosedToEveryAppAndRaiseNoBanner() {

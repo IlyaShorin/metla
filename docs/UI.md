@@ -42,7 +42,8 @@ is shipped as a localisation.
    as probed (one pure decision, `OverviewData.notice`):
    * not granted or cannot tell: what is missing, why, buttons "Show
      folders" (opens the list of inaccessible areas) and "Open access
-     settings";
+     settings"; when no folder is denied, the banner of unread folders
+     below, without the access button;
    * granted, and the only gaps are denied folders: no banner. They are
      *closed folders*, closed to every app whatever the setting; a quiet
      line under the disk card's legend counts them ("279 system folders

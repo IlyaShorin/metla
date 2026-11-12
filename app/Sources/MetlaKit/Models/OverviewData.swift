@@ -49,8 +49,9 @@ public struct OverviewData: Equatable, Sendable {
         /// folders macOS kept from the app (access may open them),
         /// `missing` ones not read for another reason.
         case partial(denied: UInt64, missing: UInt64)
-        /// With Full Disk Access: `missing` folders not read; the
-        /// `closed` ones are closed to every app, access cannot open them.
+        /// `missing` folders not read, none of them for want of access;
+        /// the `closed` ones are closed to every app (with Full Disk
+        /// Access). Nothing to ask access for.
         case unread(missing: UInt64, closed: UInt64)
     }
 
@@ -123,7 +124,9 @@ public struct OverviewData: Equatable, Sendable {
         let denied = coverage.gaps.first { $0.kind == .denied }?.count ?? 0
         let missing = coverage.gaps.reduce(0) { $0 + $1.count } - denied
         guard access == .granted else {
-            return .banner(.partial(denied: denied, missing: missing))
+            // Access is offered only when a folder is denied.
+            return denied > 0 ? .banner(.partial(denied: denied, missing: missing))
+                : .banner(.unread(missing: missing, closed: 0))
         }
         return missing == 0 ? .closed(denied) : .banner(.unread(missing: missing, closed: denied))
     }
