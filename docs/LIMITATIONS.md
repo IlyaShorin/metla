@@ -260,9 +260,18 @@ the gates in [QUALITY.md](QUALITY.md).
     * GitHub's API answers at most 60 unauthenticated requests an hour
       per address; past that a check fails with "GitHub answered with
       error 403" (silently, when it was automatic).
-    * Not checked by an automated run: an update between two
-      certificate-signed builds (the maintainer's test, by a test feed:
-      CONTRIBUTING), a real download from GitHub (possible only once a
-      release after 0.8.0 exists), the relaunch itself (the scenario
-      records it as a request), and the Full Disk Access grant seen to
-      survive an update.
+    * The maintainer's runs on certificate-signed test copies, through
+      the update's code rather than the app's window, installed an
+      update between two such builds by a test feed and relaunched
+      exactly one new instance, refused a download signed ad-hoc, and
+      installed a real download of the published 0.7.3 over a copy
+      marked 0.7.2 (QUALITY.md, "The update on certificate-signed
+      copies"). Not checked: Install pressed in the app's own window
+      (the buttons, `Signature.running()` inside a certificate-signed
+      running app, `NSApp.terminate` followed by the relaunch); the
+      automatic check at a real launch and the daily one; the "Check for
+      Updates…" menu item; the pages opened in the browser; the Full Disk
+      Access grant seen to survive an in-app update; an update between
+      two published releases through the app itself (possible only once
+      a release after 0.8.0 exists); a renewed certificate; a real
+      translocated copy or a read-only volume.

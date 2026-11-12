@@ -573,14 +573,76 @@ again on 925199d.
   241 s (fmt, clippy, tests 74 + 439 + 23, the slow group 1 + 12,
   stability 5 of 5 with 536 tests each). The same steps had passed on
   the code before the two relaunch commits.
-* Not checked: an update between two certificate-signed builds (the
-  maintainer's test, with a test feed: CONTRIBUTING), a real download
-  from GitHub (possible once a release after 0.8.0 exists), the
-  relaunch itself and that exactly one instance then runs with its
-  window, the Full Disk Access grant kept after an update, a
-  translocated copy and a read-only volume (their order is tested, not
-  a real case), the automatic check at a real launch, the "Check for
-  Updates…" menu item and the pages opened in the browser.
+* Not checked by these runs: an update between two certificate-signed
+  builds (the maintainer's test, with a test feed: CONTRIBUTING), a real
+  download from GitHub, the relaunch itself and that exactly one
+  instance then runs with its window (the maintainer's runs on
+  certificate-signed copies, next, have since made these three through
+  the update's code, not the app's window), the Full Disk Access grant
+  kept after an update, a translocated copy and a read-only volume
+  (their order is tested, not a real case), the automatic check at a
+  real launch, the "Check for Updates…" menu item and the pages opened
+  in the browser.
+
+**The update on certificate-signed copies** (the maintainer's runs
+after 0.8.0, through the update's code, not the app's window). Since
+925199d only documents changed, no source: no gate was rerun, and the
+fresh-clone check on 925199d recorded above still stands. On
+2026-11-12, at b42ae4c, every run used copies signed with the
+maintainer's Apple Development certificate and a secure timestamp, in
+a folder of the test's own (never `/Applications`, never the installed
+copy). A small harness kept outside the repository (a Swift Testing
+file using only MetlaKit's public API) drove the app's own factory,
+`UpdateModel.app(bundle:stamp:environment:signature:preferences:cleanupRunning:relaunch:)`,
+not the app's window; the procedure through the app's window is the
+one in CONTRIBUTING ("The update's test feed"). Stand-ins in all three
+runs: the copy's signature was read with `Signature.of(bundle)` in
+place of `Signature.running()`; the preferences were in memory; the
+relaunch closure recorded the request and, in the first run only,
+then called `Relaunch.after` with the harness's own pid.
+
+* The plain flavour (stamp `…-plain`), with a test feed by
+  `METLA_UPDATE_FEED` (file URLs): a copy at 0.8.0 (11) and a
+  `Metla.zip` holding the same build marked 0.8.1 (12), both signed
+  with the same certificate; their designated requirements were equal
+  to each other and to that of the installed copy. 0.8.1 was offered,
+  downloaded (size and SHA-256 matched), its signature verified against
+  the copy's own designated requirement, and swapped. Afterwards the
+  copy read 0.8.1 (12), passed `codesign --verify --deep --strict` and
+  had the same designated requirement; no replacement directory
+  (`NSIRD_Metla_*`) was left in the user's TemporaryItems; the
+  relaunch helper started exactly one new instance of that copy, with
+  the `METLA_` variables carried on (it ran on the same fixture) and
+  its main window on screen (seen as a window of that process in the
+  window list, not looked at); the copy in `/Applications` was
+  unchanged (the same executable hash before and after).
+* The same with the 0.8.1 archive signed ad-hoc: Install ended as
+  `notSigned` ("not signed by this app's signer"); the copy was
+  unchanged file for file (a hash over all its files equal before and
+  after), still 0.8.0 (11); no replacement directory was left; no
+  relaunch was asked for.
+* The production stamp (`…-production`), with `METLA_UPDATE_FEED` set
+  and ignored (the line said "fixed in this build; METLA_UPDATE_FEED
+  ignored"), on a certificate-signed copy marked 0.7.2 (9): one real
+  request to GitHub's API and one real download from GitHub of the
+  published v0.7.3 `Metla.zip` (2,730,275 bytes; the API listed a
+  `sha256:` digest; the download went through GitHub's https
+  redirect). It was verified and swapped: the copy then read 0.7.3
+  (10), passed `codesign --verify --deep --strict`, was file for file
+  identical to the published 0.7.3 build and carried no quarantine
+  attribute. No relaunch was made in this run.
+* `/usr/bin/ditto -x -k` on a crafted zip with `../` entries (macOS
+  26) keeps those entries inside the destination folder; such an
+  archive then fails the rule of exactly one entry, `Metla.app`.
+* Not checked: Install pressed in the app's own window (the buttons,
+  `Signature.running()` inside a certificate-signed running app,
+  `NSApp.terminate` followed by the relaunch); the automatic check at a
+  real launch and the daily one; the "Check for Updates…" menu item;
+  the pages opened in the browser; the Full Disk Access grant seen to
+  survive an in-app update; an update between two published releases
+  through the app itself (possible only once a release after 0.8.0
+  exists); a renewed certificate; a real translocated copy or a
+  read-only volume.
 
 ## What no tool checks
 

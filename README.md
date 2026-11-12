@@ -222,10 +222,12 @@ and not notarised (a downloaded copy has to be allowed once); built for
 one architecture; freed space is measured, not promised
 (APFS clones, snapshots and purgeable space); sizes are allocated-size
 estimates; an update installs itself only into a copy signed by the same
-certificate, and was not yet seen to do so between two published
-releases; the Swift half is not covered by the mutation and complexity
-tools; a real hotkey press, the login item and the Full Disk Access
-pane were not verified by an automated run.
+certificate, and was seen to install a published release's real
+download over a certificate-signed test copy through the app's update
+code, but not yet by Install in the app's window nor between two
+published releases; the Swift half is not covered by the mutation and
+complexity tools; a real hotkey press, the login item and the Full Disk
+Access pane were not verified by an automated run.
 
 ## Documents
 
