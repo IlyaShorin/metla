@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Builds Metla.app: the core (scripts/build-core.sh), the Swift package, and
-# the bundle layout with its Info.plist, ad-hoc signed unless
-# METLA_SIGN_IDENTITY names an identity (no hardened runtime,
-# not notarised). Prints the bundle's path.
+# the bundle layout with its Info.plist, signed ad-hoc, or with a
+# certificate and a secure timestamp when METLA_SIGN_IDENTITY names one
+# (either way no Developer ID, no hardened runtime, not notarised).
+# Prints the bundle's path.
 #
 #   scripts/build-app.sh [--release]    release Swift linked with the core's
 #                                       production library: the only build
@@ -29,13 +30,25 @@
 #                         a full disk)
 #   METLA_CONFIGURATION   release or debug, as --release / --debug
 #   METLA_SIGN_IDENTITY   a signing identity of your keychain, passed to
-#                         codesign as given, for your own installs: macOS
-#                         keeps a Full Disk Access grant across updates only
-#                         for a stable signature (an ad-hoc one changes with
-#                         every build). Without it the bundle is ad-hoc
-#                         signed, as every published build must be; with
-#                         it no Metla.zip is made (the signature carries
-#                         the certificate owner's name)
+#                         codesign as given: the bundle is signed with its
+#                         certificate and a secure timestamp from Apple's
+#                         server (codesign --timestamp), so the signature
+#                         stays valid after the certificate expires. The
+#                         timestamp needs the network: without an answer
+#                         from the server the build fails. macOS ties a
+#                         Full Disk Access grant to the signature; an
+#                         ad-hoc one changes with every build, a
+#                         certificate's does not, so the grant survives
+#                         updates. Published releases after 0.7.2 are
+#                         signed this way by the maintainer; a fork, or
+#                         your own install, uses your own identity. The
+#                         signature shows the certificate's name to anyone
+#                         who inspects the app. The script never prints
+#                         the identity, and passes on none of codesign's
+#                         lines that could name it. Without the variable
+#                         the bundle is signed ad-hoc (an ad-hoc signature
+#                         cannot be timestamped). A release build makes
+#                         Metla.zip either way
 
 set -euo pipefail
 
@@ -91,6 +104,9 @@ if ! LC_ALL=C grep -q -a -F "$stamp" "$products/Metla"; then
 fi
 
 app="$build/$name/Metla.app"
+# The old zip goes first: a build that fails later leaves none beside the
+# new bundle.
+rm -f -- "$build/$name/Metla.zip"
 rm -rf -- "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$products/Metla" "$app/Contents/MacOS/Metla"
@@ -127,13 +143,21 @@ if [[ "$configuration" == release ]]; then
     "$repo/scripts/no-local-paths.sh" "$app" "$build" >&2
 fi
 identity="${METLA_SIGN_IDENTITY:-}"
-codesign --force --sign "${identity:--}" "$app" >&2
-if [[ "$configuration" == release ]]; then
-    rm -f -- "$build/$name/Metla.zip"
-    if [[ -n "$identity" ]]; then
-        echo "signed with METLA_SIGN_IDENTITY: no Metla.zip made (a personal signature is not for sharing)" >&2
-    else
-        (cd "$build/$name" && ditto -c -k --keepParent Metla.app Metla.zip)
+if [[ -n "$identity" ]]; then
+    # codesign's messages can name the certificate: the identity as given,
+    # or the certificates it matched, in quotes. After a success none is
+    # shown; after a failure, only the lines that hold neither.
+    if ! said="$(codesign --force --timestamp --sign "$identity" "$app" 2>&1)"; then
+        printf '%s\n' "$said" | LC_ALL=C grep -v -F -e "$identity" -e '"' >&2 || true
+        echo "codesign failed with METLA_SIGN_IDENTITY (for example: no identity by that name or more than one, a locked keychain, no answer from the timestamp server): not signed, no Metla.zip" >&2
+        exit 1
     fi
+    echo "signed with METLA_SIGN_IDENTITY's certificate and a secure timestamp" >&2
+else
+    codesign --force --sign - "$app" >&2
+    echo "signed ad-hoc" >&2
+fi
+if [[ "$configuration" == release ]]; then
+    (cd "$build/$name" && ditto -c -k --keepParent Metla.app Metla.zip)
 fi
 echo "$app"
