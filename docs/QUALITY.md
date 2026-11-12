@@ -439,6 +439,35 @@ disk, the script as committed in 37fd593:
   builds, a certificate-signed build on a second Mac, and the grant
   after the certificate is replaced by a renewed one.
 
+**0.7.3** (the first release signed with the maintainer's certificate;
+nothing the app does changed). Since the signing change only the
+version changed: `build-app.sh` writes 0.7.3 and 10, and the README's
+example of the first stderr line reads 0.7.3. No Rust source changed
+since 63b2f52 and no Swift source since 0db8699: the mutation gate,
+crapper and dryer were not run again, and the Rust verdicts above
+carry over; the Swift gate ran only as a step of the fresh-clone
+check. On 2026-11-12, at 3c593f1, `TMPDIR` on the RAM disk:
+
+* The fresh-clone check (16:31 to 16:41, 597 s; the clone and its
+  build output on the SSD): every step exit 0. build-core 61 s,
+  build-debug 20 s, relink 17 s, run-app 74 s (30 images, 0 failures),
+  scenarios 18 s (30, 9, 19 and 12 checks), build-release 34 s (0
+  strings with a local path, "signed ad-hoc", Info.plist 0.7.3 (10),
+  `Metla.zip` beside it), quality-swift 88 s (0 diagnostics, 100 tests
+  in 14 suites, MetlaKit 93.43 % of 2,405 lines), quality-tests 283 s
+  (fmt, clippy, tests 74 + 439 + 23, the slow group 1 + 12, stability
+  5 of 5 with 536 tests each).
+* The core's stamp is 62f142ca7975e910, as at 1dc86dc: the release
+  binary holds `62f142ca7975e910-production`. The clone's debug app,
+  built again after the check, wrote `metla 0.7.3, core
+  62f142ca7975e910-plain` as its first line while it ran the
+  default-clean scenario (30 checks passed). Within the check the
+  capture and the scenarios ran the debug app that relink-check had
+  linked with its changed core (`b84a070533479ffd-plain`):
+  relink-check puts the source back, not the app.
+* Not done here: the release signed with the certificate (the
+  maintainer signs it), and the release app started.
+
 ## What no tool checks
 
 * **The SwiftUI views and their layout.** `MetlaApp` has no unit tests
