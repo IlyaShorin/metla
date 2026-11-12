@@ -35,6 +35,10 @@ public struct LaunchSettings: Equatable, Sendable {
     public var rescanAtLaunch = false
     /// Close the main window once the saved picture is shown (`--idle`).
     public var menuBarOnly = false
+    /// Check for updates by itself: only an ordinary launch on the real
+    /// disk, never a capture, a scenario, `--idle` or a root given by
+    /// `METLA_ROOT`. Off unless `read` finds it so.
+    public var checksForUpdates = false
 
     /// The marker of a synthetic tree (metla-core's `FIXTURE_MARKER`).
     public static let fixtureMarker = ".metla-fixture"
@@ -64,7 +68,9 @@ public struct LaunchSettings: Equatable, Sendable {
             follow: capture == nil && scenario == nil,
             language: environment["METLA_LANGUAGE"],
             rescanAtLaunch: arguments.contains("--rescan"),
-            menuBarOnly: arguments.contains("--idle")
+            menuBarOnly: arguments.contains("--idle"),
+            checksForUpdates: capture == nil && scenario == nil && !arguments.contains("--idle")
+                && environment["METLA_ROOT"] == nil
         )
     }
 
